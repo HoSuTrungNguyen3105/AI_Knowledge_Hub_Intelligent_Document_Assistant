@@ -140,9 +140,13 @@ def test_safe_unexpected_error(client_factory, monkeypatch):
     assert response.json() == {"detail": "Internal server error"}
 
 
-def test_openapi_has_only_phase_one_routes_and_safe_responses(app):
+def test_openapi_has_only_implemented_routes_and_safe_responses(app):
     schema = app.openapi()
     assert set(schema["paths"]) == {
+        "/api/v1/ai/providers",
+        "/api/v1/ai/providers/{provider}",
+        "/api/v1/ai/providers/{provider}/test",
+        "/api/v1/ai/providers/{provider}/models",
         "/api/v1/health",
         "/api/v1/auth/register",
         "/api/v1/auth/login",

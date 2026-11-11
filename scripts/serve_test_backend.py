@@ -19,6 +19,7 @@ def main() -> None:
     args = parser.parse_args()
     sys.path.insert(0, str(ROOT / "backend"))
     import uvicorn
+    from cryptography.fernet import Fernet
     from app.core.config import Settings
     from app.core.database import build_engine, build_session_factory, get_db
     from app.main import create_app
@@ -31,6 +32,7 @@ def main() -> None:
         app = create_app(Settings(
             _env_file=None,
             jwt_secret=secrets.token_urlsafe(48),
+            credential_encryption_key=Fernet.generate_key().decode(),
             cookie_secure=False,
             auth_rate_limit=1000,
             api_rate_limit=5000,

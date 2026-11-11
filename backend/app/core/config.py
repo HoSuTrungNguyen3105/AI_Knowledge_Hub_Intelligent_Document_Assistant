@@ -2,6 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from cryptography.fernet import Fernet
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
@@ -16,6 +17,7 @@ class Settings(BaseSettings):
         "postgresql+psycopg://knowledge_hub:knowledge_hub@localhost:5432/knowledge_hub"
     )
     jwt_secret: SecretStr
+    credential_encryption_key: SecretStr | None = None
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:3000", "http://127.0.0.1:3000"]
     )
@@ -25,6 +27,17 @@ class Settings(BaseSettings):
     api_rate_limit: int = Field(default=120, ge=1)
     auth_rate_limit: int = Field(default=10, ge=1)
     rate_limit_window_seconds: int = Field(default=60, ge=1)
+
+    @field_validator("credential_encryption_key")
+    @classmethod
+    def validate_encryption_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None or value.get_secret_value() == "":
+            return None
+        try:
+            Fernet(value.get_secret_value().encode("ascii"))
+        except (ValueError, UnicodeError):
+            raise ValueError("CREDENTIAL_ENCRYPTION_KEY must be a Fernet key") from None
+        return value
 
     @field_validator("jwt_secret")
     @classmethod

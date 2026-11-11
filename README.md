@@ -1,8 +1,8 @@
-# AI Knowledge Hub
+# MindFlow AI
 
-Ứng dụng quản lý tri thức theo `plan_create_web.md`, triển khai từng giai đoạn. **Bản hiện tại: Phase 1 — nền tảng, xác thực và dashboard.**
+Mở rộng AI Knowledge Hub theo `update_features.md`, giữ nền tảng trong `plan_create_web.md` và triển khai từng giai đoạn. **Bản hiện tại: Foundation + Phase 2 — quản lý provider/model OpenAI và Gemini.**
 
-## Có gì ở Phase 1?
+## Đã triển khai
 
 - Frontend Next.js App Router **JavaScript/JSX**, Tailwind CSS, Axios, Zustand và Lucide.
 - Backend FastAPI, SQLAlchemy, Pydantic, Alembic; schema nền trên PostgreSQL + pgvector.
@@ -10,10 +10,13 @@
 - Dashboard lấy số tài liệu, kho kiến thức, hội thoại, yêu cầu AI và hoạt động từ DB của người dùng hiện tại. Tài khoản mới có số đếm bằng 0, không seed dữ liệu demo.
 - Giao diện desktop/mobile; trạng thái loading, lỗi, toast và route cần đăng nhập.
 - Docker Compose tách frontend, backend và database; script tạo bí mật local ngẫu nhiên.
+- Trang `/settings`: lưu/thay/xóa API key theo từng người dùng, bật/tắt provider, kiểm tra kết nối, đồng bộ model thật và chọn model mặc định.
+- Adapter OpenAI/Gemini gọi API danh sách model; API key mã hóa Fernet trong DB, không trả lại browser. Capabilities chưa xác minh được hiển thị là “Chưa xác định”.
+- Migration `0002_provider_management` chỉ thêm hai bảng `user_provider_credentials`, `ai_models`; giữ nguyên bảy bảng cũ, cookie và cơ chế xác thực.
 
-**Chưa triển khai:** CRUD kho kiến thức, upload/parser, embeddings/RAG, chat/streaming, OpenAI/Gemini, agent/tool calling, notes và settings. Các trang tương ứng chỉ giải thích lộ trình, không giả lập tính năng. Chưa cần API key AI để chạy Phase 1.
+**Chưa triển khai:** tạo nội dung AI, chat/streaming, Compare/synthesis, agent/tool calling, files/RAG/memory/research/workflows và ghi chú. Claude, DeepSeek, Ollama chỉ có trong registry, chưa nhận key hoặc gọi API. Các trang tương ứng ghi rõ lộ trình, không giả lập kết quả. Không cần API key AI để đăng nhập và dùng dashboard.
 
-Thiết kế đầy đủ, bảng dữ liệu dự kiến, API contracts, RAG/agent flow: [ARCHITECTURE.md](ARCHITECTURE.md).
+Phân tích hiện trạng, danh sách file tạo/sửa/giữ nguyên, schema và API contracts: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## 1. Chạy bằng Docker Desktop — khuyến nghị
 

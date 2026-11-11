@@ -8,9 +8,11 @@ from app.models.entities import (
     RefreshToken,
     User,
 )
+from app.models.providers import AIModel, UserProviderCredential
 
 __all__ = [
     "ActivityLog",
+    "AIModel",
     "AIRequest",
     "Base",
     "Conversation",
@@ -18,4 +20,5 @@ __all__ = [
     "KnowledgeBase",
     "RefreshToken",
     "User",
+    "UserProviderCredential",
 ]

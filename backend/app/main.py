@@ -7,10 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.v1 import auth, dashboard, health
+from app.api.v1 import auth, dashboard, health, providers
 from app.core.config import Settings, get_settings
 from app.core.database import build_engine, build_session_factory
 from app.core.middleware import RateLimiter, SecurityMiddleware
+from app.services.ai.base_provider import ProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +42,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Accept"],
     )
 
+    @application.exception_handler(ProviderError)
+    async def provider_error(_request: Request, exc: ProviderError):
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
     @application.exception_handler(RequestValidationError)
     async def validation_error(_request: Request, exc: RequestValidationError):
+        if _request.url.path.startswith("/api/v1/ai"):
+            # Never echo submitted keys, passwords, extra field names or parser context.
+            error = ProviderError("invalid_provider_configuration")
+            return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
         # Pydantic's default input/ctx fields can echo submitted passwords.
         errors = [
             {"type": error["type"], "loc": list(error["loc"]), "msg": error["msg"]}
@@ -57,14 +66,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.exception_handler(SQLAlchemyError)
     async def database_error(_request: Request, exc: SQLAlchemyError):
         logger.error("Database request failed (%s)", type(exc).__name__)
+        if _request.url.path.startswith("/api/v1/ai"):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": {"code": "database_unavailable", "message": "Database unavailable."}
+                },
+                headers={"Cache-Control": "no-store"},
+            )
         return JSONResponse(status_code=503, content={"detail": "Database unavailable"})
 
     @application.exception_handler(Exception)
     async def unexpected_error(_request: Request, exc: Exception):
         logger.error("Request failed (%s)", type(exc).__name__)
+        if _request.url.path.startswith("/api/v1/ai"):
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "detail": {"code": "internal_server_error", "message": "Internal server error."}
+                },
+                headers={"Cache-Control": "no-store"},
+            )
         return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
-    for router in (health.router, auth.router, dashboard.router):
+    for router in (health.router, auth.router, dashboard.router, providers.router):
         application.include_router(router, prefix="/api/v1")
     return application
 

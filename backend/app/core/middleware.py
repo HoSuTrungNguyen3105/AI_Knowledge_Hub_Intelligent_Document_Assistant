@@ -60,8 +60,11 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                     auth=request.url.path.startswith("/api/v1/auth/") and request.method == "POST",
                 )
                 if retry_after is not None:
+                    detail = "Too many requests"
+                    if request.url.path.startswith("/api/v1/ai"):
+                        detail = {"code": "request_rate_limited", "message": "Too many requests."}
                     return JSONResponse(
-                        {"detail": "Too many requests"},
+                        {"detail": detail},
                         status_code=429,
                         headers={"Retry-After": str(retry_after), "Cache-Control": "no-store"},
                     )
@@ -71,13 +74,19 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 if (origin is not None and origin not in self.settings.cors_origins) or (
                     has_cookies and origin is None
                 ):
+                    detail = "Untrusted or missing request origin"
+                    if request.url.path.startswith("/api/v1/ai"):
+                        detail = {
+                            "code": "invalid_origin",
+                            "message": "Untrusted or missing request origin.",
+                        }
                     return JSONResponse(
-                        {"detail": "Untrusted or missing request origin"},
+                        {"detail": detail},
                         status_code=403,
                         headers={"Cache-Control": "no-store"},
                     )
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
-        if request.url.path.startswith(("/api/v1/auth", "/api/v1/dashboard")):
+        if request.url.path.startswith(("/api/v1/auth", "/api/v1/dashboard", "/api/v1/ai")):
             response.headers["Cache-Control"] = "no-store"
         return response
