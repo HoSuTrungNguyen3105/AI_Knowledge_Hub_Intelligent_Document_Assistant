@@ -16,6 +16,7 @@
 .provider-choice.selected { background: var(--accent-soft); }
 .provider-monogram { width: 33px; height: 33px; display: grid; place-items: center; flex-shrink: 0; border-radius: 7px; font-size: 15px; font-weight: 600; background: #e4e9e6; color: #526c5f; }
 .provider-monogram.gemini { background: #e4eaf5; color: #5578a1; }
+.provider-monogram.groq { background: #f7e7e0; color: #b5533c; }
 .provider-monogram.anthropic { background: #f0e5df; color: #9c6b53; }
 .provider-monogram.deepseek { background: #e6e9f5; color: #646d9c; }
 .provider-monogram.ollama { background: #e7e7e7; color: #626565; }

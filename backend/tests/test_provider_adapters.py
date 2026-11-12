@@ -24,6 +24,15 @@ OPENAI_MODEL = {
     "owned_by": "contract-owner",
     "shutdown_date": "2030-01-01",
 }
+# Groq is OpenAI-compatible but adds extra fields and uses "owner/model" ids.
+GROQ_MODEL = {
+    "id": "openai/gpt-oss-20b",
+    "object": "model",
+    "created": 1700000000,
+    "owned_by": "OpenAI",
+    "active": True,
+    "context_window": 131072,
+}
 
 
 def adapter(provider, handler, **limits):
@@ -46,6 +55,24 @@ def test_openai_contract_unknown_capabilities_and_fixed_endpoint():
 
     model = adapter("openai", handle).list_models(KEY)[0]
     assert model.id == OPENAI_MODEL["id"]
+    assert model.capabilities.model_dump() == dict.fromkeys(
+        ["chat", "streaming", "tools", "embeddings"]
+    )
+    assert model.capability_source == "unknown"
+    assert model.input_token_limit is model.output_token_limit is None
+
+
+def test_groq_contract_openai_compatible_unknown_capabilities():
+    def handle(request):
+        assert str(request.url) == "https://api.groq.com/openai/v1/models"
+        assert request.method == "GET"
+        assert request.headers["authorization"] == f"Bearer {KEY.get_secret_value()}"
+        assert not request.content
+        return httpx.Response(200, json={"object": "list", "data": [GROQ_MODEL]})
+
+    model = adapter("groq", handle).list_models(KEY)[0]
+    assert model.id == "openai/gpt-oss-20b"
+    assert model.display_name == "openai/gpt-oss-20b"
     assert model.capabilities.model_dump() == dict.fromkeys(
         ["chat", "streaming", "tools", "embeddings"]
     )
@@ -122,6 +149,7 @@ def test_gemini_contract_pagination_header_and_explicit_capabilities():
     "provider,payload",
     [
         ("openai", {"object": "list", "data": []}),
+        ("groq", {"object": "list", "data": []}),
         ("gemini", {}),
         ("gemini", {"models": []}),
     ],
@@ -280,6 +308,7 @@ def test_duplicate_models_across_gemini_pages():
     "provider,payload",
     [
         ("openai", {"object": "list", "data": [OPENAI_MODEL]}),
+        ("groq", {"object": "list", "data": [GROQ_MODEL]}),
         ("gemini", {"models": [{"name": "models/contract-id"}]}),
     ],
 )

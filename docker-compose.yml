@@ -1,26 +1,24 @@
 services:
   db:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-knowledgehub}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run python scripts/init_env.py first}
-      POSTGRES_DB: ${POSTGRES_DB:-knowledgehub}
+    image: mongo:7
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:27017:27017"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mongo_data:/data/db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
       interval: 5s
       timeout: 5s
       retries: 15
+      start_period: 10s
     restart: unless-stopped
 
   backend:
     build: ./backend
-    env_file: .env
+    env_file: ./backend/.env
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-knowledgehub}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-knowledgehub}
+      MONGODB_URI: mongodb://db:27017
+      MONGODB_DATABASE: mindflow_ai
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -51,4 +49,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  postgres_data:
+  mongo_data:

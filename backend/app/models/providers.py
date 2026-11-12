@@ -1,9 +1,12 @@
 from datetime import datetime
 from uuid import UUID
+
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.base import BaseDocument
 
-class UserProviderCredential(BaseModel):
+
+class UserProviderCredential(BaseDocument, BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: UUID = Field(alias="_id")
@@ -21,7 +24,7 @@ class UserProviderCredential(BaseModel):
     updated_at: datetime
 
 
-class AIModel(BaseModel):
+class AIModel(BaseDocument, BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: UUID = Field(alias="_id")

@@ -1,5 +1,5 @@
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import Request
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -15,6 +15,8 @@ def build_mongo_client(settings: Settings) -> AsyncIOMotorClient:
         socketTimeoutMS=30000,
         maxPoolSize=10,
         minPoolSize=1,
+        uuidRepresentation="standard",
+        tz_aware=True,
     )
 
 

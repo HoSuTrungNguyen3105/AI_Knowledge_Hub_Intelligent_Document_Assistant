@@ -113,8 +113,10 @@ def test_rate_limit_window_expiry_and_client_isolation(settings):
 
 
 def test_safe_database_error_response(client, monkeypatch):
+    from pymongo.errors import ConnectionFailure
+
     async def fail(_repository, _email):
-        raise Exception("secret-db-password")
+        raise ConnectionFailure("secret-db-password")
 
     monkeypatch.setattr(AuthRepository, "user_by_email", fail)
     response = client.post(

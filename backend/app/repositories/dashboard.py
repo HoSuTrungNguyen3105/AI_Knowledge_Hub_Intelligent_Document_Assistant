@@ -2,7 +2,7 @@ from uuid import UUID
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.models import ActivityLog, AIRequest, Conversation, Document, KnowledgeBase
+from app.models import ActivityLog
 
 
 class DashboardRepository:

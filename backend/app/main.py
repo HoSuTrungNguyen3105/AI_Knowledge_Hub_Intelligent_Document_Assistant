@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pymongo.errors import PyMongoError
 
 from app.api.v1 import auth, dashboard, health, providers
 from app.core.config import Settings, get_settings
@@ -13,7 +14,6 @@ from app.core.middleware import RateLimiter, SecurityMiddleware
 from app.services.ai.base_provider import ProviderError
 
 logger = logging.getLogger(__name__)
-
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
@@ -59,6 +59,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for error in exc.errors()
         ]
         return JSONResponse(status_code=422, content={"detail": errors})
+
+    @application.exception_handler(PyMongoError)
+    async def database_error(_request: Request, exc: PyMongoError):
+        logger.error("Database request failed (%s)", type(exc).__name__)
+        return JSONResponse(status_code=503, content={"detail": "Database unavailable"})
 
     @application.exception_handler(Exception)
     async def unexpected_error(_request: Request, exc: Exception):

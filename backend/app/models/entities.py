@@ -1,9 +1,12 @@
 from datetime import datetime
 from uuid import UUID
+
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.base import BaseDocument
 
-class User(BaseModel):
+
+class User(BaseDocument, BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: UUID = Field(alias="_id")
@@ -13,7 +16,7 @@ class User(BaseModel):
     created_at: datetime
 
 
-class RefreshToken(BaseModel):
+class RefreshToken(BaseDocument, BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: UUID = Field(alias="_id")
@@ -24,7 +27,7 @@ class RefreshToken(BaseModel):
     created_at: datetime
 
 
-class KnowledgeBase(BaseModel):
+class KnowledgeBase(BaseDocument, BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: UUID = Field(alias="_id")
@@ -35,7 +38,7 @@ class KnowledgeBase(BaseModel):
     updated_at: datetime
 
 
-class Document(BaseModel):
+class Document(BaseDocument, BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: UUID = Field(alias="_id")
@@ -51,7 +54,7 @@ class Document(BaseModel):
     created_at: datetime
 
 
-class Conversation(BaseModel):
+class Conversation(BaseDocument, BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: UUID = Field(alias="_id")
@@ -64,7 +67,7 @@ class Conversation(BaseModel):
     updated_at: datetime
 
 
-class AIRequest(BaseModel):
+class AIRequest(BaseDocument, BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: UUID = Field(alias="_id")
@@ -75,7 +78,7 @@ class AIRequest(BaseModel):
     created_at: datetime
 
 
-class ActivityLog(BaseModel):
+class ActivityLog(BaseDocument, BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: UUID = Field(alias="_id")

@@ -15,7 +15,6 @@ from app.core.security import (
     hash_refresh_token,
     verify_password,
 )
-from app.models import ActivityLog, RefreshToken, User
 from app.models.base import utcnow
 from app.repositories.auth import AuthRepository
 
@@ -40,7 +39,10 @@ async def test_register_normalizes_and_stores_only_hashes(client, register, db, 
     assert len(raw_refresh) >= 43
     assert token["token_hash"] != raw_refresh
     assert timedelta(days=6, hours=23) < token["expires_at"] - utcnow() <= timedelta(days=7)
-    assert decode_access_token(client.cookies.get(ACCESS_COOKIE), settings) == (stored["_id"], token["_id"])
+    assert decode_access_token(client.cookies.get(ACCESS_COOKIE), settings) == (
+        stored["_id"],
+        token["_id"],
+    )
     claims = jwt.decode(client.cookies.get(ACCESS_COOKIE), options={"verify_signature": False})
     assert claims["exp"] - claims["iat"] == 15 * 60
     for secret in (PASSWORD, stored["password_hash"], token["token_hash"], raw_refresh):
@@ -184,7 +186,9 @@ def test_refresh_rejects_missing_or_invalid_cookie(client, token):
 @pytest.mark.asyncio
 async def test_expired_session_rejects_access_and_refresh(client, register, db):
     register(client)
-    await db.refresh_tokens.update_many({}, {"$set": {"expires_at": utcnow() - timedelta(seconds=1)}})
+    await db.refresh_tokens.update_many(
+        {}, {"$set": {"expires_at": utcnow() - timedelta(seconds=1)}}
+    )
     assert client.get("/api/v1/auth/me").status_code == 401
     assert client.post("/api/v1/auth/refresh").status_code == 401
 
@@ -217,7 +221,9 @@ async def test_access_requires_matching_active_session(client, register, setting
 
 @pytest.mark.parametrize("cookies", ["both", "access", "refresh", "expired_access"])
 @pytest.mark.asyncio
-async def test_logout_revokes_and_clears_cookies(client, client_factory, register, settings, db, cookies):
+async def test_logout_revokes_and_clears_cookies(
+    client, client_factory, register, settings, db, cookies
+):
     register(client)
     access, refresh = client.cookies.get(ACCESS_COOKIE), client.cookies.get(REFRESH_COOKIE)
     client.cookies.clear()

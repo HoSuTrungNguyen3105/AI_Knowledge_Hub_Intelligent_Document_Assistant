@@ -1,6 +1,7 @@
 from datetime import timedelta
 from uuid import UUID
 
+import pytest
 from conftest import PASSWORD
 
 from app.models import ActivityLog, AIRequest, Conversation, Document, KnowledgeBase
@@ -33,7 +34,8 @@ def test_new_dashboard_has_real_zero_counts_and_registration_activity(client, re
     ] == ["auth.login", "auth.register"]
 
 
-def test_seeded_dashboard_counts_and_activity_are_owner_isolated(
+@pytest.mark.asyncio
+async def test_seeded_dashboard_counts_and_activity_are_owner_isolated(
     client, client_factory, register, db
 ):
     owner = UUID(register(client).json()["user"]["id"])

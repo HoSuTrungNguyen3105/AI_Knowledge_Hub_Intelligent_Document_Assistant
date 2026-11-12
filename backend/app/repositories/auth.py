@@ -31,7 +31,10 @@ class AuthRepository:
             "created_at": now,
         }
         await self.users.insert_one(user_doc)
-        return User(**user_doc)
+        # MongoDB stores datetimes at millisecond precision; return the persisted
+        # document so the register response matches subsequent reads exactly.
+        stored = await self.users.find_one({"_id": user_id})
+        return User(**stored)
 
     async def create_session(
         self, user_id: UUID, token_hash: str, expires_at: datetime

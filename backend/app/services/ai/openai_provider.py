@@ -24,12 +24,15 @@ class OpenAIListing(BaseModel):
 
 
 class OpenAIProvider(BaseProvider):
+    # Endpoint key shared by OpenAI-compatible listings (e.g. Groq).
+    provider_id = "openai"
+
     def __init__(self, http: ModelListingHTTP | None = None):
         self.http = http or ModelListingHTTP()
 
     def list_models(self, api_key: SecretStr) -> list[ProviderModel]:
         async def listing(session: ListingSession) -> list[ProviderModel]:
-            payload = OpenAIListing.model_validate(await session.get("openai"))
+            payload = OpenAIListing.model_validate(await session.get(self.provider_id))
             if len(payload.data) > session.limits.max_models:
                 raise ProviderError("invalid_provider_response")
             if len({model.id for model in payload.data}) != len(payload.data):

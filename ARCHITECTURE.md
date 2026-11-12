@@ -4,25 +4,25 @@
 
 ### Hiện trạng và quyết định
 
-Đã rà soát source handwritten frontend/backend, schemas, migrations, tests, scripts và cấu hình; loại trừ secrets, thư viện và build output. Baseline: 62 backend tests + 15 frontend tests đạt; ESLint đạt. Docker vẫn chưa được cài trên máy.
+Đã rà soát source handwritten frontend/backend, schemas, tests, scripts và cấu hình; loại trừ secrets, thư viện và build output. Baseline hiện tại: 173 backend tests + 31 frontend tests đạt; Ruff/ESLint đạt. Backend đã chuyển sang MongoDB (motor async) thay PostgreSQL/SQLAlchemy/Alembic; Docker vẫn chưa được cài trên máy.
 
 | Hạng mục | Hiện trạng | Phương án |
 |---|---|---|
 | Frontend | Next.js 16.4.6, React 19.3.1, JSX, Tailwind 4, Axios, Zustand | Giữ nguyên framework, layout, refresh client, loading/error/toast; thêm trang Settings thật |
-| Backend | FastAPI 0.162.4, Pydantic 2.14.3, SQLAlchemy 2.0.57 | Mở rộng API → service → repository; adapter không nằm trong endpoint |
-| Database | PostgreSQL 16/pgvector, 7 bảng ứng dụng | Thêm migration 0002; không sửa/xóa migration 0001 hoặc tạo lại conversations/documents |
+| Backend | FastAPI 0.162.4, Pydantic 2.14.3, motor 3.6 (MongoDB async) | Mở rộng API → service → repository async; adapter không nằm trong endpoint |
+| Database | MongoDB (Atlas/local), 9 collections ứng dụng | Thêm collections `user_provider_credentials`, `ai_models` + unique index; giữ nguyên 7 collections cũ, không tạo lại conversations/documents |
 | Authentication | JWT gắn session, refresh rotation, cookie HttpOnly, CSRF Origin, owner filtering | Giữ nguyên issuer, cookie và logic auth; dùng CurrentUser cho API mới |
-| AI Integration | Chưa có | Registry capabilities + adapter OpenAI/Gemini; Claude/DeepSeek/Ollama đánh dấu chưa tích hợp |
+| AI Integration | Chưa có | Registry capabilities + adapter OpenAI/Gemini/Groq; Claude/DeepSeek/Ollama đánh dấu chưa tích hợp |
 | API | /api/v1; Next same-origin rewrite | Thêm /ai/providers và endpoints cấu hình/model/test kết nối |
 
 ### Đợt triển khai hiện tại: Foundation bổ sung + Phase 2
 
 Bổ sung nền tảng provider và quản lý kết nối trước, không triển khai tất cả module cùng lúc. Module Chat/Compare/Agent được ưu tiên tiếp theo; không chuyển sang knowledge/RAG trước ba module này.
 
-- Provider registry là metadata cố định trong backend, không cần bảng `ai_providers` chỉ để lặp lại 5 định nghĩa trong mã. Không có danh sách model giả/hardcode: model được đồng bộ từ API thật theo key của từng user.
-- Thêm `user_provider_credentials`: id, user_id, provider, encrypted_api_key, enabled, default_model, connection_status, last_checked_at, models_synced_at, last_error_code, revision, timestamps; unique(user_id, provider).
-- Thêm `ai_models`: id, credential_id (cascade), model_id, display_name, description, capabilities JSON, input/output token limits, capability_source; unique(credential_id, model_id). Model catalog gắn credential vì quyền truy cập có thể khác giữa người dùng.
-- Giữ nguyên 7 bảng cũ; tái sử dụng `ActivityLog` nếu ghi hoạt động cấu hình. Không tăng AIRequest count cho việc chỉ liệt kê model và không tự tạo token/cost usage.
+- Provider registry là metadata cố định trong backend, không cần bảng `ai_providers` chỉ để lặp lại 6 định nghĩa trong mã. Không có danh sách model giả/hardcode: model được đồng bộ từ API thật theo key của từng user.
+- Thêm collection `user_provider_credentials`: id, user_id, provider, encrypted_api_key, enabled, default_model, connection_status, last_checked_at, models_synced_at, last_error_code, revision, timestamps; unique index (user_id, provider).
+- Thêm collection `ai_models`: id, credential_id (xóa theo credential ở tầng ứng dụng, MongoDB không có FK cascade), model_id, display_name, description, capabilities JSON, input/output token limits, capability_source; unique index (credential_id, model_id). Model catalog gắn credential vì quyền truy cập có thể khác giữa người dùng.
+- Giữ nguyên 7 collections cũ; tái sử dụng `ActivityLog` nếu ghi hoạt động cấu hình. Không tăng AIRequest count cho việc chỉ liệt kê model và không tự tạo token/cost usage.
 - API key mã hóa bằng Fernet với `CREDENTIAL_ENCRYPTION_KEY` độc lập JWT secret. Payload mã hóa gắn user/provider để chống tráo ciphertext giữa tài khoản. Không trả key, ciphertext, prefix/suffix key hoặc upstream response thô về browser/log.
 - Thiếu encryption key: auth/dashboard vẫn chạy; API quản lý báo chưa sẵn sàng, không lưu plaintext hoặc suy ra key từ JWT. Script init_env chỉ thêm key khi chưa có, không tự thay key đã dùng.
 - Endpoint provider cố định HTTPS; không nhận base URL tùy ý, không bật adapter Ollama khi chưa có chính sách SSRF. HTTP timeout, giới hạn trang/model/response; không follow redirect mang credentials.
@@ -46,38 +46,39 @@ Lỗi provider dùng `{detail:{code,message}}` đã làm sạch. Provider trả 
 
 ### Các file tạo, sửa và giữ nguyên
 
-- Tạo: `backend/app/services/ai/{base_provider,registry,openai_provider,gemini_provider,ai_factory}.py`, `backend/app/core/credential_vault.py`, `backend/app/models/providers.py`, `backend/app/repositories/providers.py`, `backend/app/services/providers.py`, `backend/app/schemas/providers.py`, `backend/app/api/v1/providers.py`, `backend/alembic/versions/0002_provider_management.py`, provider/security tests.
+- Tạo: `backend/app/services/ai/{base_provider,registry,openai_provider,gemini_provider,ai_factory}.py`, `backend/app/core/credential_vault.py`, `backend/app/models/providers.py`, `backend/app/repositories/providers.py`, `backend/app/services/providers.py`, `backend/app/schemas/providers.py`, `backend/app/api/v1/providers.py`, provider/security tests.
 - Sửa tối thiểu backend: model exports; Settings thêm encryption key; main đăng ký router và hỗ trợ PATCH/DELETE CORS; middleware no-store cho API AI; requirements thêm cryptography/httpx. Không nâng framework.
 - Tạo frontend: route `/settings`, provider settings components, hook và service, confirm dialog dùng lại được, tests cho transport/validation.
 - Sửa tối thiểu frontend: navigation Settings từ placeholder sang trang thật; nhãn MindFlow AI và lộ trình theo đặc tả mới; CSS dành riêng Settings. Không viết lại auth, dashboard data flow, Axios refresh hoặc session store.
 - Sửa hỗ trợ: `.env.example`, `scripts/init_env.py`, test harness encryption config, README hướng dẫn key/migration/test, tài liệu này.
-- Giữ nguyên: `plan_create_web.md`, `update_features.md`, API auth/contracts, cookie names/issuer, password hashing, PostgreSQL requirement, migration 0001, domain tables cũ và tài liệu/dữ liệu người dùng. Không commit/push/deploy.
+- Giữ nguyên: `plan_create_web.md`, `update_features.md`, API auth/contracts, cookie names/issuer, password hashing, 7 collections domain cũ và tài liệu/dữ liệu người dùng. Không commit/push/deploy.
 
 ### Lộ trình thay thế lộ trình cũ
 
 1. Foundation: tái sử dụng auth/dashboard/database; bổ sung provider architecture.
-2. Multi-AI Integration: OpenAI/Gemini, credentials mã hóa, model sync/default, bật/tắt và test connection (đợt này).
+2. Multi-AI Integration: OpenAI/Gemini/Groq, credentials mã hóa, model sync/default, bật/tắt và test connection (đợt này).
 3. Multi-model Chat: tái sử dụng conversations; thêm messages, adapters generation/stream với capability checks, history/system prompt/temperature/token limits.
 4. Compare AI: chạy song song độc lập lỗi, synthesis theo lựa chọn user, usage/cost có nguồn giá và nhãn ước tính.
 5. Agent Studio/Execution: agent CRUD, tools allowlist, quyền, timeout/step/token budget và logs.
-6. File Intelligence/RAG/Memory: parse file, embedding/pgvector, citations, memory tự nguyện và có thể xóa/tắt.
+6. File Intelligence/RAG/Memory: parse file, embedding/vector search, citations, memory tự nguyện và có thể xóa/tắt.
 7. Research/Workflow: search service cấu hình, nguồn được kiểm chứng, workflow execution.
-8. Production: live provider tests, PostgreSQL/Docker integration, security/performance/observability/deployment.
+8. Production: live provider tests, MongoDB/Docker integration, security/performance/observability/deployment.
 
-Mỗi đợt chạy hồi quy auth/dashboard, unit/API tests, frontend build/lint và kiểm tra UI. Thiếu API key/provider quota hoặc PostgreSQL/Docker phải ghi rõ, không dùng mock trong ứng dụng và không gọi đó là live verification. Chat/Compare/Agent chưa được coi là đã triển khai chỉ vì có registry/route placeholder.
+Mỗi đợt chạy hồi quy auth/dashboard, unit/API tests, frontend build/lint và kiểm tra UI. Thiếu API key/provider quota hoặc MongoDB/Docker phải ghi rõ, không dùng mock trong ứng dụng và không gọi đó là live verification. Chat/Compare/Agent chưa được coi là đã triển khai chỉ vì có registry/route placeholder.
 
 ### Nguồn hợp đồng provider đã đối chiếu
 
 - OpenAI Models API: https://developers.openai.com/api/reference/resources/models/methods/list — `GET https://api.openai.com/v1/models`, Bearer auth, response `{object:"list",data:[{id,object,created,owned_by,...}]}`; không có capability flags.
+- Groq Models API (OpenAI-compatible): https://console.groq.com/docs/api-reference#models-list — `GET https://api.groq.com/openai/v1/models`, Bearer auth, response `{object:"list",data:[{id,object,created,owned_by,...}]}`; không có capability flags nên capabilities để unknown. Adapter Groq kế thừa adapter OpenAI, chỉ khác endpoint cố định.
 - Gemini Models API: https://aistudio.google.com/api-reference/models
 - Gemini discovery đọc trực tiếp: https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta — `GET /v1beta/models`, pageSize tối đa 1000, pageToken/nextPageToken, models[].supportedGenerationMethods và token limits.
-- Probe không có credentials: OpenAI trả 401, Gemini trả 403. Chưa xác minh model listing thành công bằng API key thật.
+- Probe không có credentials: OpenAI trả 401, Gemini trả 403. Groq đã xác minh model listing thành công bằng API key thật (11 model, capabilities unknown); OpenAI/Gemini chưa có key hợp lệ để live test.
 
 ---
 
 ## Thiết kế ban đầu AI Knowledge Hub (giữ để tham chiếu)
 
-Phần dưới mô tả baseline trước yêu cầu MindFlow; thứ tự phase hiện hành là phần cập nhật ở trên.
+Phần dưới mô tả baseline PostgreSQL/pgvector ban đầu (giữ để tham chiếu lịch sử). Stack hiện hành đã chuyển sang MongoDB async (motor); thứ tự phase hiện hành là phần cập nhật ở trên. Các bảng, pgvector và Alembic bên dưới không còn là stack đang chạy.
 
 ## 1. Phân tích phạm vi
 

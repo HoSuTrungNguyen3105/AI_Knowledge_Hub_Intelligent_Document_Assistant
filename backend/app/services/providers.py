@@ -1,6 +1,8 @@
+import asyncio
 from uuid import UUID
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.errors import DuplicateKeyError
 
 from app.core.config import Settings
 from app.core.credential_vault import CredentialVault
@@ -59,7 +61,8 @@ class ProviderService:
         if credential is None and patch.api_key is None:
             raise ProviderError("credentials_missing")
         if patch.default_model is not None and (
-            credential is None or not await self.repo.contains_model(credential.id, patch.default_model)
+            credential is None
+            or not await self.repo.contains_model(credential.id, patch.default_model)
         ):
             raise ProviderError("invalid_default_model")
         values = {}
@@ -78,16 +81,22 @@ class ProviderService:
             )
         if credential is None:
             now = utcnow()
-            await self.db.user_provider_credentials.insert_one(
-                {
-                    "_id": UserProviderCredential.generate_id(),
-                    "user_id": user_id,
-                    "provider": provider,
-                    "created_at": now,
-                    "updated_at": now,
-                    **values,
-                }
-            )
+            try:
+                await self.db.user_provider_credentials.insert_one(
+                    {
+                        "_id": UserProviderCredential.generate_id(),
+                        "user_id": user_id,
+                        "provider": provider,
+                        "enabled": True,
+                        "revision": 1,
+                        "created_at": now,
+                        "updated_at": now,
+                        **values,
+                    }
+                )
+            except DuplicateKeyError:
+                # A concurrent initial save must not overwrite the winner's key.
+                raise ProviderError("configuration_changed") from None
         else:
             try:
                 await self.repo.compare_update(CredentialVersion.of(credential), values)
@@ -129,7 +138,9 @@ class ProviderService:
         # Release read transactions/connections before I/O
         try:
             key = self.vault.decrypt(ciphertext, user_id, provider)
-            models = await adapter.list_models(key)
+            # The listing facade is synchronous and manages its own event loop;
+            # run it off the application loop so pagination cannot block it.
+            models = await asyncio.to_thread(adapter.list_models, key)
         except ProviderError as error:
             await self.repo.compare_update(
                 version,

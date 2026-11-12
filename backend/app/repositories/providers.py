@@ -23,7 +23,7 @@ class ProviderRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.credentials = db.user_provider_credentials
-        self.models = db.ai_models
+        self.ai_models = db.ai_models
 
     async def get(self, user_id: UUID, provider: str) -> UserProviderCredential | None:
         doc = await self.credentials.find_one(
@@ -34,7 +34,7 @@ class ProviderRepository:
         return None
 
     async def count_models(self, credential_id: UUID) -> int:
-        return await self.models.count_documents({"credential_id": credential_id})
+        return await self.ai_models.count_documents({"credential_id": credential_id})
 
     async def models(self, user_id: UUID, provider: str) -> list[AIModel]:
         credential = await self.credentials.find_one(
@@ -42,11 +42,11 @@ class ProviderRepository:
         )
         if not credential:
             return []
-        cursor = self.models.find({"credential_id": credential["_id"]}).sort("model_id")
+        cursor = self.ai_models.find({"credential_id": credential["_id"]}).sort("model_id")
         return [AIModel(**doc) async for doc in cursor]
 
     async def contains_model(self, credential_id: UUID, model_id: str) -> bool:
-        doc = await self.models.find_one(
+        doc = await self.ai_models.find_one(
             {"credential_id": credential_id, "model_id": model_id}
         )
         return doc is not None
@@ -70,7 +70,7 @@ class ProviderRepository:
         return UserProviderCredential(**result)
 
     async def clear_models(self, credential_id: UUID) -> None:
-        await self.models.delete_many({"credential_id": credential_id})
+        await self.ai_models.delete_many({"credential_id": credential_id})
 
     async def replace_models(
         self, credential_id: UUID, models: list[ProviderModel]
@@ -93,14 +93,14 @@ class ProviderRepository:
                 }
                 for model in models
             ]
-            await self.models.insert_many(model_docs)
+            await self.ai_models.insert_many(model_docs)
 
     async def delete(self, user_id: UUID, provider: str) -> None:
         credential = await self.credentials.find_one(
             {"user_id": user_id, "provider": provider}
         )
         if credential:
-            await self.models.delete_many({"credential_id": credential["_id"]})
+            await self.ai_models.delete_many({"credential_id": credential["_id"]})
             await self.credentials.delete_one(
                 {"user_id": user_id, "provider": provider}
             )

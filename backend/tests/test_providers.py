@@ -81,6 +81,7 @@ def test_registry_and_unsaved_catalog(owner):
     assert [(p["id"], p["name"], p["implemented"]) for p in providers] == [
         ("openai", "OpenAI", True),
         ("gemini", "Google Gemini", True),
+        ("groq", "Groq", True),
         ("anthropic", "Anthropic Claude", False),
         ("deepseek", "DeepSeek", False),
         ("ollama", "Ollama", False),
@@ -178,7 +179,9 @@ async def test_save_encrypts_at_rest_and_never_returns_credential_fields(owner, 
 
 
 @pytest.mark.asyncio
-async def test_read_only_connection_sync_even_when_disabled_and_default_validation(owner, mock_http, db):
+async def test_read_only_connection_sync_even_when_disabled_and_default_validation(
+    owner, mock_http, db
+):
     saved(owner, enabled=False)
     assert_error(
         owner.patch(f"{BASE}/openai", json={"default_model": MODEL["id"]}),

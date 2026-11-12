@@ -1,7 +1,12 @@
-"""Deterministic concurrent DB/HTTP contract mocks for MongoDB backend."""
+"""Deterministic concurrent DB/HTTP contract mocks for the MongoDB backend.
 
+The in-memory database is shared across coroutines/threads; mutations are
+sequenced so the revision guard, not wall-clock timing, decides the outcome.
+"""
+
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier, Event
+from threading import Event
 
 import httpx
 import pytest
@@ -9,7 +14,6 @@ from cryptography.fernet import Fernet
 from pydantic import SecretStr
 
 from app.core.credential_vault import CredentialVault
-from app.models import AIModel, User, UserProviderCredential
 from app.repositories.providers import ProviderRepository
 from app.schemas.providers import ProviderPatch
 from app.services.ai.base_provider import ProviderError
@@ -18,7 +22,7 @@ from app.services.providers import ProviderService
 
 
 @pytest.fixture
-def configured_user(client, register, db, settings):
+async def configured_user(client, register, db, settings):
     settings.credential_encryption_key = SecretStr(Fernet.generate_key().decode())
     register(client)
     user_doc = await db.users.find_one({})
@@ -31,7 +35,7 @@ def configured_user(client, register, db, settings):
 
 @pytest.mark.parametrize("mutation", ["replace", "delete", "recreate", "disable", "newer_sync"])
 @pytest.mark.parametrize("failure", [False, True])
-def test_stale_sync_never_overwrites_or_resurrects_configuration(
+async def test_stale_sync_never_overwrites_or_resurrects_configuration(
     configured_user,
     db,
     settings,
@@ -64,7 +68,7 @@ def test_stale_sync_never_overwrites_or_resurrects_configuration(
 
     def sync():
         http = ModelListingHTTP(transport=httpx.MockTransport(handle))
-        return ProviderService(db, settings, http).test(configured_user, "openai")
+        return asyncio.run(ProviderService(db, settings, http).test(configured_user, "openai"))
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         pending = pool.submit(sync)
@@ -72,24 +76,24 @@ def test_stale_sync_never_overwrites_or_resurrects_configuration(
             assert started.wait(5), "Sync never reached the mock transport"
             service = ProviderService(db, settings)
             if mutation in {"delete", "recreate"}:
-                service.delete(configured_user, "openai")
+                await service.delete(configured_user, "openai")
             if mutation in {"replace", "recreate"}:
-                service.patch(
+                await service.patch(
                     configured_user, "openai", ProviderPatch(api_key="replacement-test-key")
                 )
             elif mutation == "disable":
-                service.patch(configured_user, "openai", ProviderPatch(enabled=False))
+                await service.patch(configured_user, "openai", ProviderPatch(enabled=False))
             elif mutation == "newer_sync":
                 http = ModelListingHTTP(
                     transport=httpx.MockTransport(
                         lambda _: httpx.Response(200, json={"object": "list", "data": []})
                     )
                 )
-                ProviderService(db, settings, http).test(configured_user, "openai")
+                await ProviderService(db, settings, http).test(configured_user, "openai")
         finally:
             release.set()
         with pytest.raises(ProviderError) as error:
-            pending.result(timeout=5)
+            pending.result(timeout=10)
         assert error.value.code == "configuration_changed"
 
     credential = await db.user_provider_credentials.find_one({})
@@ -115,7 +119,7 @@ def test_stale_sync_never_overwrites_or_resurrects_configuration(
             )
 
 
-def test_concurrent_initial_configuration_has_one_winner(
+async def test_concurrent_initial_configuration_has_one_winner(
     client,
     register,
     db,
@@ -126,28 +130,29 @@ def test_concurrent_initial_configuration_has_one_winner(
     register(client)
     user_doc = await db.users.find_one({})
     user_id = user_doc["_id"]
-    barrier = Barrier(2)
+    barrier = asyncio.Barrier(2)
     original = ProviderRepository.get
 
     async def simultaneous_read(repository, owner, provider):
         result = await original(repository, owner, provider)
         if result is None:
-            barrier.wait(timeout=5)
+            await barrier.wait()
         return result
 
     monkeypatch.setattr(ProviderRepository, "get", simultaneous_read)
 
-    def configure(key):
+    async def configure(key):
         try:
-            ProviderService(db, settings).patch(
+            await ProviderService(db, settings).patch(
                 user_id, "openai", ProviderPatch(api_key=key)
             )
             return key
         except ProviderError as error:
             return error.code
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(configure, ["first-contract-key", "second-contract-key"]))
+    results = await asyncio.gather(
+        configure("first-contract-key"), configure("second-contract-key")
+    )
     assert results.count("configuration_changed") == 1
     winner = next(result for result in results if result != "configuration_changed")
     credential = await db.user_provider_credentials.find_one({})

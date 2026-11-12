@@ -14,6 +14,7 @@ T = TypeVar("T")
 ENDPOINTS = {
     "openai": "https://api.openai.com/v1/models",
     "gemini": "https://generativelanguage.googleapis.com/v1beta/models",
+    "groq": "https://api.groq.com/openai/v1/models",
 }
 
 
@@ -91,7 +92,7 @@ class ListingSession:
         secret = self.api_key.get_secret_value()
         headers = (
             {"Authorization": f"Bearer {secret}"}
-            if provider == "openai"
+            if provider in ("openai", "groq")
             else {"x-goog-api-key": secret}
         )
         async with self.client.stream(
