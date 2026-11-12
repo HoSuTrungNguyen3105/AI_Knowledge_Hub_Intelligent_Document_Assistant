@@ -1,0 +1,58 @@
+/* Compare AI layout. Reuses chat.css primitives (setup-panel, conversation-list,
+   markdown, message-flag, composer-error, thread-state) and globals. Flat surfaces,
+   hairline dividers, 6–8px radii — no gradients or glow. */
+.compare-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 22px; align-items: stretch; height: calc(100dvh - 292px); min-height: 520px; }
+
+/* Setup: target picker */
+.target-add { align-self: flex-start; }
+.target-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.target-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px 8px 12px; background: #fcfdfc; min-width: 0; }
+.target-name { min-width: 0; }
+.target-name strong { display: block; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.target-name small { display: block; color: var(--muted); font-size: 10px; margin-top: 2px; overflow-wrap: anywhere; }
+
+/* Comparison body */
+.comparison-body { flex: 1; overflow-y: auto; padding: 16px 22px 20px; min-height: 0; display: flex; flex-direction: column; gap: 16px; }
+.comparison-prompt { border-bottom: 1px solid #f1f3f1; padding-bottom: 14px; }
+.comparison-prompt .message-role { font-size: 10px; font-weight: 600; color: var(--accent); }
+.comparison-prompt .message-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.8; margin-top: 5px; }
+
+/* Run columns */
+.run-columns { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); align-items: start; }
+.run-column { border: 1px solid var(--line); border-radius: 8px; background: #fff; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.run-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); background: #fcfdfc; }
+.run-title { min-width: 0; }
+.run-title strong { display: block; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-title small { display: block; color: var(--muted); font-size: 10px; margin-top: 2px; overflow-wrap: anywhere; }
+.run-status { flex-shrink: 0; font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 6px; background: #eef1ef; color: #6b777c; white-space: nowrap; }
+.run-status.success { background: var(--accent-soft); color: var(--accent); }
+.run-status.error { background: #fbeee7; color: #a1634b; }
+.run-status.stopped { background: #f6f1e3; color: #9a8045; }
+.run-body { padding: 13px 14px; font-size: 13px; line-height: 1.8; min-width: 0; flex: 1; }
+.run-pending { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+.run-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; border-top: 1px solid #f1f3f1; }
+.run-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 10px; color: #93a09a; min-width: 0; }
+.run-foot .icon-button { width: 30px; height: 30px; flex-shrink: 0; }
+
+/* Synthesis */
+.synthesis-panel { border: 1px solid var(--line); border-radius: 8px; background: #fcfdfc; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.synthesis-head h3 { font-size: 14px; }
+.synthesis-head p { font-size: 11px; margin-top: 4px; line-height: 1.7; }
+.synthesis-form { display: flex; flex-direction: column; gap: 10px; }
+.synthesis-form .button { align-self: flex-start; }
+.synthesis-result { border-top: 1px solid var(--line); padding-top: 13px; }
+.synthesis-by { font-size: 10px; font-weight: 600; color: var(--muted); margin-bottom: 8px; overflow-wrap: anywhere; }
+.synthesis-result .run-meta { margin-top: 10px; }
+
+@media (max-width: 1200px) { .compare-layout { grid-template-columns: 240px minmax(0, 1fr); gap: 17px; } .comparison-body { padding-inline: 18px; } }
+@media (max-width: 1000px) {
+  .compare-layout { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 0; gap: 16px; }
+  .comparison-body { max-height: none; }
+  .run-columns { grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); }
+}
+@media (max-width: 760px) {
+  .comparison-body { padding-inline: 15px; }
+  .run-columns { grid-template-columns: minmax(0, 1fr); }
+  .conversation-header { flex-wrap: wrap; }
+  .conversation-tools { width: 100%; justify-content: flex-start; }
+}

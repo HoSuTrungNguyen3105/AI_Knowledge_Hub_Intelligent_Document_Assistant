@@ -140,7 +140,7 @@ class Comparison(BaseDocument, BaseModel):
     system_prompt: str | None = None
     temperature: float | None = None
     max_output_tokens: int | None = None
-    runs: list[ComparisonRun] = Field(default_factory=list)
+    runs: dict[str, ComparisonRun] = Field(default_factory=dict)
     synthesis: ComparisonSynthesis | None = None
     created_at: datetime
     updated_at: datetime

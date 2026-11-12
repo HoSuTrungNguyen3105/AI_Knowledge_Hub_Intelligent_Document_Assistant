@@ -34,7 +34,7 @@ class CompareRepository:
             "system_prompt": system_prompt,
             "temperature": temperature,
             "max_output_tokens": max_output_tokens,
-            "runs": [run.model_dump() for run in runs],
+            "runs": {str(run.id): run.model_dump() for run in runs},
             "synthesis": None,
             "created_at": now,
             "updated_at": now,
@@ -55,14 +55,16 @@ class CompareRepository:
         return result.deleted_count > 0
 
     async def update_run(
-        self, user_id: UUID, comparison_id: UUID, run_id: UUID, values: dict
+        self, user_id: UUID, comparison_id: UUID, run_id: str, values: dict
     ) -> None:
-        updates = {f"runs.$[r].{key}": value for key, value in values.items()}
+        # Runs are stored as a map keyed by run id, so each concurrent run updates
+        # its own dotted path. This avoids array_filters (unsupported by mongomock)
+        # and keeps parallel writes isolated.
+        updates = {f"runs.{run_id}.{key}": value for key, value in values.items()}
         updates["updated_at"] = utcnow()
         await self.comparisons.update_one(
             {"_id": comparison_id, "user_id": user_id},
             {"$set": updates},
-            array_filters=[{"r.id": run_id}],
         )
 
     async def set_synthesis(

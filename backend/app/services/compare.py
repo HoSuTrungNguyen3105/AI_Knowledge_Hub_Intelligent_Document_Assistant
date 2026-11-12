@@ -132,7 +132,7 @@ class CompareService:
     async def prepare_execute(self, user_id: UUID, comparison_id: UUID) -> PreparedCompare:
         comparison = await self._require_comparison(user_id, comparison_id)
         prepared: list[PreparedRun] = []
-        for run in comparison.runs:
+        for run in comparison.runs.values():
             credential, model = await self._require_target(user_id, run.provider, run.model)
             key = self.vault.decrypt(credential.encrypted_api_key, user_id, run.provider)
             prepared.append(
@@ -150,7 +150,9 @@ class CompareService:
         self, user_id: UUID, comparison_id: UUID, payload: SynthesizeRequest
     ) -> PreparedSynthesis:
         comparison = await self._require_comparison(user_id, comparison_id)
-        successful = [r for r in comparison.runs if r.status == "success" and r.content]
+        successful = [
+            r for r in comparison.runs.values() if r.status == "success" and r.content
+        ]
         if not successful:
             raise ProviderError("no_successful_runs")
         credential, model = await self._require_target(user_id, payload.provider, payload.model)
@@ -208,7 +210,10 @@ class CompareService:
                     if event.kind == "delta":
                         parts.append(event.text)
                         await queue.put(
-                            {"event": "run_delta", "data": {"run_id": str(pr.run.id), "text": event.text}}
+                            {
+                                "event": "run_delta",
+                                "data": {"run_id": str(pr.run.id), "text": event.text},
+                            }
                         )
                     elif event.kind == "usage":
                         if event.input_tokens is not None:
@@ -226,10 +231,28 @@ class CompareService:
             except Exception:
                 # A single run must never hang or abort the whole comparison.
                 status, error_code = "error", "generation_failed"
-            updated = await self._persist_run(
-                user_id, comparison, pr, "".join(parts), status, error_code,
-                input_tokens, output_tokens, started,
-            )
+            # Always emit exactly one terminal event, even if persistence fails;
+            # otherwise the aggregator loop below would wait on the queue forever.
+            try:
+                updated = await self._persist_run(
+                    user_id, comparison, pr, "".join(parts), status, error_code,
+                    input_tokens, output_tokens, started,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                status, error_code = "error", "generation_failed"
+                updated = ComparisonRun(
+                    **{
+                        **pr.run.model_dump(),
+                        "content": "".join(parts),
+                        "status": status,
+                        "error_code": error_code,
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "latency_ms": _elapsed_ms(started),
+                    }
+                )
             await queue.put(
                 {
                     "event": "run_error" if status == "error" else "run_done",
@@ -247,7 +270,10 @@ class CompareService:
                     finished += 1
             await self.repo.touch(user_id, comparison.id)
             final = await self.repo.get(user_id, comparison.id)
-            yield {"event": "done", "data": {"comparison": self._detail(final).model_dump(mode="json")}}
+            yield {
+                "event": "done",
+                "data": {"comparison": self._detail(final).model_dump(mode="json")},
+            }
         except asyncio.CancelledError:
             for task in tasks:
                 task.cancel()
@@ -323,7 +349,7 @@ class CompareService:
             "latency_ms": _elapsed_ms(started),
             "estimated_cost": _estimate_cost(pr.model, input_tokens, output_tokens),
         }
-        await self.repo.update_run(user_id, comparison.id, pr.run.id, values)
+        await self.repo.update_run(user_id, comparison.id, str(pr.run.id), values)
         await self.requests.record_request(
             user_id, provider=pr.run.provider, model=pr.run.model, status=status,
             input_tokens=input_tokens, output_tokens=output_tokens,
@@ -380,7 +406,7 @@ class CompareService:
             title=comparison.title,
             targets=[
                 RunBrief(provider=r.provider, model=r.model, status=r.status)
-                for r in comparison.runs
+                for r in comparison.runs.values()
             ],
             has_synthesis=comparison.synthesis is not None,
             created_at=comparison.created_at,
@@ -394,7 +420,7 @@ class CompareService:
             system_prompt=comparison.system_prompt,
             temperature=comparison.temperature,
             max_output_tokens=comparison.max_output_tokens,
-            runs=[self._run_out(r) for r in comparison.runs],
+            runs=[self._run_out(r) for r in comparison.runs.values()],
             synthesis=self._synthesis_out(comparison.synthesis) if comparison.synthesis else None,
         )
 

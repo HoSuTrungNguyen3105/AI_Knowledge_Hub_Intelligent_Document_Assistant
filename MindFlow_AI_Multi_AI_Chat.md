@@ -1,242 +1,287 @@
-# MindFlow AI -- Multi-AI Chat
+# MindFlow AI – Multi-AI Chat UI Specification
+
+> Tài liệu bổ sung cho roadmap hiện tại của MindFlow AI.
+>
+> Phạm vi chính: Hoàn thiện trải nghiệm giao diện Multi-AI Chat và cách người dùng tương tác với nhiều mô hình AI cùng lúc.
+>
+> Không xây dựng lại các module đã có và không thay đổi lộ trình 8 Phase hiện tại.
+
+---
 
 ## 1. Mục tiêu
 
-Phát triển tính năng **Multi-AI Chat** cho MindFlow AI, cho phép người
-dùng gửi một câu hỏi đến nhiều mô hình AI cùng lúc và xem các câu trả
-lời song song trên cùng một màn hình.
+Phát triển giao diện Multi-AI Chat cho phép người dùng trò chuyện với nhiều mô hình AI trên cùng một màn hình.
 
-Mục tiêu không chỉ là tập hợp nhiều chatbot, mà còn giúp người dùng **so
-sánh, đánh giá và tổng hợp** câu trả lời từ nhiều mô hình AI.
+Thay vì phải chuyển đổi qua lại giữa các chatbot, người dùng có thể nhập một câu hỏi duy nhất và nhận được nhiều câu trả lời từ các AI khác nhau.
+
+Ví dụ:
+- GPT
+- Claude
+- Gemini
+- DeepSeek
+- Qwen
+- Các model khác được cấu hình trong hệ thống.
+
+---
 
 ## 2. Giao diện Multi-AI Chat
 
-### 2.1. Bố cục màn hình
+### 2.1. Bố cục nhiều màn hình AI
 
--   Hiển thị nhiều khung chat trên cùng một trang.
--   Mỗi khung đại diện cho một model AI riêng.
--   Mỗi khung hiển thị:
-    -   Tên nhà cung cấp và tên model.
-    -   Trạng thái hoạt động.
-    -   Nội dung hội thoại.
-    -   Trạng thái đang trả lời, hoàn thành hoặc lỗi.
-    -   Thời gian phản hồi và thông tin token nếu provider có trả về.
--   Hỗ trợ bố cục 1, 2 hoặc nhiều cột tùy số lượng AI được chọn.
--   Cho phép thêm, xóa và thay đổi model trong danh sách đang so sánh.
--   Có thể phóng to một khung chat để đọc nội dung chi tiết.
+Thiết kế giao diện theo dạng Dashboard với nhiều khung chat độc lập.
 
-### 2.2. Thanh nhập liệu dùng chung
+Mỗi khung đại diện cho một model AI.
 
--   Chỉ sử dụng **một ô nhập liệu chung** cho toàn bộ các AI đang được
-    chọn.
--   Khi người dùng gửi câu hỏi, hệ thống gửi cùng nội dung đến tất cả
-    model đã chọn.
--   Mỗi AI xử lý độc lập và hiển thị câu trả lời trong khung riêng.
--   Không cần chờ model này hoàn thành mới gửi yêu cầu đến model tiếp
-    theo.
--   Có thể gửi câu hỏi tiếp theo khi lượt trả lời trước đã hoàn tất hoặc
-    theo cơ chế xử lý lượt hội thoại mà hệ thống hỗ trợ.
+Thông tin hiển thị trong từng khung:
 
-### 2.3. Thao tác trên từng câu trả lời
+- Tên Provider.
+- Tên Model.
+- Trạng thái hoạt động.
+- Nội dung câu hỏi và câu trả lời.
+- Trạng thái đang xử lý.
+- Thời gian phản hồi.
+- Token đầu vào và đầu ra nếu có.
 
--   Sao chép nội dung.
--   Tạo lại câu trả lời (Regenerate).
--   Dừng phản hồi của model đó.
--   Hiển thị thời gian phản hồi.
--   Hiển thị token đầu vào/đầu ra khi có dữ liệu.
--   Báo lỗi riêng cho từng model; lỗi của một model không làm mất kết
-    quả từ các model còn lại.
+### 2.2. Tùy chỉnh bố cục
 
-## 3. Quản lý hội thoại
+Cho phép người dùng thay đổi cách hiển thị:
 
--   Tạo hội thoại mới.
--   Đổi tên và xóa hội thoại.
--   Lưu lịch sử tin nhắn và các model tham gia.
--   Mở lại và tiếp tục hội thoại cũ.
--   Cho phép thêm hoặc bỏ model khỏi hội thoại.
--   Lưu riêng trạng thái và nội dung phản hồi của từng model trong mỗi
-    lượt gửi.
--   Khi thêm model mới giữa hội thoại, cần xác định rõ lịch sử nào sẽ
-    được gửi cho model đó để bảo đảm ngữ cảnh nhất quán.
+- 1 cột: Hiển thị một AI.
+- 2 cột: Hiển thị hai AI song song.
+- 3 cột: Hiển thị ba AI.
+- 4 cột: Hiển thị bốn AI.
+- Tự động điều chỉnh bố cục theo kích thước màn hình.
 
-## 4. Các chế độ sử dụng
+Cho phép:
+- Thêm AI vào màn hình.
+- Xóa AI khỏi màn hình.
+- Thay đổi thứ tự các AI.
+- Phóng to một khung chat.
+- Thu nhỏ hoặc đóng khung chat.
+- Chuyển đổi giữa các bố cục.
 
-### 4.1. Multi Chat
+Không giới hạn giao diện chỉ ở bốn AI, nhưng cần có giới hạn số lượng model chạy đồng thời để kiểm soát chi phí và hiệu năng.
 
-Hiển thị các AI trong những khung chat riêng biệt. Người dùng gửi một
-câu hỏi chung và theo dõi phản hồi đồng thời.
+---
 
-### 4.2. Compare AI
+## 3. Thanh nhập liệu chung (Shared Input)
 
-Hiển thị câu trả lời theo dạng so sánh để người dùng dễ đánh giá:
+Đây là thành phần quan trọng nhất của tính năng.
 
--   Điểm giống nhau.
--   Điểm khác nhau.
--   Ưu điểm và hạn chế của từng câu trả lời.
--   Model nào phù hợp hơn với mục đích đang thực hiện.
+Không sử dụng nhiều ô nhập liệu riêng biệt cho từng AI.
 
-Việc đánh giá nên dựa trên nội dung thực tế và tiêu chí do người dùng
-chọn, không mặc định model nào luôn tốt nhất.
+Thay vào đó, thiết kế một thanh nhập liệu chung ở cuối giao diện.
 
-### 4.3. AI Synthesis
+Chức năng:
 
-Sau khi các model hoàn thành, người dùng có thể chọn **Tổng hợp câu trả
-lời**.
+- Nhập nội dung câu hỏi.
+- Gửi câu hỏi đến tất cả AI đang được chọn.
+- Hỗ trợ nhập nhiều dòng.
+- Hỗ trợ Enter để gửi và Shift + Enter để xuống dòng.
+- Hiển thị số lượng AI sẽ nhận câu hỏi.
+- Cho phép bật/tắt AI trước khi gửi.
+- Có nút dừng toàn bộ lượt phản hồi.
 
--   Gửi câu hỏi ban đầu và các câu trả lời đã nhận đến một model được
-    chọn làm model tổng hợp.
--   Yêu cầu model tổng hợp chỉ ra điểm thống nhất, điểm mâu thuẫn và
-    thông tin cần kiểm chứng.
--   Đưa ra kết luận hoặc phương án đề xuất.
--   Hiển thị rõ đây là nội dung tổng hợp, không phải câu trả lời trực
-    tiếp của các model nguồn.
+### Nguyên tắc hoạt động
 
-## 5. Kiến trúc xử lý đề xuất
+Khi người dùng nhập:
 
-``` text
-                         USER
-                           |
-                           v
-                    SHARED INPUT
-                           |
-                           v
-                    MULTI-AI MANAGER
-                           |
-             +-------------+-------------+
-             |             |             |
-             v             v             v
-          Provider A   Provider B   Provider C
-             |             |             |
-             v             v             v
-          Model A       Model B       Model C
-             |             |             |
-             v             v             v
-          Response      Response      Response
-             |             |             |
-             +-------------+-------------+
-                           |
-                           v
-                    MULTI-AI UI
-                           |
-                 +---------+---------+
-                 |                   |
-                 v                   v
-             Compare AI          AI Synthesis
-```
+"Hãy đề xuất cho tôi một ý tưởng kinh doanh ứng dụng AI."
 
-### 5.1. Backend
+Hệ thống gửi cùng một nội dung đến tất cả AI đang được chọn.
 
--   Tái sử dụng hệ thống provider/model và cấu hình API key hiện có.
--   Tạo lớp điều phối Multi-AI Manager để nhận một câu hỏi và phân phối
-    đến các model được chọn.
--   Gọi các model song song, không xử lý tuần tự.
--   Có thể dùng `Promise.allSettled()` nếu backend sử dụng
-    JavaScript/Node.js để nhận kết quả thành công và lỗi độc lập từ từng
-    model.
--   Chuẩn hóa kết quả trả về theo một cấu trúc thống nhất, bất kể
-    provider nào.
--   Quản lý timeout, retry có giới hạn, hủy yêu cầu và giới hạn số model
-    chạy đồng thời.
--   Không để lộ API key ở frontend.
+Ví dụ:
 
-### 5.2. Streaming
+| Model | Nội dung gửi |
+|---|---|
+| GPT | Cùng một câu hỏi |
+| Claude | Cùng một câu hỏi |
+| Gemini | Cùng một câu hỏi |
+| DeepSeek | Cùng một câu hỏi |
 
-Ưu tiên hỗ trợ streaming để từng khung chat hiển thị nội dung ngay khi
-model tạo ra câu trả lời.
+Mỗi AI xử lý độc lập và trả kết quả về khung chat tương ứng.
 
-Có thể sử dụng SSE hoặc cơ chế streaming phù hợp với kiến trúc backend
-hiện tại. Mỗi luồng cần gắn với đúng hội thoại, lượt gửi và model để
-tránh hiển thị nhầm nội dung giữa các khung.
+Không cần chờ một AI hoàn thành mới gửi yêu cầu đến AI tiếp theo.
 
-### 5.3. Dữ liệu hội thoại
+---
 
-Mỗi lượt gửi nên lưu được:
+## 4. Quản lý từng khung chat
 
--   Hội thoại.
--   Nội dung câu hỏi chung.
--   Danh sách model được yêu cầu.
--   Trạng thái riêng của từng model.
--   Nội dung phản hồi của từng model.
--   Thời điểm bắt đầu và kết thúc.
--   Token và thời gian xử lý nếu provider cung cấp.
--   Thông tin lỗi nếu yêu cầu thất bại.
+Mỗi AI cần có các thao tác độc lập.
 
-## 6. Trải nghiệm người dùng và responsive
+### 4.1. Thao tác câu trả lời
 
--   Desktop: ưu tiên bố cục nhiều cột, có thể cuộn độc lập trong từng
-    khung chat.
--   Màn hình nhỏ: chuyển sang dạng tab, carousel hoặc từng khung xếp
-    dọc; tránh ép quá nhiều cột khiến nội dung khó đọc.
--   Có chế độ toàn màn hình cho một model.
--   Có trạng thái loading riêng cho từng AI.
--   Có thể dừng riêng từng model hoặc dừng toàn bộ lượt gửi.
--   Giữ thanh nhập liệu dễ truy cập khi cuộn nội dung.
--   Đồng bộ nội dung câu hỏi giữa các khung nhưng giữ phản hồi độc lập.
+- Copy: Sao chép nội dung.
+- Regenerate: Yêu cầu AI tạo lại câu trả lời.
+- Stop: Dừng phản hồi của AI hiện tại.
+- Expand: Phóng to khung chat.
+- Collapse: Thu nhỏ khung chat.
 
-## 7. Lưu ý về chi phí và giới hạn
+### 4.2. Trạng thái phản hồi
 
-Vì một câu hỏi được gửi đến nhiều model nên chi phí API và lượng token
-có thể tăng theo số model được chọn.
+Mỗi khung chat có trạng thái riêng:
 
-Cần triển khai:
+- Idle: Chưa có yêu cầu.
+- Loading: Đang xử lý.
+- Streaming: Đang tạo câu trả lời.
+- Completed: Hoàn thành.
+- Error: Xảy ra lỗi.
+- Cancelled: Đã dừng.
 
--   Hiển thị số model sẽ nhận câu hỏi trước khi gửi.
--   Thiết lập giới hạn số model chạy đồng thời.
--   Theo dõi token và chi phí ước tính nếu provider cung cấp dữ liệu.
--   Xử lý rate limit và quota riêng của từng provider.
--   Cho phép người dùng chọn model trước mỗi lượt gửi.
--   Tránh tự động gửi lại nhiều lần khi gặp lỗi để không phát sinh chi
-    phí ngoài ý muốn.
+Nếu một AI gặp lỗi, những AI khác vẫn tiếp tục hoạt động bình thường.
 
-## 8. Lộ trình triển khai
+### 4.3. Cuộn nội dung
 
-### Giai đoạn 1 -- Multi-AI Chat cơ bản
+- Mỗi khung chat có thanh cuộn riêng.
+- Không ảnh hưởng đến vị trí cuộn của các AI khác.
+- Có thể tự động cuộn xuống khi nhận câu trả lời mới.
+- Cho phép tắt tự động cuộn khi người dùng đang đọc nội dung cũ.
 
--   Chọn nhiều model từ provider đã cấu hình.
--   Hiển thị các khung chat song song.
--   Một ô nhập liệu chung.
--   Gửi câu hỏi đồng thời đến các model.
--   Hiển thị phản hồi và trạng thái riêng từng model.
--   Xử lý lỗi độc lập.
+---
 
-### Giai đoạn 2 -- Hoàn thiện trải nghiệm
+## 5. Chế độ hiển thị và so sánh
 
--   Streaming độc lập cho từng khung.
--   Sao chép, tạo lại và dừng phản hồi.
--   Lưu và tiếp tục lịch sử hội thoại.
--   Tùy chỉnh bố cục và phóng to khung chat.
--   Responsive cho mobile.
+Ngoài giao diện Multi Chat, bổ sung khả năng chuyển đổi cách xem kết quả.
 
-### Giai đoạn 3 -- Tính năng khác biệt
+### 5.1. Multi Chat Mode
 
--   Compare AI: so sánh các câu trả lời.
--   AI Synthesis: tổng hợp câu trả lời từ nhiều model.
--   Thống kê tốc độ, token và chi phí.
--   Đánh giá câu trả lời theo tiêu chí do người dùng chọn.
+Hiển thị nhiều AI trong các khung riêng biệt.
 
-## 9. Tiêu chí nghiệm thu
+Phù hợp khi người dùng muốn theo dõi toàn bộ quá trình trò chuyện của nhiều model.
 
--   Một lần gửi tạo yêu cầu đến tất cả model đang được chọn.
--   Các model được gọi song song, không phải lần lượt.
--   Mỗi model hiển thị phản hồi trong đúng khung của nó.
--   Một model lỗi không ảnh hưởng đến các model còn lại.
--   Streaming không trộn nội dung giữa các model.
--   Người dùng có thể dừng hoặc tạo lại phản hồi riêng lẻ.
--   Hội thoại được lưu và có thể mở lại.
--   Chi phí, token và trạng thái lỗi được hiển thị khi có dữ liệu.
--   Giao diện sử dụng được trên desktop và mobile.
+### 5.2. Compare Mode
 
-## 10. Định hướng sản phẩm
+Hiển thị câu trả lời theo dạng so sánh.
 
-MindFlow AI nên phát triển Multi-AI Chat thành một không gian làm việc
-với nhiều mô hình AI, tập trung vào ba giá trị:
+Các nội dung cần hỗ trợ:
 
-1.  **Hỏi một lần -- nhận nhiều góc nhìn:** nhiều model cùng xử lý một
-    câu hỏi.
-2.  **So sánh có cơ sở:** người dùng nhận biết điểm mạnh, điểm yếu và sự
-    khác biệt giữa các câu trả lời.
-3.  **Tổng hợp thành kết quả:** kết hợp các góc nhìn thành một câu trả
-    lời có cấu trúc.
+- So sánh câu trả lời giữa các AI.
+- Nhận biết điểm giống và khác nhau.
+- Xem ưu điểm và hạn chế của từng câu trả lời.
+- So sánh thời gian phản hồi.
+- So sánh lượng token sử dụng.
+- Đánh giá câu trả lời theo tiêu chí do người dùng lựa chọn.
 
-Đây là định hướng giúp MindFlow AI tạo giá trị khác biệt thay vì chỉ là
-giao diện tập hợp nhiều chatbot.
+Cho phép chuyển đổi qua lại giữa Multi Chat và Compare mà không mất dữ liệu hội thoại.
+
+---
+
+## 6. AI Synthesis – Tổng hợp câu trả lời
+
+Tận dụng kết quả từ nhiều AI để tạo ra một câu trả lời tổng hợp.
+
+Luồng hoạt động:
+
+1. Người dùng gửi câu hỏi đến nhiều AI.
+2. Các AI hoàn thành câu trả lời.
+3. Người dùng nhấn nút "Tổng hợp câu trả lời".
+4. Hệ thống gửi câu hỏi ban đầu và các kết quả đến một model được chọn.
+5. Model tổng hợp phân tích và tạo câu trả lời cuối cùng.
+
+Kết quả tổng hợp cần có:
+
+- Những điểm thống nhất giữa các AI.
+- Những điểm khác biệt.
+- Những thông tin còn mâu thuẫn.
+- Ưu điểm của từng phương án.
+- Kết luận và đề xuất cuối cùng.
+
+Cần phân biệt rõ câu trả lời gốc của từng AI và câu trả lời do AI tổng hợp tạo ra.
+
+---
+
+## 7. Responsive Design
+
+### Desktop
+
+- Ưu tiên hiển thị nhiều khung chat song song.
+- Có thể thay đổi số cột.
+- Thanh nhập liệu luôn dễ truy cập.
+- Mỗi khung chat có thanh cuộn riêng.
+
+### Tablet
+
+- Tự động giảm số cột.
+- Đảm bảo nội dung không bị tràn.
+- Cho phép chuyển đổi bố cục.
+
+### Mobile
+
+Không nên cố hiển thị 3–4 AI cùng lúc trên màn hình nhỏ.
+
+Đề xuất:
+- Hiển thị từng AI dưới dạng Tab.
+- Có thể vuốt ngang để chuyển đổi AI.
+- Hiển thị số lượng AI đang tham gia.
+- Có thể chuyển sang danh sách kết quả.
+- Giữ thanh nhập liệu ở cuối màn hình.
+- Có thể xem câu trả lời tổng hợp riêng.
+
+---
+
+## 8. Quy tắc tích hợp với hệ thống hiện tại
+
+Đây là phần quan trọng để tránh ảnh hưởng đến kiến trúc MindFlow AI đang xây dựng.
+
+- Tái sử dụng Provider Architecture hiện tại.
+- Tái sử dụng Model Management.
+- Tái sử dụng hệ thống cấu hình API Key.
+- Tái sử dụng Conversation History.
+- Không tạo thêm một hệ thống quản lý Provider riêng.
+- Không tạo thêm cơ chế Authentication riêng.
+- Không hardcode danh sách model vào giao diện.
+- Danh sách model phải được lấy từ hệ thống đã cấu hình.
+- Không làm ảnh hưởng đến AI Chat hiện tại.
+- Đảm bảo tương thích với các provider và model có thể được bổ sung trong tương lai.
+
+Nếu hệ thống đã có giao diện AI Chat đơn lẻ, hãy phát triển Multi-AI Chat thành một chế độ sử dụng mới thay vì thay thế hoặc phá bỏ chức năng cũ.
+
+---
+
+## 9. Yêu cầu về hiệu năng và trải nghiệm
+
+- Các AI phải được xử lý độc lập.
+- Không để một AI bị lỗi làm ảnh hưởng đến toàn bộ giao diện.
+- Hạn chế render lại tất cả khung chat khi chỉ một AI cập nhật nội dung.
+- Hỗ trợ streaming độc lập cho từng AI.
+- Quản lý trạng thái loading riêng.
+- Có cơ chế hủy request.
+- Kiểm soát số lượng request đồng thời.
+- Không tự động gửi lại request gây phát sinh chi phí ngoài ý muốn.
+- Giữ nội dung hội thoại khi chuyển đổi bố cục.
+- Đảm bảo giao diện hoạt động tốt khi có nhiều câu trả lời dài.
+
+---
+
+## 10. Tiêu chí hoàn thành
+
+- Có thể chọn nhiều AI trên cùng một màn hình.
+- Có thể gửi một câu hỏi chung đến tất cả AI đã chọn.
+- Các AI phản hồi đồng thời.
+- Mỗi AI hiển thị câu trả lời trong khung riêng.
+- Có thể thao tác độc lập trên từng AI.
+- Có thể thay đổi bố cục hiển thị.
+- Có thể chuyển đổi Multi Chat và Compare.
+- Có thể tổng hợp câu trả lời từ nhiều AI.
+- Không mất dữ liệu khi thay đổi bố cục.
+- Giao diện responsive trên Desktop, Tablet và Mobile.
+- Tương thích với kiến trúc Provider và Model hiện tại.
+
+---
+
+## 11. Nguyên tắc triển khai
+
+Đọc và phân tích source code hiện tại trước khi thực hiện.
+
+Không tự ý xây dựng lại các module đã hoàn thành.
+
+Không thay đổi roadmap 8 Phase hiện tại.
+
+Tập trung triển khai các yêu cầu bổ sung của tài liệu này, tích hợp vào đúng Phase tương ứng:
+
+- Phase 3: Hoàn thiện trải nghiệm Multi-Model Chat.
+- Phase 4: Hoàn thiện Compare Mode và AI Synthesis.
+
+Ưu tiên tái sử dụng component, API, service và cấu trúc dữ liệu hiện có.
+
+Đảm bảo các tính năng mới hoạt động ổn định và không làm ảnh hưởng đến chức năng hiện tại của MindFlow AI.

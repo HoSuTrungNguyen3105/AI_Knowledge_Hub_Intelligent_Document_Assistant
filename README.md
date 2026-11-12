@@ -1,6 +1,6 @@
 # MindFlow AI
 
-Mở rộng AI Knowledge Hub theo `update_features.md`, giữ nền tảng trong `plan_create_web.md` và triển khai từng giai đoạn. **Bản hiện tại: Foundation + Phase 2 + Phase 3 — Multi-model AI Chat (streaming, lịch sử hội thoại).**
+Mở rộng AI Knowledge Hub theo `update_features.md`, giữ nền tảng trong `plan_create_web.md` và triển khai từng giai đoạn. **Bản hiện tại: Foundation + Phase 2 + Phase 3 + Phase 4 — Multi-model AI Chat và Multi-AI Comparison (chạy song song, synthesis tùy chọn, usage/cost ước tính).**
 
 ## Đã triển khai
 
