@@ -41,46 +41,75 @@ def test_seeded_dashboard_counts_and_activity_are_owner_isolated(
     other = UUID(register(other_client, email="other@example.com").json()["user"]["id"])
     for user_id, quantity in [(owner, 2), (other, 3)]:
         for number in range(quantity):
-            kb = KnowledgeBase(user_id=user_id, name=f"Knowledge {number}")
-            db.add(kb)
-            db.flush()
-            db.add_all(
-                [
-                    Document(
-                        user_id=user_id,
-                        knowledge_base_id=kb.id,
-                        original_filename=f"document-{number}.txt",
-                        file_size=10,
-                        mime_type="text/plain",
-                        storage_path=f"internal/{user_id}/{number}.txt",
-                    ),
-                    Conversation(
-                        user_id=user_id,
-                        knowledge_base_id=kb.id,
-                        title=f"Conversation {number}",
-                        provider="openai",
-                        model="test-model",
-                    ),
-                ]
+            kb = KnowledgeBase(
+                id=KnowledgeBase.generate_id(),
+                user_id=user_id,
+                name=f"Knowledge {number}",
+                description=None,
+                created_at=utcnow(),
+                updated_at=utcnow(),
+            )
+            await db.knowledge_bases.insert_one(kb.model_dump(by_alias=True))
+            await db.documents.insert_one(
+                Document(
+                    id=Document.generate_id(),
+                    user_id=user_id,
+                    knowledge_base_id=kb.id,
+                    original_filename=f"document-{number}.txt",
+                    file_size=10,
+                    mime_type="text/plain",
+                    storage_path=f"internal/{user_id}/{number}.txt",
+                    status="queued",
+                    chunk_count=0,
+                    error_message=None,
+                    created_at=utcnow(),
+                ).model_dump(by_alias=True)
+            )
+            await db.conversations.insert_one(
+                Conversation(
+                    id=Conversation.generate_id(),
+                    user_id=user_id,
+                    knowledge_base_id=kb.id,
+                    title=f"Conversation {number}",
+                    provider="openai",
+                    model="test-model",
+                    created_at=utcnow(),
+                    updated_at=utcnow(),
+                ).model_dump(by_alias=True)
             )
         for _ in range(quantity + 1):
-            db.add(
+            await db.ai_requests.insert_one(
                 AIRequest(
-                    user_id=user_id, provider="openai", model="test-model", status="completed"
-                )
+                    id=AIRequest.generate_id(),
+                    user_id=user_id,
+                    provider="openai",
+                    model="test-model",
+                    status="completed",
+                    created_at=utcnow(),
+                ).model_dump(by_alias=True)
             )
     now = utcnow()
+    activity_logs = []
     for number in range(12):
-        db.add(
+        activity_logs.append(
             ActivityLog(
+                id=ActivityLog.generate_id(),
                 user_id=owner,
                 action="test.activity",
                 description=f"Owner event {number}",
                 created_at=now + timedelta(seconds=number),
-            )
+            ).model_dump(by_alias=True)
         )
-    db.add(ActivityLog(user_id=other, action="test.private", description="Other user's secret"))
-    db.commit()
+    activity_logs.append(
+        ActivityLog(
+            id=ActivityLog.generate_id(),
+            user_id=other,
+            action="test.private",
+            description="Other user's secret",
+            created_at=utcnow(),
+        ).model_dump(by_alias=True)
+    )
+    await db.activity_logs.insert_many(activity_logs)
     owner_body = client.get("/api/v1/dashboard").json()
     other_body = other_client.get("/api/v1/dashboard").json()
     for key in ["total_documents", "total_knowledge_bases", "total_conversations"]:

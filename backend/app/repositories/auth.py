@@ -1,63 +1,101 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select, update
-from sqlalchemy.orm import Session
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models import ActivityLog, RefreshToken, User
+from app.models.base import utcnow
 
 
 class AuthRepository:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
+        self.users = db.users
+        self.refresh_tokens = db.refresh_tokens
+        self.activity_logs = db.activity_logs
 
-    def user_by_email(self, email: str) -> User | None:
-        return self.db.scalar(select(User).where(User.email == email))
+    async def user_by_email(self, email: str) -> User | None:
+        doc = await self.users.find_one({"email": email})
+        if doc:
+            return User(**doc)
+        return None
 
-    def create_user(self, *, email: str, name: str, password_hash: str) -> User:
-        user = User(email=email, name=name, password_hash=password_hash)
-        self.db.add(user)
-        self.db.flush()
-        return user
+    async def create_user(self, *, email: str, name: str, password_hash: str) -> User:
+        user_id = User.generate_id()
+        now = utcnow()
+        user_doc = {
+            "_id": user_id,
+            "email": email,
+            "name": name,
+            "password_hash": password_hash,
+            "created_at": now,
+        }
+        await self.users.insert_one(user_doc)
+        return User(**user_doc)
 
-    def create_session(self, user_id: UUID, token_hash: str, expires_at: datetime) -> RefreshToken:
-        session = RefreshToken(user_id=user_id, token_hash=token_hash, expires_at=expires_at)
-        self.db.add(session)
-        self.db.flush()
-        return session
+    async def create_session(
+        self, user_id: UUID, token_hash: str, expires_at: datetime
+    ) -> RefreshToken:
+        session_id = RefreshToken.generate_id()
+        now = utcnow()
+        session_doc = {
+            "_id": session_id,
+            "user_id": user_id,
+            "token_hash": token_hash,
+            "expires_at": expires_at,
+            "revoked_at": None,
+            "created_at": now,
+        }
+        await self.refresh_tokens.insert_one(session_doc)
+        return RefreshToken(**session_doc)
 
-    def record_activity(self, user_id: UUID, action: str, description: str) -> None:
-        self.db.add(ActivityLog(user_id=user_id, action=action, description=description))
+    async def record_activity(self, user_id: UUID, action: str, description: str) -> None:
+        log_id = ActivityLog.generate_id()
+        now = utcnow()
+        log_doc = {
+            "_id": log_id,
+            "user_id": user_id,
+            "action": action,
+            "description": description,
+            "created_at": now,
+        }
+        await self.activity_logs.insert_one(log_doc)
 
-    def active_user(self, user_id: UUID, session_id: UUID, now: datetime) -> User | None:
-        return self.db.scalar(
-            select(User)
-            .join(RefreshToken, RefreshToken.user_id == User.id)
-            .where(
-                User.id == user_id,
-                RefreshToken.id == session_id,
-                RefreshToken.revoked_at.is_(None),
-                RefreshToken.expires_at > now,
-            )
+    async def active_user(
+        self, user_id: UUID, session_id: UUID, now: datetime
+    ) -> User | None:
+        session = await self.refresh_tokens.find_one(
+            {
+                "_id": session_id,
+                "user_id": user_id,
+                "revoked_at": None,
+                "expires_at": {"$gt": now},
+            }
         )
+        if not session:
+            return None
+        user = await self.users.find_one({"_id": user_id})
+        if not user:
+            return None
+        return User(**user)
 
-    def rotate_session(
+    async def rotate_session(
         self, old_hash: str, new_hash: str, now: datetime, expires_at: datetime
     ) -> RefreshToken | None:
-        # One conditional UPDATE, not a read followed by a write. Concurrent replays
-        # cannot both win, including on PostgreSQL's READ COMMITTED isolation level.
-        return self.db.scalar(
-            update(RefreshToken)
-            .where(
-                RefreshToken.token_hash == old_hash,
-                RefreshToken.revoked_at.is_(None),
-                RefreshToken.expires_at > now,
-            )
-            .values(token_hash=new_hash, expires_at=expires_at)
-            .returning(RefreshToken)
+        result = await self.refresh_tokens.find_one_and_update(
+            {
+                "token_hash": old_hash,
+                "revoked_at": None,
+                "expires_at": {"$gt": now},
+            },
+            {"$set": {"token_hash": new_hash, "expires_at": expires_at}},
+            return_document=True,
         )
+        if result:
+            return RefreshToken(**result)
+        return None
 
-    def revoke_sessions(
+    async def revoke_sessions(
         self,
         now: datetime,
         refresh_hash: str | None,
@@ -65,13 +103,12 @@ class AuthRepository:
     ) -> None:
         predicates = []
         if refresh_hash:
-            predicates.append(RefreshToken.token_hash == refresh_hash)
+            predicates.append({"token_hash": refresh_hash})
         if access_identity:
             user_id, session_id = access_identity
-            predicates.append(and_(RefreshToken.id == session_id, RefreshToken.user_id == user_id))
+            predicates.append({"_id": session_id, "user_id": user_id})
+
         if predicates:
-            self.db.execute(
-                update(RefreshToken)
-                .where(or_(*predicates), RefreshToken.revoked_at.is_(None))
-                .values(revoked_at=now)
+            await self.refresh_tokens.update_many(
+                {"$or": predicates, "revoked_at": None}, {"$set": {"revoked_at": now}}
             )

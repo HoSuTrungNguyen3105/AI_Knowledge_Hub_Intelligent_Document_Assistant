@@ -5,17 +5,15 @@ from urllib.parse import urlsplit
 from cryptography.fernet import Fernet
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy.engine import make_url
 
-ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
+ROOT_ENV = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT_ENV, env_file_encoding="utf-8", extra="ignore")
 
-    database_url: str = (
-        "postgresql+psycopg://knowledge_hub:knowledge_hub@localhost:5432/knowledge_hub"
-    )
+    mongodb_uri: str = "mongodb://localhost:27017"
+    mongodb_database: str = "mindflow_ai"
     jwt_secret: SecretStr
     credential_encryption_key: SecretStr | None = None
     cors_origins: list[str] = Field(
@@ -52,11 +50,11 @@ class Settings(BaseSettings):
             raise ValueError("JWT_SECRET must be a random secret of at least 32 characters")
         return value
 
-    @field_validator("database_url")
+    @field_validator("mongodb_uri")
     @classmethod
-    def validate_database(cls, value: str) -> str:
-        if make_url(value).drivername != "postgresql+psycopg":
-            raise ValueError("DATABASE_URL must use postgresql+psycopg")
+    def validate_mongodb_uri(cls, value: str) -> str:
+        if not value.startswith(("mongodb://", "mongodb+srv://")):
+            raise ValueError("MONGODB_URI must start with mongodb:// or mongodb+srv://")
         return value
 
     @field_validator("cors_origins")

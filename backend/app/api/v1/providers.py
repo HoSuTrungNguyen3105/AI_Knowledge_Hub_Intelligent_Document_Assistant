@@ -25,48 +25,48 @@ ProviderHTTP = Annotated[ModelListingHTTP, Depends(provider_http)]
 
 
 @router.get("", response_model=ProviderCatalog)
-def list_providers(user: CurrentUser, db: Database, settings: AppSettings) -> ProviderCatalog:
-    return ProviderService(db, settings).catalog(user.id)
+async def list_providers(user: CurrentUser, db: Database, settings: AppSettings) -> ProviderCatalog:
+    return await ProviderService(db, settings).catalog(user.id)
 
 
 @router.patch("/{provider}", response_model=ProviderMetadata)
-def patch_provider(
+async def patch_provider(
     provider: str,
     patch: ProviderPatch,
     user: CurrentUser,
     db: Database,
     settings: AppSettings,
 ) -> ProviderMetadata:
-    return ProviderService(db, settings).patch(user.id, provider, patch)
+    return await ProviderService(db, settings).patch(user.id, provider, patch)
 
 
 @router.post("/{provider}/test", response_model=ProviderTestResult)
-def test_provider(
+async def test_provider(
     provider: str,
     user: CurrentUser,
     db: Database,
     settings: AppSettings,
     http: ProviderHTTP,
 ) -> ProviderTestResult:
-    return ProviderService(db, settings, http).test(user.id, provider)
+    return await ProviderService(db, settings, http).test(user.id, provider)
 
 
 @router.get("/{provider}/models", response_model=ProviderModels)
-def provider_models(
+async def provider_models(
     provider: str,
     user: CurrentUser,
     db: Database,
     settings: AppSettings,
 ) -> ProviderModels:
-    return ProviderService(db, settings).models(user.id, provider)
+    return await ProviderService(db, settings).models(user.id, provider)
 
 
 @router.delete("/{provider}", status_code=204)
-def delete_provider(
+async def delete_provider(
     provider: str,
     user: CurrentUser,
     db: Database,
     settings: AppSettings,
 ) -> Response:
-    ProviderService(db, settings).delete(user.id, provider)
+    await ProviderService(db, settings).delete(user.id, provider)
     return Response(status_code=204)

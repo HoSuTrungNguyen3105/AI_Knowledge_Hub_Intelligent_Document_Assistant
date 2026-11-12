@@ -1,94 +1,85 @@
 from datetime import datetime
 from uuid import UUID
-
-from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Index, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-
-from app.models.base import Base, IdentityMixin, UpdatedMixin, UTCDateTime
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class User(IdentityMixin, Base):
-    __tablename__ = "users"
+class User(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
 
-    email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
-    name: Mapped[str] = mapped_column(String(100), nullable=False)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    sessions: Mapped[list["RefreshToken"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
-    )
-
-
-class RefreshToken(IdentityMixin, Base):
-    __tablename__ = "refresh_tokens"
-
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, index=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
-    user: Mapped[User] = relationship(back_populates="sessions")
+    id: UUID = Field(alias="_id")
+    email: str
+    name: str
+    password_hash: str
+    created_at: datetime
 
 
-class KnowledgeBase(IdentityMixin, UpdatedMixin, Base):
-    __tablename__ = "knowledge_bases"
+class RefreshToken(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
 
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    name: Mapped[str] = mapped_column(String(200), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
-    documents: Mapped[list["Document"]] = relationship(
-        back_populates="knowledge_base", cascade="all, delete-orphan", passive_deletes=True
-    )
-
-
-class Document(IdentityMixin, Base):
-    __tablename__ = "documents"
-    __table_args__ = (
-        CheckConstraint("file_size >= 0", name="file_size_nonnegative"),
-        CheckConstraint("chunk_count >= 0", name="chunk_count_nonnegative"),
-        CheckConstraint("status IN ('queued', 'processing', 'ready', 'failed')", name="status"),
-    )
-
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    knowledge_base_id: Mapped[UUID] = mapped_column(
-        ForeignKey("knowledge_bases.id", ondelete="CASCADE"), index=True
-    )
-    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
-    file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    mime_type: Mapped[str] = mapped_column(String(127), nullable=False)
-    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="queued", server_default="queued")
-    chunk_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    error_message: Mapped[str | None] = mapped_column(Text)
-    knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="documents")
+    id: UUID = Field(alias="_id")
+    user_id: UUID
+    token_hash: str
+    expires_at: datetime
+    revoked_at: datetime | None = None
+    created_at: datetime
 
 
-class Conversation(IdentityMixin, UpdatedMixin, Base):
-    __tablename__ = "conversations"
+class KnowledgeBase(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
 
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    knowledge_base_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("knowledge_bases.id", ondelete="SET NULL"), index=True
-    )
-    title: Mapped[str] = mapped_column(String(200), nullable=False)
-    provider: Mapped[str] = mapped_column(String(50), nullable=False)
-    model: Mapped[str] = mapped_column(String(100), nullable=False)
-
-
-class AIRequest(IdentityMixin, Base):
-    __tablename__ = "ai_requests"
-    __table_args__ = (
-        CheckConstraint("status IN ('pending', 'completed', 'failed', 'cancelled')", name="status"),
-    )
-
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    provider: Mapped[str] = mapped_column(String(50), nullable=False)
-    model: Mapped[str] = mapped_column(String(100), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    id: UUID = Field(alias="_id")
+    user_id: UUID
+    name: str
+    description: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
-class ActivityLog(IdentityMixin, Base):
-    __tablename__ = "activity_logs"
-    __table_args__ = (Index("ix_activity_logs_user_created", "user_id", "created_at"),)
+class Document(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
 
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    action: Mapped[str] = mapped_column(String(100), nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
+    id: UUID = Field(alias="_id")
+    user_id: UUID
+    knowledge_base_id: UUID
+    original_filename: str
+    file_size: int
+    mime_type: str
+    storage_path: str
+    status: str = "queued"
+    chunk_count: int = 0
+    error_message: str | None = None
+    created_at: datetime
+
+
+class Conversation(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID = Field(alias="_id")
+    user_id: UUID
+    knowledge_base_id: UUID | None = None
+    title: str
+    provider: str
+    model: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class AIRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID = Field(alias="_id")
+    user_id: UUID
+    provider: str
+    model: str
+    status: str
+    created_at: datetime
+
+
+class ActivityLog(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID = Field(alias="_id")
+    user_id: UUID
+    action: str
+    description: str
+    created_at: datetime

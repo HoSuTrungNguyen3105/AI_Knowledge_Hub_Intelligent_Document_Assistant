@@ -1,54 +1,16 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, MetaData, Uuid, func
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.types import TypeDecorator
-
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-class UTCDateTime(TypeDecorator):
-    """Preserve aware UTC values, including SQLite test round trips."""
+class BaseDocument:
+    @classmethod
+    def generate_id(cls) -> UUID:
+        return uuid4()
 
-    impl = DateTime(timezone=True)
-    cache_ok = True
-
-    def process_bind_param(self, value: datetime | None, dialect):
-        if value is None:
-            return None
-        if value.tzinfo is None:
-            raise ValueError("Timestamps must be timezone-aware")
-        return value.astimezone(UTC)
-
-    def process_result_value(self, value: datetime | None, dialect):
-        if value is None:
-            return None
-        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
-
-
-class Base(DeclarativeBase):
-    metadata = MetaData(
-        naming_convention={
-            "ix": "ix_%(table_name)s_%(column_0_name)s",
-            "uq": "uq_%(table_name)s_%(column_0_name)s",
-            "ck": "ck_%(table_name)s_%(constraint_name)s",
-            "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
-            "pk": "pk_%(table_name)s",
-        }
-    )
-
-
-class IdentityMixin:
-    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    created_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), nullable=False, default=utcnow, server_default=func.now()
-    )
-
-
-class UpdatedMixin:
-    updated_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), nullable=False, default=utcnow, onupdate=utcnow, server_default=func.now()
-    )
+    @staticmethod
+    def now() -> datetime:
+        return utcnow()

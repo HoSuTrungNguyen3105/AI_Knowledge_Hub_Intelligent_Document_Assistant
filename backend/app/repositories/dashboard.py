@@ -1,40 +1,36 @@
 from uuid import UUID
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models import ActivityLog, AIRequest, Conversation, Document, KnowledgeBase
 
 
 class DashboardRepository:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
 
-    def totals(self, user_id: UUID) -> dict[str, int]:
+    async def totals(self, user_id: UUID) -> dict[str, int]:
+        pipeline = [
+            {"$match": {"user_id": user_id}},
+            {"$group": {"_id": None, "count": {"$sum": 1}}},
+        ]
         resources = {
-            "total_documents": Document,
-            "total_knowledge_bases": KnowledgeBase,
-            "total_conversations": Conversation,
-            "ai_requests_usage": AIRequest,
+            "total_documents": self.db.documents,
+            "total_knowledge_bases": self.db.knowledge_bases,
+            "total_conversations": self.db.conversations,
+            "ai_requests_usage": self.db.ai_requests,
         }
-        query = select(
-            *[
-                select(func.count())
-                .select_from(model)
-                .where(model.user_id == user_id)
-                .scalar_subquery()
-                .label(label)
-                for label, model in resources.items()
-            ]
-        )
-        return dict(self.db.execute(query).mappings().one())
+        result = {}
+        for label, collection in resources.items():
+            cursor = collection.aggregate(pipeline)
+            docs = await cursor.to_list(length=1)
+            result[label] = docs[0]["count"] if docs else 0
+        return result
 
-    def recent_activity(self, user_id: UUID) -> list[ActivityLog]:
-        return list(
-            self.db.scalars(
-                select(ActivityLog)
-                .where(ActivityLog.user_id == user_id)
-                .order_by(ActivityLog.created_at.desc(), ActivityLog.id.desc())
-                .limit(10)
-            )
+    async def recent_activity(self, user_id: UUID) -> list[ActivityLog]:
+        cursor = (
+            self.db.activity_logs.find({"user_id": user_id})
+            .sort("created_at", -1)
+            .limit(10)
         )
+        return [ActivityLog(**doc) async for doc in cursor]

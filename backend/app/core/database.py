@@ -1,43 +1,56 @@
-from collections.abc import Generator
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
 from fastapi import Request
-from sqlalchemy import Engine, create_engine, event
-from sqlalchemy.engine import make_url
-from sqlalchemy.orm import Session, sessionmaker
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+
+from app.core.config import Settings
 
 
-def build_engine(url: str) -> Engine:
-    """SQLite is explicitly available to tests; application settings require PostgreSQL."""
-    dialect = make_url(url).get_backend_name()
-    if dialect == "sqlite":
-        engine = create_engine(url, connect_args={"check_same_thread": False})
-
-        @event.listens_for(engine, "connect")
-        def enable_foreign_keys(connection, _record):
-            cursor = connection.cursor()
-            cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.close()
-
-        return engine
-    return create_engine(
-        url,
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
-        pool_timeout=5,
-        connect_args={"connect_timeout": 5},
-        hide_parameters=True,
+def build_mongo_client(settings: Settings) -> AsyncIOMotorClient:
+    return AsyncIOMotorClient(
+        settings.mongodb_uri,
+        serverSelectionTimeoutMS=5000,
+        connectTimeoutMS=5000,
+        socketTimeoutMS=30000,
+        maxPoolSize=10,
+        minPoolSize=1,
     )
 
 
-def build_session_factory(engine: Engine) -> sessionmaker[Session]:
-    return sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+def get_database(client: AsyncIOMotorClient, settings: Settings) -> AsyncIOMotorDatabase:
+    return client[settings.mongodb_database]
 
 
-def get_db(request: Request) -> Generator[Session]:
-    with request.app.state.session_factory() as session:
-        try:
-            yield session
-        except Exception:
-            session.rollback()
-            raise
+async def init_indexes(db: AsyncIOMotorDatabase) -> None:
+    await db.users.create_index("email", unique=True)
+    await db.refresh_tokens.create_index("user_id")
+    await db.refresh_tokens.create_index("token_hash", unique=True)
+    await db.refresh_tokens.create_index("expires_at")
+    await db.knowledge_bases.create_index("user_id")
+    await db.documents.create_index("user_id")
+    await db.documents.create_index("knowledge_base_id")
+    await db.conversations.create_index("user_id")
+    await db.conversations.create_index("knowledge_base_id")
+    await db.ai_requests.create_index("user_id")
+    await db.activity_logs.create_index([("user_id", 1), ("created_at", -1)])
+    await db.user_provider_credentials.create_index([("user_id", 1), ("provider", 1)], unique=True)
+    await db.ai_models.create_index([("credential_id", 1), ("model_id", 1)], unique=True)
+
+
+@asynccontextmanager
+async def lifespan_mongo(settings: Settings) -> AsyncGenerator[AsyncIOMotorClient, None]:
+    client = build_mongo_client(settings)
+    try:
+        await client.admin.command("ping")
+        db = get_database(client, settings)
+        await init_indexes(db)
+        yield client
+    finally:
+        client.close()
+
+
+async def get_db(request: Request) -> AsyncGenerator[AsyncIOMotorDatabase, None]:
+    client: AsyncIOMotorClient = request.app.state.mongo_client
+    db = get_database(client, request.app.state.settings)
+    yield db

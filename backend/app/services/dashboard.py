@@ -1,17 +1,16 @@
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.repositories.dashboard import DashboardRepository
 from app.schemas.dashboard import ActivityResponse, DashboardResponse
 
 
-def get_dashboard(db: Session, user_id: UUID) -> DashboardResponse:
+async def get_dashboard(db: AsyncIOMotorDatabase, user_id: UUID) -> DashboardResponse:
     repository = DashboardRepository(db)
+    totals = await repository.totals(user_id)
+    activities = await repository.recent_activity(user_id)
     return DashboardResponse(
-        **repository.totals(user_id),
-        recent_activity=[
-            ActivityResponse.model_validate(activity)
-            for activity in repository.recent_activity(user_id)
-        ],
+        **totals,
+        recent_activity=[ActivityResponse.model_validate(activity) for activity in activities],
     )

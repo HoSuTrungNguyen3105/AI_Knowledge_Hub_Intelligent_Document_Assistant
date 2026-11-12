@@ -1,7 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import Settings
 from app.core.credential_vault import CredentialVault
@@ -23,42 +22,44 @@ from app.services.ai.registry import PROVIDERS, get_provider
 
 
 class ProviderService:
-    def __init__(self, db: Session, settings: Settings, http: ModelListingHTTP | None = None):
+    def __init__(
+        self, db: AsyncIOMotorDatabase, settings: Settings, http: ModelListingHTTP | None = None
+    ):
         self.db = db
         self.repo = ProviderRepository(db)
         self.vault = CredentialVault(settings.credential_encryption_key)
         self.http = http
 
-    def metadata(self, user_id: UUID, provider: str) -> ProviderMetadata:
+    async def metadata(self, user_id: UUID, provider: str) -> ProviderMetadata:
         definition = get_provider(provider)
         result = ProviderMetadata(
             id=definition.id, name=definition.name, implemented=definition.implemented
         )
-        credential = self.repo.get(user_id, provider)
+        credential = await self.repo.get(user_id, provider)
         if credential is not None:
             result.configured = True
             result.enabled = credential.enabled
             result.connection_status = credential.connection_status
             result.default_model = credential.default_model
-            result.model_count = self.repo.count_models(credential.id)
+            result.model_count = await self.repo.count_models(credential.id)
             result.last_checked_at = credential.last_checked_at
             result.models_synced_at = credential.models_synced_at
             result.last_error_code = credential.last_error_code
         return result
 
-    def catalog(self, user_id: UUID) -> ProviderCatalog:
+    async def catalog(self, user_id: UUID) -> ProviderCatalog:
         return ProviderCatalog(
             encryption_ready=self.vault.ready,
-            providers=[self.metadata(user_id, slug) for slug in PROVIDERS],
+            providers=[await self.metadata(user_id, slug) for slug in PROVIDERS],
         )
 
-    def patch(self, user_id: UUID, provider: str, patch: ProviderPatch) -> ProviderMetadata:
+    async def patch(self, user_id: UUID, provider: str, patch: ProviderPatch) -> ProviderMetadata:
         get_provider(provider, require_implemented=True)
-        credential = self.repo.get(user_id, provider)
+        credential = await self.repo.get(user_id, provider)
         if credential is None and patch.api_key is None:
             raise ProviderError("credentials_missing")
         if patch.default_model is not None and (
-            credential is None or not self.repo.contains_model(credential.id, patch.default_model)
+            credential is None or not await self.repo.contains_model(credential.id, patch.default_model)
         ):
             raise ProviderError("invalid_default_model")
         values = {}
@@ -76,22 +77,30 @@ class ProviderService:
                 last_error_code=None,
             )
         if credential is None:
-            self.db.add(UserProviderCredential(user_id=user_id, provider=provider, **values))
+            now = utcnow()
+            await self.db.user_provider_credentials.insert_one(
+                {
+                    "_id": UserProviderCredential.generate_id(),
+                    "user_id": user_id,
+                    "provider": provider,
+                    "created_at": now,
+                    "updated_at": now,
+                    **values,
+                }
+            )
         else:
-            self.repo.compare_update(CredentialVersion.of(credential), values)
+            try:
+                await self.repo.compare_update(CredentialVersion.of(credential), values)
+            except ProviderError:
+                raise
             if patch.api_key is not None:
-                self.repo.clear_models(credential.id)
-        try:
-            self.db.commit()
-        except IntegrityError:
-            # A concurrent initial save must not overwrite the winner's key.
-            self.db.rollback()
-            raise ProviderError("configuration_changed") from None
-        return self.metadata(user_id, provider)
+                await self.repo.clear_models(credential.id)
+        return await self.metadata(user_id, provider)
 
-    def models(self, user_id: UUID, provider: str) -> ProviderModels:
+    async def models(self, user_id: UUID, provider: str) -> ProviderModels:
         get_provider(provider)
-        credential = self.repo.get(user_id, provider)
+        credential = await self.repo.get(user_id, provider)
+        models = await self.repo.models(user_id, provider)
         return ProviderModels(
             provider=provider,
             models=[
@@ -104,27 +113,25 @@ class ProviderService:
                     output_token_limit=model.output_token_limit,
                     capability_source=model.capability_source,
                 )
-                for model in self.repo.models(user_id, provider)
+                for model in models
             ],
             synced_at=credential.models_synced_at if credential else None,
         )
 
-    def test(self, user_id: UUID, provider: str) -> ProviderTestResult:
+    async def test(self, user_id: UUID, provider: str) -> ProviderTestResult:
         adapter = create_provider(provider, self.http)
-        credential = self.repo.get(user_id, provider)
+        credential = await self.repo.get(user_id, provider)
         if credential is None:
             raise ProviderError("credentials_missing")
         version = CredentialVersion.of(credential)
         ciphertext = credential.encrypted_api_key
         default_model = credential.default_model
-        # Release read transactions/connections before I/O; disabled credentials
-        # can still be tested. Snapshot contains no live ORM state after rollback.
-        self.db.rollback()
+        # Release read transactions/connections before I/O
         try:
             key = self.vault.decrypt(ciphertext, user_id, provider)
-            models = adapter.list_models(key)
+            models = await adapter.list_models(key)
         except ProviderError as error:
-            self.repo.compare_update(
+            await self.repo.compare_update(
                 version,
                 {
                     "connection_status": "error",
@@ -132,26 +139,25 @@ class ProviderService:
                     "last_error_code": error.code,
                 },
             )
-            self.db.commit()
             raise
         now = utcnow()
-        self.repo.compare_update(
+        await self.repo.compare_update(
             version,
             {
                 "connection_status": "connected",
                 "last_checked_at": now,
                 "models_synced_at": now,
                 "last_error_code": None,
-                "default_model": default_model if default_model in {m.id for m in models} else None,
+                "default_model": default_model
+                if default_model in {m.id for m in models}
+                else None,
             },
         )
-        self.repo.replace_models(version.id, models)
-        self.db.commit()
+        await self.repo.replace_models(version.id, models)
         return ProviderTestResult(
-            provider=self.metadata(user_id, provider), model_count=len(models)
+            provider=await self.metadata(user_id, provider), model_count=len(models)
         )
 
-    def delete(self, user_id: UUID, provider: str) -> None:
+    async def delete(self, user_id: UUID, provider: str) -> None:
         get_provider(provider)
-        self.repo.delete(user_id, provider)
-        self.db.commit()
+        await self.repo.delete(user_id, provider)

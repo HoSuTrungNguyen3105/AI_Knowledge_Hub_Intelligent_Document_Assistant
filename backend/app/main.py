@@ -5,11 +5,10 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import SQLAlchemyError
 
 from app.api.v1 import auth, dashboard, health, providers
 from app.core.config import Settings, get_settings
-from app.core.database import build_engine, build_session_factory
+from app.core.database import lifespan_mongo
 from app.core.middleware import RateLimiter, SecurityMiddleware
 from app.services.ai.base_provider import ProviderError
 
@@ -18,12 +17,12 @@ logger = logging.getLogger(__name__)
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    engine = build_engine(settings.database_url)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        yield
-        engine.dispose()
+        async with lifespan_mongo(settings) as client:
+            _app.state.mongo_client = client
+            yield
 
     application = FastAPI(
         title="AI Knowledge Hub API",
@@ -32,8 +31,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     application.state.settings = settings
-    application.state.engine = engine
-    application.state.session_factory = build_session_factory(engine)
     application.state.rate_limiter = RateLimiter(settings)
     application.add_middleware(
         SecurityMiddleware, settings=settings, limiter=application.state.rate_limiter
@@ -62,19 +59,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for error in exc.errors()
         ]
         return JSONResponse(status_code=422, content={"detail": errors})
-
-    @application.exception_handler(SQLAlchemyError)
-    async def database_error(_request: Request, exc: SQLAlchemyError):
-        logger.error("Database request failed (%s)", type(exc).__name__)
-        if _request.url.path.startswith("/api/v1/ai"):
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "detail": {"code": "database_unavailable", "message": "Database unavailable."}
-                },
-                headers={"Cache-Control": "no-store"},
-            )
-        return JSONResponse(status_code=503, content={"detail": "Database unavailable"})
 
     @application.exception_handler(Exception)
     async def unexpected_error(_request: Request, exc: Exception):

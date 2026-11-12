@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, update
-from sqlalchemy.orm import Session
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models import AIModel, UserProviderCredential
 from app.schemas.providers import ProviderModel
@@ -21,94 +20,87 @@ class CredentialVersion:
 
 
 class ProviderRepository:
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
+        self.credentials = db.user_provider_credentials
+        self.models = db.ai_models
 
-    def get(self, user_id: UUID, provider: str) -> UserProviderCredential | None:
-        return self.db.scalar(
-            select(UserProviderCredential)
-            .where(
-                UserProviderCredential.user_id == user_id,
-                UserProviderCredential.provider == provider,
-            )
-            .execution_options(populate_existing=True)
+    async def get(self, user_id: UUID, provider: str) -> UserProviderCredential | None:
+        doc = await self.credentials.find_one(
+            {"user_id": user_id, "provider": provider}
         )
+        if doc:
+            return UserProviderCredential(**doc)
+        return None
 
-    def count_models(self, credential_id: UUID) -> int:
-        return (
-            self.db.scalar(
-                select(func.count())
-                .select_from(AIModel)
-                .where(AIModel.credential_id == credential_id)
-            )
-            or 0
-        )
+    async def count_models(self, credential_id: UUID) -> int:
+        return await self.models.count_documents({"credential_id": credential_id})
 
-    def models(self, user_id: UUID, provider: str) -> list[AIModel]:
-        return list(
-            self.db.scalars(
-                select(AIModel)
-                .join(UserProviderCredential)
-                .where(
-                    UserProviderCredential.user_id == user_id,
-                    UserProviderCredential.provider == provider,
-                )
-                .order_by(AIModel.model_id)
-            )
+    async def models(self, user_id: UUID, provider: str) -> list[AIModel]:
+        credential = await self.credentials.find_one(
+            {"user_id": user_id, "provider": provider}
         )
+        if not credential:
+            return []
+        cursor = self.models.find({"credential_id": credential["_id"]}).sort("model_id")
+        return [AIModel(**doc) async for doc in cursor]
 
-    def contains_model(self, credential_id: UUID, model_id: str) -> bool:
-        return (
-            self.db.scalar(
-                select(AIModel.id).where(
-                    AIModel.credential_id == credential_id, AIModel.model_id == model_id
-                )
-            )
-            is not None
+    async def contains_model(self, credential_id: UUID, model_id: str) -> bool:
+        doc = await self.models.find_one(
+            {"credential_id": credential_id, "model_id": model_id}
         )
+        return doc is not None
 
-    def compare_update(self, version: CredentialVersion, values: dict) -> None:
-        # This short write transaction serializes cache mutation with key changes
-        # and deletes. No transaction/row lock is held across the upstream HTTP call.
-        result = self.db.execute(
-            update(UserProviderCredential)
-            .where(
-                UserProviderCredential.id == version.id,
-                UserProviderCredential.user_id == version.user_id,
-                UserProviderCredential.revision == version.revision,
-            )
-            .values(**values, revision=version.revision + 1)
-            .execution_options(synchronize_session=False)
+    async def compare_update(
+        self, version: CredentialVersion, values: dict
+    ) -> UserProviderCredential | None:
+        values["revision"] = version.revision + 1
+        values["updated_at"] = __import__("app.models.base", fromlist=["utcnow"]).utcnow()
+        result = await self.credentials.find_one_and_update(
+            {
+                "_id": version.id,
+                "user_id": version.user_id,
+                "revision": version.revision,
+            },
+            {"$set": values},
+            return_document=True,
         )
-        if result.rowcount != 1:
-            self.db.rollback()
+        if not result:
             raise ProviderError("configuration_changed")
+        return UserProviderCredential(**result)
 
-    def clear_models(self, credential_id: UUID) -> None:
-        self.db.execute(delete(AIModel).where(AIModel.credential_id == credential_id))
+    async def clear_models(self, credential_id: UUID) -> None:
+        await self.models.delete_many({"credential_id": credential_id})
 
-    def replace_models(self, credential_id: UUID, models: list[ProviderModel]) -> None:
-        self.clear_models(credential_id)
-        self.db.add_all(
-            [
-                AIModel(
-                    credential_id=credential_id,
-                    model_id=model.id,
-                    display_name=model.display_name,
-                    description=model.description,
-                    capabilities=model.capabilities.model_dump(),
-                    input_token_limit=model.input_token_limit,
-                    output_token_limit=model.output_token_limit,
-                    capability_source=model.capability_source,
-                )
+    async def replace_models(
+        self, credential_id: UUID, models: list[ProviderModel]
+    ) -> None:
+        await self.clear_models(credential_id)
+        if models:
+            now = __import__("app.models.base", fromlist=["utcnow"]).utcnow()
+            model_docs = [
+                {
+                    "_id": AIModel.generate_id(),
+                    "credential_id": credential_id,
+                    "model_id": model.id,
+                    "display_name": model.display_name,
+                    "description": model.description,
+                    "capabilities": model.capabilities.model_dump(),
+                    "input_token_limit": model.input_token_limit,
+                    "output_token_limit": model.output_token_limit,
+                    "capability_source": model.capability_source,
+                    "created_at": now,
+                }
                 for model in models
             ]
-        )
+            await self.models.insert_many(model_docs)
 
-    def delete(self, user_id: UUID, provider: str) -> None:
-        self.db.execute(
-            delete(UserProviderCredential).where(
-                UserProviderCredential.user_id == user_id,
-                UserProviderCredential.provider == provider,
-            )
+    async def delete(self, user_id: UUID, provider: str) -> None:
+        credential = await self.credentials.find_one(
+            {"user_id": user_id, "provider": provider}
         )
+        if credential:
+            await self.models.delete_many({"credential_id": credential["_id"]})
+            await self.credentials.delete_one(
+                {"user_id": user_id, "provider": provider}
+            )

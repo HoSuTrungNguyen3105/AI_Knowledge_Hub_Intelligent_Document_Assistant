@@ -1,6 +1,5 @@
 import pytest
 from conftest import ORIGIN, PASSWORD
-from sqlalchemy.exc import OperationalError
 
 from app.core.middleware import RateLimiter
 from app.core.security import ACCESS_COOKIE, REFRESH_COOKIE
@@ -114,8 +113,8 @@ def test_rate_limit_window_expiry_and_client_isolation(settings):
 
 
 def test_safe_database_error_response(client, monkeypatch):
-    def fail(_repository, _email):
-        raise OperationalError("SELECT password_hash", {}, Exception("secret-db-password"))
+    async def fail(_repository, _email):
+        raise Exception("secret-db-password")
 
     monkeypatch.setattr(AuthRepository, "user_by_email", fail)
     response = client.post(
@@ -124,7 +123,6 @@ def test_safe_database_error_response(client, monkeypatch):
     assert response.status_code == 503
     assert response.json() == {"detail": "Database unavailable"}
     assert "secret" not in response.text
-    assert "SELECT" not in response.text
 
 
 def test_safe_unexpected_error(client_factory, monkeypatch):

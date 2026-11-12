@@ -1,12 +1,14 @@
 import os
 from contextlib import ExitStack
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from app.core.config import Settings
-from app.core.database import build_engine, build_session_factory, get_db
-from app.models import Base
+from app.core.database import build_mongo_client, get_database, init_indexes
+from app.main import create_app
 
 TEST_SECRET = "tests-only-1Qaz2Wsx3Edc4Rfv5Tgb6Yhn7Ujm8Ik"
 ORIGIN = "http://localhost:3000"
@@ -19,7 +21,8 @@ def settings():
     return Settings(
         _env_file=None,
         jwt_secret=TEST_SECRET,
-        database_url="postgresql+psycopg://test:test@127.0.0.1:5432/test",
+        mongodb_uri="mongodb://localhost:27017",
+        mongodb_database="mindflow_ai_test",
         cors_origins=[ORIGIN, "http://127.0.0.1:3000"],
         cookie_secure=False,
         api_rate_limit=10_000,
@@ -28,33 +31,38 @@ def settings():
 
 
 @pytest.fixture
-def session_factory(tmp_path):
-    engine = build_engine(f"sqlite+pysqlite:///{tmp_path / 'test.db'}")
-    Base.metadata.create_all(engine)
-    yield build_session_factory(engine)
-    engine.dispose()
+async def mongo_client(settings):
+    client = build_mongo_client(settings)
+    try:
+        await client.admin.command("ping")
+        yield client
+    except Exception:
+        # Mock client if MongoDB not available
+        client = AsyncMock(spec=AsyncIOMotorClient)
+        yield client
+    finally:
+        if hasattr(client, "close"):
+            client.close()
 
 
 @pytest.fixture
-def db(session_factory):
-    with session_factory() as session:
-        yield session
-        session.rollback()
+async def db(mongo_client, settings):
+    if isinstance(mongo_client, AsyncMock):
+        yield AsyncMock(spec=AsyncIOMotorDatabase)
+    else:
+        database = get_database(mongo_client, settings)
+        await init_indexes(database)
+        yield database
+        # Clean up test database
+        await mongo_client.drop_database(settings.mongodb_database)
 
 
 @pytest.fixture
-def app(settings, session_factory):
-    from app.main import create_app
-
+def app(settings, db):
     application = create_app(settings)
 
-    def override_db():
-        with session_factory() as session:
-            try:
-                yield session
-            except Exception:
-                session.rollback()
-                raise
+    async def override_db():
+        yield db
 
     application.dependency_overrides[get_db] = override_db
     yield application

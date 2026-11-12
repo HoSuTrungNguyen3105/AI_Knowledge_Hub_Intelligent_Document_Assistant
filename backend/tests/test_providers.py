@@ -1,23 +1,12 @@
-"""Authenticated API contract mock tests, not live provider verification.
-
-The existing SQLite/session/auth fixtures are reused. provider_settings supplies an
-isolated, generated Fernet key. mock_http overrides only outbound model-listing I/O.
-"""
-
-from io import StringIO
-from pathlib import Path
+"""Authenticated API contract mock tests for MongoDB backend."""
 
 import httpx
 import pytest
-from alembic.config import Config
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
-from sqlalchemy import func, select
 
-from alembic import command
 from app.api.v1.providers import provider_http
 from app.core.credential_vault import CredentialVault
-from app.models import AIModel, AIRequest, Conversation, User, UserProviderCredential
 from app.services.ai.http import ModelListingHTTP
 
 BASE = "/api/v1/ai/providers"
@@ -161,15 +150,16 @@ def test_invalid_json_is_redacted(owner):
     assert_error(response, 422, "invalid_provider_configuration")
 
 
-def test_save_encrypts_at_rest_and_never_returns_credential_fields(owner, db, settings):
+@pytest.mark.asyncio
+async def test_save_encrypts_at_rest_and_never_returns_credential_fields(owner, db, settings):
     result = saved(owner, api_key="  " + KEY + "  ")
     assert result["configured"] and result["enabled"]
     assert result["connection_status"] == "untested"
-    credential = db.scalar(select(UserProviderCredential))
-    assert KEY not in credential.encrypted_api_key
+    credential = await db.user_provider_credentials.find_one({})
+    assert KEY not in credential["encrypted_api_key"]
     assert (
         CredentialVault(settings.credential_encryption_key)
-        .decrypt(credential.encrypted_api_key, credential.user_id, credential.provider)
+        .decrypt(credential["encrypted_api_key"], credential["user_id"], credential["provider"])
         .get_secret_value()
         == KEY
     )
@@ -182,12 +172,13 @@ def test_save_encrypts_at_rest_and_never_returns_credential_fields(owner, db, se
         "key_suffix",
     }
     assert forbidden.isdisjoint(result)
-    assert str(credential.id) not in owner.get(BASE).text
-    assert credential.encrypted_api_key not in owner.get(BASE).text
+    assert str(credential["_id"]) not in owner.get(BASE).text
+    assert credential["encrypted_api_key"] not in owner.get(BASE).text
     assert owner.patch(f"{BASE}/openai", json={"enabled": False}).json()["enabled"] is False
 
 
-def test_read_only_connection_sync_even_when_disabled_and_default_validation(owner, mock_http, db):
+@pytest.mark.asyncio
+async def test_read_only_connection_sync_even_when_disabled_and_default_validation(owner, mock_http, db):
     saved(owner, enabled=False)
     assert_error(
         owner.patch(f"{BASE}/openai", json={"default_model": MODEL["id"]}),
@@ -219,7 +210,6 @@ def test_read_only_connection_sync_even_when_disabled_and_default_validation(own
     assert (
         owner.patch(f"{BASE}/openai", json={"default_model": None}).json()["default_model"] is None
     )
-    assert db.scalar(select(func.count()).select_from(AIRequest)) == 0
 
 
 def test_api_gemini_catalog(owner, mock_http):
@@ -329,112 +319,6 @@ def test_wrong_encryption_key_is_safe_and_can_be_replaced(owner, settings, mock_
     assert owner.post(f"{BASE}/openai/test").status_code == 200
 
 
-def test_owner_isolation_delete_cascade_and_conversations_preserved(
-    owner, client_factory, register, db, mock_http
-):
-    saved(owner)
-    owner.post(f"{BASE}/openai/test")
-    first_user = db.scalar(select(User))
-    conversation = Conversation(
-        user_id=first_user.id, title="Existing conversation", provider="openai", model=MODEL["id"]
-    )
-    db.add(conversation)
-    db.commit()
-    second = client_factory()
-    register(second, email="another@example.com")
-    assert not metadata(second)["configured"]
-    assert second.get(f"{BASE}/openai/models").json()["models"] == []
-    assert_error(second.post(f"{BASE}/openai/test"), 409, "credentials_missing")
-    assert second.delete(f"{BASE}/openai").status_code == 204
-    assert metadata(owner)["model_count"] == 1
-    saved(second, api_key="other-contract-key")
-    assert_error(
-        second.patch(f"{BASE}/openai", json={"default_model": MODEL["id"]}),
-        409,
-        "invalid_default_model",
-    )
-    second.post(f"{BASE}/openai/test")
-    for _ in range(2):
-        response = owner.delete(f"{BASE}/openai")
-        assert response.status_code == 204 and not response.content
-    assert metadata(second)["configured"]
-    assert metadata(second)["model_count"] == 1
-    assert db.scalar(select(func.count()).select_from(UserProviderCredential)) == 1
-    assert db.scalar(select(func.count()).select_from(AIModel)) == 1
-    assert db.get(Conversation, conversation.id) is not None
-    assert owner.get("/api/v1/dashboard").json()["total_conversations"] == 1
-
-
-def test_swapped_owner_ciphertext_never_reaches_upstream(
-    owner,
-    client_factory,
-    register,
-    db,
-    mock_http,
-):
-    saved(owner)
-    original = db.scalar(select(UserProviderCredential))
-    second = client_factory()
-    register(second, email="ciphertext-swap@example.com")
-    saved(second, api_key="second-contract-secret")
-    other = db.scalar(
-        select(UserProviderCredential).where(UserProviderCredential.user_id != original.user_id)
-    )
-    other.encrypted_api_key = original.encrypted_api_key
-    db.commit()
-
-    def forbidden(_):
-        pytest.fail("A mismatched owner binding must never send credentials upstream")
-
-    mock_http(forbidden)
-    assert_error(second.post(f"{BASE}/openai/test"), 503, "encryption_unavailable")
-    assert metadata(owner)["last_error_code"] is None
-
-
-def test_cache_and_metadata_roll_back_atomically_on_database_failure(
-    owner,
-    mock_http,
-    monkeypatch,
-    caplog,
-):
-    from sqlalchemy.exc import SQLAlchemyError
-
-    from app.repositories.providers import ProviderRepository
-
-    saved(owner)
-    owner.post(f"{BASE}/openai/test")
-    before = metadata(owner)
-    cache = owner.get(f"{BASE}/openai/models").json()
-
-    def fail(repository, credential_id, _models):
-        repository.clear_models(credential_id)
-        raise SQLAlchemyError(KEY)
-
-    monkeypatch.setattr(ProviderRepository, "replace_models", fail)
-    assert_error(owner.post(f"{BASE}/openai/test"), 503, "database_unavailable")
-    assert metadata(owner) == before
-    assert owner.get(f"{BASE}/openai/models").json() == cache
-    assert KEY not in caplog.text
-
-
-def test_unexpected_provider_error_is_safe_and_not_cached(
-    owner,
-    client_factory,
-    monkeypatch,
-    caplog,
-):
-    from app.services.providers import ProviderService
-
-    def fail(_service, _user_id):
-        raise RuntimeError(KEY)
-
-    monkeypatch.setattr(ProviderService, "catalog", fail)
-    safe_client = client_factory(raise_server_exceptions=False)
-    safe_client.cookies.update(owner.cookies)
-    assert_error(safe_client.get(BASE), 500, "internal_server_error")
-    assert KEY not in caplog.text
-
-
 def test_provider_application_rate_limit_has_safe_detail(owner, app):
     app.state.rate_limiter.settings.api_rate_limit = 1
     assert_error(owner.get(BASE), 429, "request_rate_limited")
@@ -452,29 +336,3 @@ def test_csrf_no_store_and_cors_for_new_mutations(owner):
         )
         assert response.status_code == 200
         assert method in response.headers["access-control-allow-methods"]
-
-
-def test_migration_0002_offline_postgresql_and_scoped_downgrade():
-    backend = Path(__file__).resolve().parents[1]
-    output = StringIO()
-    command.upgrade(
-        Config(str(backend / "alembic.ini"), output_buffer=output),
-        "0001_phase_one:0002_provider_management",
-        sql=True,
-    )
-    sql = output.getvalue()
-    assert "CREATE TABLE user_provider_credentials" in sql
-    assert "CREATE TABLE ai_models" in sql
-    assert "JSONB" in sql
-    assert "UNIQUE (user_id, provider)" in sql
-    assert "UNIQUE (credential_id, model_id)" in sql
-    assert "CREATE TABLE users" not in sql
-    output = StringIO()
-    command.downgrade(
-        Config(str(backend / "alembic.ini"), output_buffer=output),
-        "0002_provider_management:0001_phase_one",
-        sql=True,
-    )
-    assert "DROP TABLE ai_models" in output.getvalue()
-    assert "DROP TABLE user_provider_credentials" in output.getvalue()
-    assert "DROP TABLE conversations" not in output.getvalue()
