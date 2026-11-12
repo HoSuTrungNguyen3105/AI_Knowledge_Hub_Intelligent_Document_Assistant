@@ -4,6 +4,7 @@ from app.models.entities import (
     Conversation,
     Document,
     KnowledgeBase,
+    Message,
     RefreshToken,
     User,
 )
@@ -16,6 +17,7 @@ __all__ = [
     "Conversation",
     "Document",
     "KnowledgeBase",
+    "Message",
     "RefreshToken",
     "User",
     "UserProviderCredential",

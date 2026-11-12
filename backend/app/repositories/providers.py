@@ -51,6 +51,12 @@ class ProviderRepository:
         )
         return doc is not None
 
+    async def get_model(self, credential_id: UUID, model_id: str) -> AIModel | None:
+        doc = await self.ai_models.find_one(
+            {"credential_id": credential_id, "model_id": model_id}
+        )
+        return AIModel(**doc) if doc else None
+
     async def compare_update(
         self, version: CredentialVersion, values: dict
     ) -> UserProviderCredential | None:

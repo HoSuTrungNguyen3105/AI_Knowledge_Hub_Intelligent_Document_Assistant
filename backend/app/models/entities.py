@@ -63,8 +63,28 @@ class Conversation(BaseDocument, BaseModel):
     title: str
     provider: str
     model: str
+    system_prompt: str | None = None
+    temperature: float | None = None
+    max_output_tokens: int | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class Message(BaseDocument, BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID = Field(alias="_id")
+    conversation_id: UUID
+    user_id: UUID
+    role: str
+    content: str
+    status: str = "success"
+    model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    latency_ms: int | None = None
+    error_code: str | None = None
+    created_at: datetime
 
 
 class AIRequest(BaseDocument, BaseModel):
@@ -75,6 +95,11 @@ class AIRequest(BaseDocument, BaseModel):
     provider: str
     model: str
     status: str
+    conversation_id: UUID | None = None
+    message_id: UUID | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    latency_ms: int | None = None
     created_at: datetime
 
 

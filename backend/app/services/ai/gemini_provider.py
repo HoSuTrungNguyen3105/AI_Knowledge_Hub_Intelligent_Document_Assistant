@@ -1,9 +1,12 @@
+from collections.abc import AsyncIterator
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from app.schemas.providers import ModelCapabilities, ProviderModel
 from app.services.ai.base_provider import BaseProvider, ProviderError
+from app.services.ai.chat import ChatHTTP, SecretRedactor
+from app.services.ai.chat_types import ChatEvent, ChatRequest, token_count
 from app.services.ai.http import ListingSession, ModelListingHTTP
 
 
@@ -29,8 +32,13 @@ class GeminiListing(BaseModel):
 
 
 class GeminiProvider(BaseProvider):
-    def __init__(self, http: ModelListingHTTP | None = None):
+    def __init__(
+        self,
+        http: ModelListingHTTP | None = None,
+        chat_http: ChatHTTP | None = None,
+    ):
         self.http = http or ModelListingHTTP()
+        self.chat_http = chat_http or ChatHTTP()
 
     def list_models(self, api_key: SecretStr) -> list[ProviderModel]:
         async def listing(session: ListingSession) -> list[ProviderModel]:
@@ -80,3 +88,47 @@ class GeminiProvider(BaseProvider):
             raise ProviderError("invalid_provider_response")
 
         return self.http.run(listing, api_key)
+
+    async def stream_chat(
+        self, api_key: SecretStr, request: ChatRequest
+    ) -> AsyncIterator[ChatEvent]:
+        contents = [
+            {
+                "role": "user" if turn.role == "user" else "model",
+                "parts": [{"text": turn.content}],
+            }
+            for turn in request.turns
+        ]
+        payload: dict = {"contents": contents}
+        if request.system_prompt:
+            payload["systemInstruction"] = {"parts": [{"text": request.system_prompt}]}
+        generation: dict = {}
+        if request.temperature is not None:
+            generation["temperature"] = request.temperature
+        if request.max_output_tokens is not None:
+            generation["maxOutputTokens"] = request.max_output_tokens
+        if generation:
+            payload["generationConfig"] = generation
+        redactor = SecretRedactor(api_key.get_secret_value())
+        async for event in self.chat_http.stream(
+            "gemini", api_key, payload, params={"alt": "sse"}, model=request.model
+        ):
+            candidates = event.get("candidates")
+            if isinstance(candidates, list) and candidates and isinstance(candidates[0], dict):
+                content = candidates[0].get("content")
+                if isinstance(content, dict):
+                    parts = content.get("parts")
+                    if isinstance(parts, list):
+                        for part in parts:
+                            if isinstance(part, dict):
+                                text = part.get("text")
+                                if isinstance(text, str) and text:
+                                    redactor.feed(text)
+                                    yield ChatEvent("delta", text=text)
+            usage = event.get("usageMetadata")
+            if isinstance(usage, dict):
+                yield ChatEvent(
+                    "usage",
+                    input_tokens=token_count(usage.get("promptTokenCount")),
+                    output_tokens=token_count(usage.get("candidatesTokenCount")),
+                )
