@@ -4,7 +4,7 @@
 
 ### Hiện trạng và quyết định
 
-Đã rà soát source handwritten frontend/backend, schemas, tests, scripts và cấu hình; loại trừ secrets, thư viện và build output. Baseline hiện tại (sau Phase 3): 237 backend tests + 68 frontend tests đạt; Ruff/ESLint đạt. Backend đã chuyển sang MongoDB (motor async) thay PostgreSQL/SQLAlchemy/Alembic; Docker vẫn chưa được cài trên máy.
+Đã rà soát source handwritten frontend/backend, schemas, tests, scripts và cấu hình; loại trừ secrets, thư viện và build output. Baseline hiện tại (sau Phase 4): 251 backend tests + 100 frontend tests đạt; Ruff/ESLint đạt; Next build thành công. Backend đã chuyển sang MongoDB (motor async) thay PostgreSQL/SQLAlchemy/Alembic; Docker vẫn chưa được cài trên máy.
 
 | Hạng mục | Hiện trạng | Phương án |
 |---|---|---|
@@ -58,7 +58,7 @@ Lỗi provider dùng `{detail:{code,message}}` đã làm sạch. Provider trả 
 1. Foundation: tái sử dụng auth/dashboard/database; bổ sung provider architecture.
 2. Multi-AI Integration: OpenAI/Gemini/Groq, credentials mã hóa, model sync/default, bật/tắt và test connection (đợt này).
 3. Multi-model Chat: tái sử dụng conversations; thêm messages, adapters generation/stream với capability checks, history/system prompt/temperature/token limits.
-4. Compare AI: chạy song song độc lập lỗi, synthesis theo lựa chọn user, usage/cost có nguồn giá và nhãn ước tính.
+4. Compare AI: chạy song song độc lập lỗi, synthesis theo lựa chọn user, usage/cost có nguồn giá và nhãn ước tính (đã triển khai — xem mục Phase 4 bên dưới).
 5. Agent Studio/Execution: agent CRUD, tools allowlist, quyền, timeout/step/token budget và logs.
 6. File Intelligence/RAG/Memory: parse file, embedding/vector search, citations, memory tự nguyện và có thể xóa/tắt.
 7. Research/Workflow: search service cấu hình, nguồn được kiểm chứng, workflow execution.
@@ -111,6 +111,43 @@ Các file tạo, sửa và giữ nguyên (Phase 3):
 - Giữ nguyên: `plan_create_web.md`, `update_features.md`, API auth/provider contracts, cookie names/issuer, password hashing, collections domain cũ và dữ liệu người dùng. Không commit/push/deploy.
 
 Kiểm chứng Phase 3: backend **237 tests** + Ruff đạt; frontend **68 tests** + ESLint đạt + Next build thành công. Groq **live chat** stream nhận delta `"OK"` + usage thật (76/41), không lộ key. Geometry offline (iframe 360/390/768/1440, đo bằng số, không chụp ảnh): không tràn ngang ở document/`.page-content`/`.chat-layout` cho cả conversation view lẫn setup panel. Chưa live test OpenAI/Gemini (chưa có key hợp lệ); chưa build Docker; xác nhận thiết bị thật dành cho người dùng.
+
+### Đợt triển khai Phase 4: Multi-AI Comparison
+
+Triển khai sau khi Phase 3 ổn định, ưu tiên Compare trước Agent. Tái sử dụng tối đa nền tảng provider/chat hiện có; không viết lại auth/dashboard/provider/chat, không tạo collection trùng.
+
+Quyết định thiết kế:
+
+- **Collection mới `comparisons`** (không dùng lại `conversations` vì một phép so sánh có nhiều run song song + một synthesis, khác cấu trúc hội thoại tuần tự). `Comparison` mang `user_id`, `title`, `prompt`, `system_prompt`, `temperature`, `max_output_tokens`, `runs`, `synthesis`, timestamps. Thêm index compound `comparisons(user_id, updated_at desc)` để liệt kê theo thời gian; mọi truy vấn lọc `user_id`.
+- **`runs` là map keyed by id, không phải array**: `runs: dict[str, ComparisonRun]`. Lý do: mongomock (test offline) KHÔNG implement `array_filters`, nên cập nhật từng run dùng dotted `$set` `runs.{run_id}.{key}` thay vì positional array. API vẫn xuất `runs` dạng LIST (`ComparisonDetail.runs`) để frontend render cột; repository/service iterate `.values()`. Mỗi `ComparisonRun`/`ComparisonSynthesis` mang `status(pending|success|stopped|error)`, `content`, `input_tokens`, `output_tokens`, `latency_ms`, `error_code`, `estimated_cost`.
+- **Chạy song song độc lập lỗi**: `CompareService.stream_prepared` spawn một `asyncio.create_task(run_one)` mỗi target, dùng chung `asyncio.Queue`; vòng lặp chính `while finished < len(tasks)` tiêu thụ event. Một run lỗi chỉ phát `run_error` cho run đó, các run khác vẫn chạy và lưu kết quả. `run_one` có try/except phòng thủ quanh `_persist_run` để LUÔN phát một event terminal (`run_done`/`run_error`) kể cả khi persist lỗi. Client ngắt kết nối → `CancelledError` cancel + gather tất cả task; nội dung đã sinh lưu với status `stopped`.
+- **Chi phí ước tính có nguồn giá, gắn nhãn rõ**: `_estimate_cost(model, in, out)` cộng `price * token` cho từng phía có giá, else `None`. Groq công bố giá per-token USD (string) trong `/models` → `GroqProvider._provider_model` capture `input_price_per_token`/`output_price_per_token` (helper `_price` parse an toàn, loại giá âm). Provider không công bố giá (OpenAI) → `estimated_cost = null`, frontend hiện `—`. Frontend luôn prefix `≈` và title ghi rõ đây là ước tính, không phải khoản phí provider xác nhận. Không tự bịa token/giá.
+- **Capability + cô lập chủ sở hữu**: mỗi target qua `_require_target` (provider implemented + configured + enabled, model đã đồng bộ, chỉ chặn khi `capabilities.chat is False`). Synthesis chỉ chạy khi có ≥1 run `success` (`no_successful_runs` 409). Tái sử dụng `ChatHTTP.stream` + `SecretRedactor` của Phase 3 nên key không lộ kể cả khi bị chia cắt giữa nhiều delta; lỗi chỉ mang mã công khai cố định.
+- **SSE contract**: execute → `comparison` (detail đầu) → nhiều `run_delta`/`run_done`/`run_error` → `done`. synthesize → `synthesis_delta`/`synthesis_done`/`synthesis_error` → `done`. Validation/ownership/target/credential kiểm tra TRƯỚC khi mở stream (`prepare_execute`/`prepare_synthesize`); lỗi giai đoạn này trả JSON `{detail:{code,message}}` (404/409/422), không phải SSE.
+- **Frontend**: `/compare` là route thật (loại `compare` khỏi `sections` placeholder để `[section]` không xung đột; sections còn 3: knowledge/agents/notes). Tái sử dụng `streamChat` (fetch SSE + AbortController + refresh 401 một lần) của Phase 3, KHÔNG sửa `services/api.js`/`services/chat.js` dùng chung. Hook `use-compare` dẫn xuất loading trong render (không setState đồng bộ trong effect) để đạt rule `react-hooks/set-state-in-effect`; `runText` accumulate delta theo run_id, xóa khi run terminal. `.run-columns` dùng `repeat(auto-fit, minmax(min(100%, 280px), 1fr))` → 2/3/4 cột tự xuống hàng ở màn hẹp. Markdown render bằng `react-markdown` + `remark-gfm`, KHÔNG bật raw HTML. UI phẳng theo design system hiện có (không gradient/glow), tái sử dụng class `.conversation-list`/`.conversation-item`/`.message-flag`/`.setup-panel`.
+
+Hợp đồng API compare (prefix `/api/v1/ai/compare`, cần CurrentUser, `Cache-Control: no-store`):
+
+| Endpoint | Hợp đồng |
+|---|---|
+| GET `/comparisons` | `{comparisons:[ComparisonSummary]}` (summary có `targets:[{provider,model}]`, `has_synthesis`) |
+| POST `/comparisons` | `{prompt(1–32000,strip),targets:[{provider,model}](2–4 khác nhau),title?,system_prompt?(≤8000),temperature?(0–2),max_output_tokens?(1–8192)}` → 201 + detail |
+| GET `/comparisons/{id}` | `ComparisonDetail` = `{...,runs:[RunOut],synthesis:SynthesisOut|null}` |
+| DELETE `/comparisons/{id}` | 204; xóa phép so sánh của user |
+| POST `/comparisons/{id}/execute` | không body → `text/event-stream`, chạy song song |
+| POST `/comparisons/{id}/synthesize` | `{provider,model}` → `text/event-stream`, tổng hợp run thành công |
+
+`RunOut`/`SynthesisOut`: `{id,provider,model,status,content,input_tokens,output_tokens,latency_ms,error_code,estimated_cost}`. Mã lỗi mới: `comparison_not_found`(404), `invalid_comparison_targets`(422), `no_successful_runs`(409); dùng chung mã provider/chat của Phase 2–3.
+
+Các file tạo, sửa và giữ nguyên (Phase 4):
+
+- Tạo backend: `app/services/compare.py` (CompareService + PreparedRun/PreparedCompare/PreparedSynthesis), `app/repositories/compare.py`, `app/schemas/compare.py`, `app/api/v1/compare.py`; tests `tests/test_compare.py` (13 tests).
+- Sửa tối thiểu backend: `models/entities.py` thêm `Comparison`/`ComparisonRun`/`ComparisonSynthesis` (`runs` là dict); `core/database.py` thêm index `comparisons`; `services/ai/base_provider.py` thêm 3 mã lỗi compare; `services/ai/openai_provider.py` thêm `OpenAIPricing` + `output_modalities`/`pricing` vào `OpenAIModel`; `services/ai/groq_provider.py` thêm `_price` + capture giá + đánh dấu non-chat; `main.py` đăng ký router compare; `tests/test_security.py` thêm 4 route compare vào allowlist OpenAPI. Không nâng framework, không đổi auth/cookie/chat.
+- Tạo frontend: `services/compare.js`, `utils/compare.js`, `hooks/use-compare.js`, `components/compare/*` (compare-workspace, comparison-list, compare-setup, run-column, synthesis-panel, comparison-view), route `app/(workspace)/compare/{page.jsx,compare.css}`, tests `tests/compare.test.js` (11) + `tests/compare-ui.test.jsx` (17).
+- Sửa tối thiểu frontend: `utils/navigation.js` (bỏ `compare` khỏi sections), `components/app-shell.jsx` (nav `/compare` thật, icon Columns2), `tests/format.test.js` (sections còn 3). Không viết lại auth/dashboard/provider/chat UI, Axios refresh hay session store.
+- Giữ nguyên: `plan_create_web.md`, `update_features.md`, API auth/provider/chat contracts, cookie names/issuer, password hashing, collections domain cũ và dữ liệu người dùng. Không commit/push/deploy.
+
+Kiểm chứng Phase 4: backend **251 tests** + Ruff đạt; frontend **100 tests** + ESLint đạt + Next build thành công (`/compare` route tĩnh, `[section]` chỉ sinh knowledge/agents/notes). Groq **live compare** (đúng đường adapter CompareService dùng, không ghi DB, key không in ra): 2 model chat trả `"4"` + usage thật + chi phí ước tính từ giá Groq; 1 model non-chat (`whisper-large-v3`) `generation_failed`; **cô lập lỗi** 2 thành công + 1 thất bại không hủy nhau; **synthesis** gộp đáp án thành công trả `"4"`. Geometry offline (Node + iframe 1440/1200/1000/760/380, đo bằng số, không chụp ảnh): `docOverflow/worst/clip = 0` ở mọi chiều rộng và biến thể 2/3/4 cột + setup. Chưa live test OpenAI/Gemini (chưa có key hợp lệ); chưa build Docker; xác nhận thiết bị thật dành cho người dùng.
 
 ---
 

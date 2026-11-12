@@ -17,8 +17,11 @@ Mở rộng AI Knowledge Hub theo `update_features.md`, giữ nền tảng trong
 - Chat tái sử dụng collections `conversations`, `messages`, `ai_requests` sẵn có (không tạo bảng trùng); thêm index compound phục vụ liệt kê hội thoại và truy vấn tin nhắn. Mỗi lượt ghi usage token thật từ provider và độ trễ; không tự bịa token/cost.
 - Adapter generation async cho OpenAI/Gemini/Groq chạy trên event loop của app, hủy khi client ngắt kết nối; chỉ chặn model khi capability `chat` là `false` rõ ràng (`unknown` vẫn cho phép). API key giải mã trong backend, không trả về browser; nội dung sinh ra được quét để không lộ key kể cả khi key bị chia cắt giữa nhiều delta.
 - Trang `/chat` chỉ hiện provider đã `implemented + configured + enabled` và model đã đồng bộ hỗ trợ chat; chưa có provider sẵn sàng thì dẫn sang `/settings`, không dùng model/kết quả giả lập.
+- **Phase 4 — Multi-AI Comparison** tại `/compare`: gửi cùng một câu hỏi tới **2–4 model khác nhau** (có thể khác provider), chạy **song song độc lập**; mỗi model một cột hiển thị provider, model, nội dung trả lời (Markdown), trạng thái thành công/lỗi/dừng, độ trễ, token vào/ra và **chi phí ước tính** (khi provider có dữ liệu giá). Một model lỗi **không** làm hỏng cả phép so sánh — các cột khác vẫn chạy và lưu kết quả.
+- **AI Synthesis (tùy chọn):** chọn một provider/model đã đồng bộ để tổng hợp các câu trả lời thành công thành một đáp án chung; chỉ chạy khi có ít nhất một câu trả lời thành công. Synthesis cũng stream và lưu lại kèm phép so sánh.
+- So sánh lưu trong collection mới `comparisons` (mỗi user chỉ thấy dữ liệu của mình); đổi tên ngầm theo prompt, xóa có xác nhận. Chi phí luôn gắn nhãn **ước tính** (`≈`), phân biệt với chi phí thực tế provider xác nhận; không tự bịa token/giá. Groq công bố giá per-token nên cột Groq có ước tính; provider không công bố giá thì hiển thị `—`.
 
-**Chưa triển khai:** Compare/synthesis, agent/tool calling, files/RAG/memory/research/workflows và ghi chú. Claude, DeepSeek, Ollama chỉ có trong registry, chưa nhận key hoặc gọi API. Các trang tương ứng ghi rõ lộ trình, không giả lập kết quả. Không cần API key AI để đăng nhập và dùng dashboard.
+**Chưa triển khai:** Agent/tool calling, files/RAG/memory/research/workflows và ghi chú. Claude, DeepSeek, Ollama chỉ có trong registry, chưa nhận key hoặc gọi API. Các trang tương ứng ghi rõ lộ trình, không giả lập kết quả. Không cần API key AI để đăng nhập và dùng dashboard.
 
 Phân tích hiện trạng, danh sách file tạo/sửa/giữ nguyên, schema và API contracts: [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -104,6 +107,18 @@ Sau khi đã lưu key, bật provider và đồng bộ model ở Bước D, mở
 
 Stream dùng cùng origin `/api/v1/ai/chat/...` với cookie HttpOnly; trình duyệt nhận `text/event-stream`. Không lưu JWT/API key trong localStorage.
 
+### Bước F — so sánh nhiều model (Phase 4, cần provider đã cấu hình)
+
+Sau Bước D (đã lưu key, bật provider, đồng bộ model), mở `/compare`:
+
+1. Bấm **So sánh mới**, chọn provider + model rồi **Thêm model vào so sánh**; lặp lại để có **2–4 model khác nhau** (có thể trộn nhiều provider). Nhập **Câu hỏi chung**; tùy chọn đặt tên, system prompt, temperature (0–2) và giới hạn token ra (1–8192). Bấm **Tạo phép so sánh**.
+2. Bấm **Chạy so sánh**: các cột chạy **song song**, nội dung stream từng phần. Một model lỗi chỉ đánh dấu cột đó, các cột còn lại vẫn hoàn tất. Bấm **Dừng** để ngắt; nội dung đã sinh vẫn được lưu (đánh dấu “Đã dừng”). **Chạy lại** để chạy lại toàn bộ.
+3. Mỗi cột hiển thị trạng thái, token vào/ra, độ trễ và **chi phí ước tính** (`≈ $…`, chỉ khi provider công bố giá; nếu không có giá thì `—`). Đây là **ước tính**, không phải khoản phí provider xác nhận.
+4. **AI Synthesis (tùy chọn):** chọn provider/model tổng hợp rồi bấm **Tổng hợp câu trả lời** để gộp các đáp án thành công thành một câu trả lời chung (cũng stream, lưu kèm phép so sánh). Chỉ khả dụng khi có ít nhất một câu trả lời thành công.
+5. Mỗi phép so sánh lưu riêng theo tài khoản; đổi tên/xóa (có xác nhận). Nếu provider/model chưa sẵn sàng, trang báo lỗi an toàn và dẫn về `/settings`, không có kết quả giả lập.
+
+Stream dùng cùng origin `/api/v1/ai/compare/...` với cookie HttpOnly (`text/event-stream`). API key chỉ giải mã ở backend, không trả về browser.
+
 ## 3. Kiểm thử
 
 Backend từ `backend/`:
@@ -132,21 +147,24 @@ Smoke test thủ công sau khi ứng dụng khởi động:
 5. Tạo tài khoản B: hoạt động của A không xuất hiện. Các số đếm tài khoản mới bằng 0.
 6. `/settings`: lưu key → trạng thái “đã cấu hình/chưa kiểm tra”; kiểm tra kết nối với key sai phải báo lỗi an toàn, không lộ key; xóa key phải có hộp thoại xác nhận.
 7. `/chat` (cần provider đã cấu hình + đồng bộ model): tạo hội thoại, gửi tin nhắn thấy streaming, dừng giữa chừng vẫn lưu nội dung, tạo lại/sao chép/đổi tên/xóa hoạt động; tài khoản B không thấy hội thoại của A. Chưa cấu hình provider thì trang dẫn sang `/settings`, không có kết quả giả.
-8. Các mục chưa triển khai (Compare, Agent, Knowledge/RAG, Notes) phải ghi rõ phase, không báo upload/compare/agent thành công.
-9. Kiểm tra layout ở chiều rộng 360px, 390px, 768px và desktop; menu mobile mở/đóng bằng bàn phím và cảm ứng; màn hình chat không tràn ngang.
+8. `/compare` (cần provider đã cấu hình + đồng bộ model): tạo phép so sánh 2–4 model, chạy song song thấy nhiều cột stream; cố tình chọn một model không chat được để xác nhận cột đó lỗi nhưng các cột khác vẫn hoàn tất; tổng hợp (synthesis) chạy khi có ≥1 câu trả lời thành công; token/độ trễ/ước tính chi phí hiển thị đúng nhãn; tài khoản B không thấy phép so sánh của A.
+9. Các mục chưa triển khai (Agent, Knowledge/RAG, Notes) phải ghi rõ phase, không báo upload/agent thành công.
+10. Kiểm tra layout ở chiều rộng 360px, 390px, 768px và desktop; menu mobile mở/đóng bằng bàn phím và cảm ứng; màn hình chat và compare không tràn ngang (2/3/4 cột tự xuống hàng ở màn hẹp).
 
 ### Kết quả kiểm chứng của lần triển khai
 
-- Backend: **237 tests passed** (173 nền tảng + 26 adapter generation + 38 chat), Ruff đạt, `pip check` không có dependency hỏng. Một cảnh báo deprecation upstream về Starlette/httpx, không làm test thất bại.
-- Frontend: **68 tests passed** (refresh/retry, lỗi an toàn, helper, lộ trình, UI provider, SSE client và UI chat); ESLint không lỗi/cảnh báo; production build Next.js thành công (`/chat` là route tĩnh, không xung đột `[section]`).
+- Backend: **251 tests passed** (bổ sung 13 tests compare và coverage pricing/non-chat Groq so với 237 của Phase 3), Ruff đạt, `pip check` không có dependency hỏng. Một cảnh báo deprecation upstream về Starlette/httpx, không làm test thất bại.
+- Frontend: **100 tests passed** (refresh/retry, lỗi an toàn, helper, lộ trình, UI provider, SSE client + UI chat, và compare: 11 contract/SSE + 17 UI); ESLint không lỗi/cảnh báo; production build Next.js thành công (`/chat` và `/compare` là route tĩnh, `[section]` chỉ sinh `/knowledge`, `/agents`, `/notes` — không xung đột).
 - Script: `scripts/test_init_env.py` **3 tests passed** (giữ bí mật cũ, không xoay khóa, thay placeholder).
 - Smoke test HTTP qua **harness MongoDB in-memory (mongomock) → FastAPI** đạt: health, register, profile, dashboard, refresh rotation, logout, login. Không mock API trong smoke test này; đây là stack thật nhưng DB là in-memory, không phải MongoDB server.
 - Smoke test HTTP trên **MongoDB Atlas thật** (backend dev của người dùng) đạt: register 201, lưu key 200 (mã hóa, untested), kiểm tra kết nối trả **400 `provider_authentication_failed`** với key thử không hợp lệ (lỗi có cấu trúc, an toàn, không phải 500 — chứng minh đường adapter async hoạt động), models 200 (rỗng), delete 204, logout 204. **Đây không phải live success**: không có API key provider hợp lệ nên chưa đồng bộ được model thật.
 - **Groq live success:** adapter Groq gọi `GET https://api.groq.com/openai/v1/models` bằng key người dùng cung cấp, trả **11 model thật** (vd `openai/gpt-oss-120b`, `qwen/qwen3.8-27b`, `whisper-large-v3`), capabilities `unknown`. Chỉ đọc danh sách model, không generation; key không hardcode trong source và không lưu lại sau kiểm chứng.
 - **Groq chat live success (Phase 3):** adapter generation gọi `POST https://api.groq.com/openai/v1/chat/completions` (stream) với model `openai/gpt-oss-20b`, nhận delta nội dung `"OK"` và usage thật (input 76 / output 41 token). Adapter chỉ lấy `delta.content`, bỏ qua `reasoning_content` của model suy luận; key không xuất hiện trong nội dung sinh ra. Key chỉ đọc lúc chạy để kiểm chứng, không hardcode/lưu/commit.
 - **Geometry offline (Phase 3):** harness iframe cố định 360/390/768/1440px nhúng đúng `globals.css` + `chat.css` và DOM chat thật; đo bằng số (không chụp ảnh): `scrollWidth === clientWidth` ở cả document, `.page-content` và `.chat-layout` cho cả màn hình hội thoại lẫn setup panel → không tràn ngang; bảng Markdown rộng và code block dài cuộn nội bộ đúng thiết kế.
+- **Groq compare live success (Phase 4):** chạy đúng đường adapter mà `CompareService` dùng (không ghi DB, key chỉ đọc lúc chạy, không in ra). Catalog 11 model (5 chat / 6 non-chat). Hai model chat `openai/gpt-oss-safeguard-20b` và `qwen/qwen3.8-27b` cùng trả lời `"4"` với usage thật (92/63 và 29/2 token) và **chi phí ước tính** từ giá per-token Groq (≈ $0.0000258 và ≈ $0.0000312). `whisper-large-v3` (non-chat) trả `generation_failed` đúng như mong đợi. **Cô lập lỗi:** 2 thành công + 1 thất bại trong cùng phép so sánh — một model lỗi KHÔNG hủy các model khác. **Synthesis** gộp các đáp án thành công, trả `"4"` (145/122 token). Key không hardcode/lưu/commit.
+- **Geometry offline (Phase 4):** harness Node + iframe cố định 1440/1200/1000/760/380px nhúng đúng `globals.css` + `chat.css` + `compare.css` và DOM compare thật (2/3/4 cột + synthesis + setup, kèm bảng Markdown/code block dài); đo bằng số (không chụp ảnh): `docOverflow = 0`, `worst = 0`, `clip = 0` ở mọi chiều rộng và mọi biến thể → không tràn ngang, không phần tử nào vượt viewport, không container nào cắt nội dung; `.run-columns` tự xuống hàng ở màn hẹp.
 - Tài khoản kiểm thử đã tạo trong DB dev (không tự xóa): `smoke-http-fix@example.com`, `smoke-proxy-c29c3a71@example.com`, `prov-smoke-5917a5c1@example.com`. Tài khoản do harness tạo chỉ tồn tại in-memory và mất khi dừng.
-- **Chưa kiểm chứng:** build/chạy Docker image (máy không có Docker); đồng bộ model thật và chat live bằng API key hợp lệ cho OpenAI/Gemini (Groq đã live cả listing lẫn chat); xác nhận trực quan trên thiết bị thật của người dùng (geometry đã kiểm tra offline bằng số, không chụp ảnh). Không đánh đồng mongomock tests với MongoDB integration tests.
+- **Chưa kiểm chứng:** build/chạy Docker image (máy không có Docker); đồng bộ model thật và chat/compare live bằng API key hợp lệ cho OpenAI/Gemini (Groq đã live cả listing, chat lẫn compare/synthesis); xác nhận trực quan trên thiết bị thật của người dùng (geometry đã kiểm tra offline bằng số, không chụp ảnh). Không đánh đồng mongomock tests với MongoDB integration tests.
 
 Chạy lại HTTP smoke test sau khi khởi động ứng dụng:
 
@@ -214,9 +232,28 @@ SSE gồm các event: `user_message` (tin nhắn user đã lưu), `delta` (`{tex
 
 Mã lỗi chat: `conversation_not_found` (404), `model_not_chat_capable`/`model_not_synced`/`provider_disabled`/`credentials_missing` (409), `empty_message`/`invalid_provider_configuration` (422), `generation_failed`/`provider_unavailable` (502), `provider_authentication_failed` (400), `provider_rate_limited` (429), `provider_timeout` (504), `encryption_unavailable` (503). CSRF Origin và rate limit áp dụng như các API AI khác.
 
+### Hợp đồng compare (Phase 4)
+
+Tất cả endpoint cần đăng nhập, prefix `/api/v1/ai/compare`, trả `Cache-Control: no-store`, lọc theo chủ sở hữu và không có trường bí mật.
+
+| Endpoint | Hợp đồng |
+|---|---|
+| GET `/comparisons` | `{comparisons:[{id,title,targets:[{provider,model}],has_synthesis,created_at,updated_at}]}` |
+| POST `/comparisons` | Body `{prompt(1–32000,strip),targets:[{provider,model}](2–4 phần tử khác nhau),title?,system_prompt?(≤8000),temperature?(0–2),max_output_tokens?(1–8192)}`; 201 + detail. Mỗi target phải implemented + configured + enabled, model đã đồng bộ và không bị chặn chat |
+| GET `/comparisons/{id}` | `{id,title,prompt,system_prompt,temperature,max_output_tokens,runs:[RunOut],synthesis:SynthesisOut|null,created_at,updated_at}` |
+| DELETE `/comparisons/{id}` | 204; xóa phép so sánh của user |
+| POST `/comparisons/{id}/execute` | Không body; chạy song song tất cả target, trả `text/event-stream` |
+| POST `/comparisons/{id}/synthesize` | Body `{provider,model}`; tổng hợp các run thành công, trả `text/event-stream` |
+
+`RunOut`: `{id,provider,model,status(pending|success|stopped|error),content,input_tokens,output_tokens,latency_ms,error_code,estimated_cost}`. `SynthesisOut` cùng dạng (một provider/model). `estimated_cost` là **ước tính** từ giá per-token provider công bố (Groq có; provider không công bố giá thì `null`), không phải khoản phí provider xác nhận.
+
+SSE execute gồm: `comparison` (detail ban đầu), nhiều `run_delta` (`{run_id,text}`), `run_done`/`run_error` (`{run}` hoàn chỉnh), `done` (detail cuối). SSE synthesize gồm: `synthesis_delta` (`{text}`), `synthesis_done` (`{synthesis}`), `synthesis_error` (`{code,message}`), `done`. Định dạng `event: <name>\ndata: <json>\n\n`. **Một run lỗi phát `run_error` rồi các run khác vẫn tiếp tục** — không hủy cả phép so sánh. Lỗi trước khi stream (validation, ownership, target, credential) trả JSON `{detail:{code,message}}` (404/409/422), không phải SSE. Client ngắt kết nối → các tác vụ provider bị hủy, nội dung đã sinh được lưu với status `stopped`.
+
+Mã lỗi compare bổ sung: `comparison_not_found` (404), `invalid_comparison_targets` (422), `no_successful_runs` (409 — synthesis cần ≥1 run thành công); dùng chung các mã provider/chat ở trên. CSRF Origin và rate limit áp dụng như các API AI khác.
+
 ## 5. Triển khai trên server
 
-Đây là nền tảng Foundation + Phase 2 + Phase 3 (Multi-model Chat), **chưa phải toàn bộ sản phẩm AI hoàn thiện**. Trước khi mở public:
+Đây là nền tảng Foundation + Phase 2 + Phase 3 (Multi-model Chat) + Phase 4 (Multi-AI Comparison), **chưa phải toàn bộ sản phẩm AI hoàn thiện**. Trước khi mở public:
 
 1. Dùng VM/server có Docker; đặt `backend/.env` riêng bằng secret mới, tuyệt đối không đưa secrets vào image/repository.
 2. Đặt `COOKIE_SECURE=true`, `CORS_ORIGINS=["https://ten-mien-cua-ban"]`; cấu hình HTTPS reverse proxy đến frontend localhost:3000. Không mở MongoDB hoặc backend trực tiếp ra Internet.
@@ -237,7 +274,7 @@ API key provider do từng người dùng nhập ở `/settings`, mã hóa ở b
 | 1 | Hạ tầng, auth, dashboard (MongoDB) | Đã triển khai |
 | 2 | Provider OpenAI/Gemini/Groq, key mã hóa, model sync/default, bật/tắt, test connection | Đã triển khai; Groq đã live test (11 model), OpenAI/Gemini chưa live test |
 | 3 | Multi-model Chat: messages, generation/stream SSE, capability checks, history, system prompt/temperature/token limits | Đã triển khai; Groq đã live chat (stream + usage), OpenAI/Gemini chưa live test |
-| 4 | Compare AI: chạy song song, synthesis, usage/cost ước tính vs thực tế | Chưa triển khai |
+| 4 | Compare AI: chạy song song độc lập lỗi, synthesis tùy chọn, usage/độ trễ, cost ước tính (có nhãn) vs thực tế | Đã triển khai; Groq đã live compare + isolation + synthesis + pricing, OpenAI/Gemini chưa live test |
 | 5 | Agent Studio/Execution: tools allowlist, quyền, budget, logs | Chưa triển khai |
 | 6 | File Intelligence/RAG/Memory, Research/Workflow | Chưa triển khai |
 | 7 | Production: live provider tests, MongoDB/Docker integration, hardening | Chưa triển khai |

@@ -27,7 +27,7 @@ export function ChatWorkspace() {
             : <SetupPanel providers={providers} busy={controller.busy === "create"} onCreate={controller.createConversation} />}
         </div>
       </div>
-      <p className="chat-scope-note">Phase 3 · Multi-model chat. Tài liệu/RAG, Compare AI và Agent triển khai ở các phase sau; không có dữ liệu AI mẫu.</p>
+      <p className="chat-scope-note">Phase 3 · Multi-model chat. Compare AI đã có tại mục Compare; Tài liệu/RAG và Agent triển khai ở các phase sau; không có dữ liệu AI mẫu.</p>
     </>
   );
 }
