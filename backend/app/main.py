@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pymongo.errors import PyMongoError
 
-from app.api.v1 import auth, chat, dashboard, health, providers
+from app.api.v1 import auth, chat, compare, dashboard, health, providers
 from app.core.config import Settings, get_settings
 from app.core.database import lifespan_mongo
 from app.core.middleware import RateLimiter, SecurityMiddleware
@@ -78,7 +78,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
-    for router in (health.router, auth.router, dashboard.router, providers.router, chat.router):
+    for router in (
+        health.router,
+        auth.router,
+        dashboard.router,
+        providers.router,
+        chat.router,
+        compare.router,
+    ):
         application.include_router(router, prefix="/api/v1")
     return application
 

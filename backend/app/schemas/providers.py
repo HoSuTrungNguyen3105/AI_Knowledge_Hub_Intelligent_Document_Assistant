@@ -60,6 +60,10 @@ class ProviderModel(BaseModel):
     input_token_limit: int | None = None
     output_token_limit: int | None = None
     capability_source: Literal["unknown", "provider_metadata"] = "unknown"
+    # USD per token, only when the provider publishes pricing (Groq). Used for
+    # ESTIMATED cost; never a provider-confirmed charge.
+    input_price_per_token: float | None = None
+    output_price_per_token: float | None = None
 
 
 class ProviderMetadata(BaseModel):

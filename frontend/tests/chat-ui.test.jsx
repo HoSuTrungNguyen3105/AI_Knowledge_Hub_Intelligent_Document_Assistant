@@ -172,6 +172,16 @@ describe("SetupPanel", () => {
     render(<SetupPanel providers={{ ...baseProviders, models: [] }} busy={false} onCreate={() => {}} />);
     expect(screen.getByRole("button", { name: /Bắt đầu hội thoại/ }).disabled).toBe(true);
   });
+  it("explains an empty model list with the provider's failed-check reason", () => {
+    render(<SetupPanel providers={{ ...baseProviders, models: [], available: [{ id: "groq", name: "Groq", connection_status: "error", last_error_code: "provider_authentication_failed" }] }} busy={false} onCreate={() => {}} />);
+    expect(screen.getByText(/Lần kiểm tra Groq gần nhất thất bại/)).toBeTruthy();
+    expect(screen.getByText(/Provider từ chối API key/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Cài đặt AI/ }).getAttribute("href")).toBe("/settings");
+  });
+  it("prompts to sync when the provider has no failed check", () => {
+    render(<SetupPanel providers={{ ...baseProviders, models: [], available: [{ id: "groq", name: "Groq", connection_status: "untested" }] }} busy={false} onCreate={() => {}} />);
+    expect(screen.getByText(/chưa có model chat được đồng bộ/)).toBeTruthy();
+  });
 });
 
 describe("ConfigEditor", () => {

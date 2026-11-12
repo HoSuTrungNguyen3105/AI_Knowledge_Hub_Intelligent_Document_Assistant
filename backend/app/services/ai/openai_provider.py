@@ -10,6 +10,14 @@ from app.services.ai.chat_types import ChatEvent, ChatRequest, token_count
 from app.services.ai.http import ListingSession, ModelListingHTTP
 
 
+class OpenAIPricing(BaseModel):
+    model_config = ConfigDict(strict=True)
+
+    # Groq publishes USD-per-token as strings; OpenAI omits pricing entirely.
+    prompt: str | None = None
+    completion: str | None = None
+
+
 class OpenAIModel(BaseModel):
     model_config = ConfigDict(strict=True)
 
@@ -17,6 +25,11 @@ class OpenAIModel(BaseModel):
     object: Literal["model"]
     created: int = Field(ge=0)
     owned_by: str = Field(max_length=1024)
+    # Optional: OpenAI omits this; Groq includes it (e.g. ["text"], ["speech"],
+    # ["transcription"]). Used only to rule out non-chat models, never to assert
+    # generation access.
+    output_modalities: list[str] | None = None
+    pricing: OpenAIPricing | None = None
 
 
 class OpenAIListing(BaseModel):
@@ -49,10 +62,14 @@ class OpenAIProvider(BaseProvider):
                 raise ProviderError("invalid_provider_response")
             if len({model.id for model in payload.data}) != len(payload.data):
                 raise ProviderError("invalid_provider_response")
-            # /models provides no capability flags and proves no generation access.
-            return [ProviderModel(id=model.id, display_name=model.id) for model in payload.data]
+            # /models proves no generation access; subclasses may rule out non-chat
+            # models from listing metadata, but never assert chat=True from it.
+            return [self._provider_model(model) for model in payload.data]
 
         return self.http.run(listing, api_key)
+
+    def _provider_model(self, model: OpenAIModel) -> ProviderModel:
+        return ProviderModel(id=model.id, display_name=model.id)
 
     @staticmethod
     def _messages(request: ChatRequest) -> list[dict]:

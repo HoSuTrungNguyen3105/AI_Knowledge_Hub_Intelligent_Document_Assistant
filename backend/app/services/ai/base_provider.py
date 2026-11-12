@@ -29,6 +29,9 @@ ERRORS = {
     "conversation_not_found": (404, "Conversation not found."),
     "empty_message": (422, "Message content cannot be empty."),
     "generation_failed": (502, "The provider returned an invalid generation response."),
+    "comparison_not_found": (404, "Comparison not found."),
+    "invalid_comparison_targets": (422, "Select 2-4 distinct synced chat models to compare."),
+    "no_successful_runs": (409, "Synthesis needs at least one successful answer."),
 }
 
 

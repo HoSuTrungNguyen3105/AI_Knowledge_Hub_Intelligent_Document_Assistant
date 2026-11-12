@@ -1,6 +1,7 @@
 from app.models.entities import (
     ActivityLog,
     AIRequest,
+    Comparison,
     Conversation,
     Document,
     KnowledgeBase,
@@ -14,6 +15,7 @@ __all__ = [
     "ActivityLog",
     "AIModel",
     "AIRequest",
+    "Comparison",
     "Conversation",
     "Document",
     "KnowledgeBase",

@@ -41,6 +41,8 @@ async def init_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.activity_logs.create_index([("user_id", 1), ("created_at", -1)])
     await db.user_provider_credentials.create_index([("user_id", 1), ("provider", 1)], unique=True)
     await db.ai_models.create_index([("credential_id", 1), ("model_id", 1)], unique=True)
+    await db.comparisons.create_index("user_id")
+    await db.comparisons.create_index([("user_id", 1), ("updated_at", -1)])
 
 
 @asynccontextmanager

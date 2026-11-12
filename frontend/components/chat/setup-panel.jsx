@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { CircleAlert, LoaderCircle, MessagesSquare, Settings2, Sparkles } from "lucide-react";
+import { providerFailureReason } from "../../utils/providers";
 
 function toNumber(value) {
   if (value === "" || value === null || value === undefined) return null;
@@ -20,6 +21,10 @@ export function SetupPanel({ providers, busy, onCreate }) {
 
   const selectedModel = models.find((item) => item.id === model) ?? models[0] ?? null;
   const effectiveModel = selectedModel?.id ?? "";
+  // The catalog already carries each provider's last check result, so an empty
+  // model list can explain itself instead of leaving the user guessing.
+  const selectedProvider = available.find((item) => item.id === providerId) ?? null;
+  const checkFailed = selectedProvider?.connection_status === "error";
 
   function submit(event) {
     event.preventDefault();
@@ -64,7 +69,9 @@ export function SetupPanel({ providers, busy, onCreate }) {
         </div>
       </div>
       {modelsError && <p className="setup-note error" role="alert"><CircleAlert size={14} />{modelsError}</p>}
-      {!modelsLoading && !modelsError && models.length === 0 && <p className="setup-note">Provider này chưa có model chat được đồng bộ. Hãy kiểm tra kết nối trong <Link href="/settings">Cài đặt AI</Link>.</p>}
+      {!modelsLoading && !modelsError && models.length === 0 && (checkFailed
+        ? <p className="setup-note error" role="alert"><CircleAlert size={14} />Lần kiểm tra {selectedProvider.name} gần nhất thất bại. {providerFailureReason(selectedProvider.last_error_code)} Vào <Link href="/settings">Cài đặt AI</Link> để sửa API key và đồng bộ lại model.</p>
+        : <p className="setup-note">Provider này chưa có model chat được đồng bộ. Hãy kiểm tra kết nối trong <Link href="/settings">Cài đặt AI</Link>.</p>)}
       <label className="field-label" htmlFor="setup-title">Tên hội thoại (tùy chọn)</label>
       <input id="setup-title" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={200} placeholder="Tự đặt theo tin nhắn đầu tiên nếu để trống" disabled={busy} />
       <label className="field-label" htmlFor="setup-system">System prompt (tùy chọn)</label>

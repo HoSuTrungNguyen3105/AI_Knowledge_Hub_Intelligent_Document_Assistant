@@ -80,6 +80,35 @@ def test_groq_contract_openai_compatible_unknown_capabilities():
     assert model.input_token_limit is model.output_token_limit is None
 
 
+def test_groq_marks_audio_and_classifier_models_non_chat():
+    rows = [
+        {"id": "openai/gpt-oss-20b", "object": "model", "created": 1700000000,
+         "owned_by": "OpenAI", "output_modalities": ["text"]},
+        {"id": "whisper-large-v3", "object": "model", "created": 1700000000,
+         "owned_by": "OpenAI", "output_modalities": ["transcription"]},
+        {"id": "canopylabs/orpheus-v1-english", "object": "model", "created": 1700000000,
+         "owned_by": "Canopy Labs", "output_modalities": ["speech"]},
+        {"id": "meta-llama/llama-prompt-guard-2-86m", "object": "model", "created": 1700000000,
+         "owned_by": "Meta", "output_modalities": ["text"]},
+    ]
+
+    def handle(request):
+        return httpx.Response(200, json={"object": "list", "data": rows})
+
+    models = {m.id: m for m in adapter("groq", handle).list_models(KEY)}
+    # A text-output chat model stays unknown: listing proves no generation access.
+    assert models["openai/gpt-oss-20b"].capabilities.chat is None
+    assert models["openai/gpt-oss-20b"].capability_source == "unknown"
+    # Audio models cannot output chat text; the classifier rejects streaming chat.
+    for mid in (
+        "whisper-large-v3",
+        "canopylabs/orpheus-v1-english",
+        "meta-llama/llama-prompt-guard-2-86m",
+    ):
+        assert models[mid].capabilities.chat is False
+        assert models[mid].capability_source == "provider_metadata"
+
+
 def test_gemini_contract_pagination_header_and_explicit_capabilities():
     requests = []
 

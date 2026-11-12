@@ -121,6 +121,8 @@ class ProviderService:
                     input_token_limit=model.input_token_limit,
                     output_token_limit=model.output_token_limit,
                     capability_source=model.capability_source,
+                    input_price_per_token=model.input_price_per_token,
+                    output_price_per_token=model.output_price_per_token,
                 )
                 for model in models
             ],

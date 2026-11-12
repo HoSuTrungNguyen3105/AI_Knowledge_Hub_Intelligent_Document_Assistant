@@ -36,4 +36,6 @@ class AIModel(BaseDocument, BaseModel):
     input_token_limit: int | None = None
     output_token_limit: int | None = None
     capability_source: str
+    input_price_per_token: float | None = None
+    output_price_per_token: float | None = None
     created_at: datetime

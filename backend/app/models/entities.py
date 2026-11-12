@@ -103,6 +103,49 @@ class AIRequest(BaseDocument, BaseModel):
     created_at: datetime
 
 
+class ComparisonRun(BaseModel):
+    """One model's answer inside a comparison; embedded, always read with parent."""
+
+    id: UUID
+    provider: str
+    model: str
+    status: str = "pending"
+    content: str = ""
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    latency_ms: int | None = None
+    error_code: str | None = None
+    estimated_cost: float | None = None
+
+
+class ComparisonSynthesis(BaseModel):
+    provider: str
+    model: str
+    status: str = "pending"
+    content: str = ""
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    latency_ms: int | None = None
+    error_code: str | None = None
+    estimated_cost: float | None = None
+
+
+class Comparison(BaseDocument, BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID = Field(alias="_id")
+    user_id: UUID
+    title: str
+    prompt: str
+    system_prompt: str | None = None
+    temperature: float | None = None
+    max_output_tokens: int | None = None
+    runs: list[ComparisonRun] = Field(default_factory=list)
+    synthesis: ComparisonSynthesis | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class ActivityLog(BaseDocument, BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
