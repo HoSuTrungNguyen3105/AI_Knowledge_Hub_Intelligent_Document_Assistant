@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import MockAdapter from "axios-mock-adapter";
 import { api, refreshClient } from "../services/api";
 import { providerService } from "../services/providers";
-import { capabilityLabel, filterModels, getProviderError, providerStatus, validateApiKey } from "../utils/providers";
+import { capabilityLabel, filterModels, getProviderError, providerFailureReason, providerStatus, validateApiKey } from "../utils/providers";
 
 const mock = new MockAdapter(api);
 const refresh = new MockAdapter(refreshClient);
@@ -65,5 +65,12 @@ describe("validation and truthful statuses", () => {
     expect(getProviderError(error)).not.toContain("LEAKED-KEY");
     expect(getProviderError(error)).toContain("Provider từ chối");
     expect(getProviderError({ response: { status: 500, data: { detail: "LEAKED-KEY" } } })).not.toContain("LEAKED-KEY");
+  });
+  it("explains a stored failed check with its specific reason", () => {
+    expect(providerFailureReason("provider_authentication_failed")).toContain("Provider từ chối");
+    expect(providerFailureReason("provider_timeout")).toContain("quá lâu");
+    expect(providerFailureReason("provider_rate_limited")).toContain("giới hạn");
+    expect(providerFailureReason(undefined)).toContain("chưa thành công");
+    expect(providerFailureReason("toString")).toContain("chưa thành công");
   });
 });

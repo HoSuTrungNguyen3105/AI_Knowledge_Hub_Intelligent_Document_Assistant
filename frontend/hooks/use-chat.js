@@ -6,18 +6,17 @@ import { chatService } from "../services/chat";
 import { chatErrorFromEvent, getChatError } from "../utils/chat";
 import { useNotice } from "../stores/notice";
 
-const idleThread = { data: null, loading: false, error: "" };
-
 export function useChat() {
-  const [conversations, setConversations] = useState({ items: [], loading: true, error: "" });
   const [activeId, setActiveId] = useState(null);
-  const [thread, setThread] = useState(idleThread);
+  const [listRevision, setListRevision] = useState(0);
+  const [listState, setListState] = useState({ items: [], error: "", revision: -1 });
+  const [threadRevision, setThreadRevision] = useState(0);
+  const [threadState, setThreadState] = useState({ id: null, data: null, error: "", revision: -1 });
   const [messages, setMessages] = useState([]);
   const [streaming, setStreaming] = useState(null);
   const [streamError, setStreamError] = useState("");
   const [busy, setBusy] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [listRevision, setListRevision] = useState(0);
 
   const abortRef = useRef(null);
   const streamText = useRef("");
@@ -29,27 +28,48 @@ export function useChat() {
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; abortRef.current?.abort(); }; }, []);
   useEffect(() => { activeRef.current = activeId; }, [activeId]);
 
-  const loadList = useCallback((silent = false) => {
+  // Loading is derived from the revision that produced the data, so effects never
+  // call setState synchronously (react-hooks/set-state-in-effect).
+  useEffect(() => {
     const controller = new AbortController();
-    if (!silent) setConversations((state) => ({ ...state, loading: true, error: "" }));
+    const revision = listRevision;
     chatService.list(controller.signal)
-      .then((items) => { if (!controller.signal.aborted) setConversations({ items, loading: false, error: "" }); })
-      .catch((error) => { if (!axios.isCancel(error)) setConversations((state) => ({ ...state, loading: false, error: getChatError(error) })); });
+      .then((items) => { if (!controller.signal.aborted) setListState({ items, error: "", revision }); })
+      .catch((error) => { if (!axios.isCancel(error)) setListState((state) => ({ ...state, error: getChatError(error), revision })); });
     return () => controller.abort();
-  }, []);
-
-  useEffect(() => loadList(), [listRevision, loadList]);
+  }, [listRevision]);
 
   useEffect(() => {
-    if (!activeId) { setThread(idleThread); setMessages([]); return; }
+    if (!activeId) return;
     const controller = new AbortController();
-    setThread({ data: null, loading: true, error: "" });
-    setStreamError("");
-    chatService.get(activeId, controller.signal)
-      .then((data) => { if (!controller.signal.aborted) { setThread({ data, loading: false, error: "" }); setMessages(data.messages); } })
-      .catch((error) => { if (!axios.isCancel(error)) setThread({ data: null, loading: false, error: getChatError(error) }); });
+    const id = activeId;
+    const revision = threadRevision;
+    chatService.get(id, controller.signal)
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        setThreadState({ id, data, error: "", revision });
+        setMessages(data.messages);
+        setStreamError("");
+      })
+      .catch((error) => {
+        if (axios.isCancel(error)) return;
+        setThreadState({ id, data: null, error: getChatError(error), revision });
+        setMessages([]);
+      });
     return () => controller.abort();
-  }, [activeId]);
+  }, [activeId, threadRevision]);
+
+  const conversations = {
+    items: listState.items,
+    loading: listState.revision !== listRevision,
+    error: listState.error,
+  };
+  const threadLoading = Boolean(activeId) && (threadState.id !== activeId || threadState.revision !== threadRevision);
+  const thread = {
+    data: threadState.id === activeId ? threadState.data : null,
+    loading: threadLoading,
+    error: threadState.id === activeId ? threadState.error : "",
+  };
 
   const stop = useCallback(() => { abortRef.current?.abort(); }, []);
 
@@ -103,7 +123,7 @@ export function useChat() {
       setStreaming(null);
     } finally {
       abortRef.current = null;
-      if (mounted.current) loadList(true);
+      if (mounted.current) setListRevision((value) => value + 1);
     }
   }
 
@@ -133,6 +153,7 @@ export function useChat() {
       const created = await chatService.create(payload);
       if (!mounted.current) return;
       stop();
+      setStreamError("");
       setActiveId(created.id);
       setListRevision((value) => value + 1);
       show("Đã tạo hội thoại mới.");
@@ -149,7 +170,7 @@ export function useChat() {
     try {
       const updated = await chatService.patch(activeId, { title });
       if (!mounted.current) return;
-      setThread((state) => ({ ...state, data: state.data ? { ...state.data, ...updated } : state.data }));
+      setThreadState((state) => ({ ...state, data: state.data ? { ...state.data, ...updated } : state.data }));
       setListRevision((value) => value + 1);
       show("Đã đổi tên hội thoại.");
     } catch (error) {
@@ -165,7 +186,7 @@ export function useChat() {
     try {
       const updated = await chatService.patch(activeId, values);
       if (!mounted.current) return;
-      setThread((state) => ({ ...state, data: state.data ? { ...state.data, ...updated } : state.data }));
+      setThreadState((state) => ({ ...state, data: state.data ? { ...state.data, ...updated } : state.data }));
       show("Đã lưu cấu hình hội thoại.");
     } catch (error) {
       if (mounted.current) show(getChatError(error), "error");
@@ -196,12 +217,14 @@ export function useChat() {
     if (id === activeId) return;
     stop();
     setConfirmDelete(false);
+    setStreamError("");
     setActiveId(id);
   }
 
   function newConversation() {
     stop();
     setConfirmDelete(false);
+    setStreamError("");
     setActiveId(null);
   }
 
@@ -229,6 +252,6 @@ export function useChat() {
     updateConfig,
     deleteConversation,
     reloadList: () => setListRevision((value) => value + 1),
-    reloadThread: () => setActiveId((id) => id),
+    reloadThread: () => setThreadRevision((value) => value + 1),
   };
 }

@@ -96,4 +96,10 @@ describe("provider management UI", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(mock.history.delete).toHaveLength(0);
   });
+  it("shows the specific reason for a stored failed check", async () => {
+    provider = { ...provider, configured: true, enabled: true, connection_status: "error", last_error_code: "provider_authentication_failed" };
+    render(<ProviderSettings />);
+    expect(await screen.findByText(/Provider từ chối API key/)).toBeTruthy();
+    expect(screen.getByText("Kiểm tra thất bại")).toBeTruthy();
+  });
 });

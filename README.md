@@ -1,6 +1,6 @@
 # MindFlow AI
 
-Mở rộng AI Knowledge Hub theo `update_features.md`, giữ nền tảng trong `plan_create_web.md` và triển khai từng giai đoạn. **Bản hiện tại: Foundation + Phase 2 — quản lý provider/model OpenAI, Gemini và Groq.**
+Mở rộng AI Knowledge Hub theo `update_features.md`, giữ nền tảng trong `plan_create_web.md` và triển khai từng giai đoạn. **Bản hiện tại: Foundation + Phase 2 + Phase 3 — Multi-model AI Chat (streaming, lịch sử hội thoại).**
 
 ## Đã triển khai
 
@@ -13,8 +13,12 @@ Mở rộng AI Knowledge Hub theo `update_features.md`, giữ nền tảng trong
 - Trang `/settings`: lưu/thay/xóa API key theo từng người dùng, bật/tắt provider, kiểm tra kết nối, đồng bộ model thật và chọn model mặc định.
 - Adapter OpenAI/Gemini/Groq gọi API danh sách model; API key mã hóa Fernet trong DB, không trả lại browser. Capabilities chưa xác minh được hiển thị là “Chưa xác định”. Groq dùng chuẩn OpenAI (`https://api.groq.com/openai/v1/models`).
 - Hai collections mới `user_provider_credentials`, `ai_models` (unique index theo user/provider và credential/model); giữ nguyên bảy collections cũ, cookie và cơ chế xác thực.
+- **Phase 3 — Multi-model Chat** tại `/chat`: tạo hội thoại theo provider/model đã cấu hình, gửi/nhận tin nhắn **streaming SSE**, lưu lịch sử, đổi tên/xóa hội thoại, tạo lại câu trả lời, sao chép, Markdown + code block, system prompt và temperature/giới hạn token riêng từng hội thoại.
+- Chat tái sử dụng collections `conversations`, `messages`, `ai_requests` sẵn có (không tạo bảng trùng); thêm index compound phục vụ liệt kê hội thoại và truy vấn tin nhắn. Mỗi lượt ghi usage token thật từ provider và độ trễ; không tự bịa token/cost.
+- Adapter generation async cho OpenAI/Gemini/Groq chạy trên event loop của app, hủy khi client ngắt kết nối; chỉ chặn model khi capability `chat` là `false` rõ ràng (`unknown` vẫn cho phép). API key giải mã trong backend, không trả về browser; nội dung sinh ra được quét để không lộ key kể cả khi key bị chia cắt giữa nhiều delta.
+- Trang `/chat` chỉ hiện provider đã `implemented + configured + enabled` và model đã đồng bộ hỗ trợ chat; chưa có provider sẵn sàng thì dẫn sang `/settings`, không dùng model/kết quả giả lập.
 
-**Chưa triển khai:** tạo nội dung AI, chat/streaming, Compare/synthesis, agent/tool calling, files/RAG/memory/research/workflows và ghi chú. Claude, DeepSeek, Ollama chỉ có trong registry, chưa nhận key hoặc gọi API. Các trang tương ứng ghi rõ lộ trình, không giả lập kết quả. Không cần API key AI để đăng nhập và dùng dashboard.
+**Chưa triển khai:** Compare/synthesis, agent/tool calling, files/RAG/memory/research/workflows và ghi chú. Claude, DeepSeek, Ollama chỉ có trong registry, chưa nhận key hoặc gọi API. Các trang tương ứng ghi rõ lộ trình, không giả lập kết quả. Không cần API key AI để đăng nhập và dùng dashboard.
 
 Phân tích hiện trạng, danh sách file tạo/sửa/giữ nguyên, schema và API contracts: [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -89,6 +93,17 @@ Truy cập http://localhost:3000. Browser chỉ gọi cùng origin `/api/v1`; Ne
 
 Vào `/settings` sau khi đăng nhập: chọn OpenAI, Gemini hoặc Groq, dán API key (chỉ gửi lên backend, mã hóa trước khi lưu), bấm kiểm tra kết nối để đồng bộ danh sách model thật, rồi chọn model mặc định. Có thể bật/tắt hoặc xóa key bất kỳ lúc nào. Không có key vẫn đăng nhập và dùng dashboard bình thường.
 
+### Bước E — trò chuyện với model (Phase 3, cần provider đã cấu hình)
+
+Sau khi đã lưu key, bật provider và đồng bộ model ở Bước D, mở `/chat`:
+
+1. Bấm **Hội thoại mới**, chọn provider và model (chỉ model đã đồng bộ, hỗ trợ chat mới hiện). Có thể đặt tên, system prompt, temperature (0–2) và giới hạn token ra (1–8192); để trống để dùng mặc định của provider.
+2. Gửi tin nhắn: câu trả lời chạy **streaming** từng phần. Bấm **Dừng** để ngắt giữa chừng (nội dung đã sinh vẫn được lưu, đánh dấu “Đã dừng”).
+3. Mỗi hội thoại lưu lịch sử riêng cho tài khoản của bạn; đổi tên, chỉnh cấu hình, **Tạo lại** câu trả lời cuối hoặc sao chép nội dung. Xóa hội thoại sẽ xóa toàn bộ tin nhắn của nó (có hộp thoại xác nhận).
+4. Nếu provider/model chưa sẵn sàng, trang sẽ báo lỗi an toàn và dẫn về `/settings`; không có kết quả giả lập. Chi phí/token hiển thị là số thật provider trả về, không phải ước tính.
+
+Stream dùng cùng origin `/api/v1/ai/chat/...` với cookie HttpOnly; trình duyệt nhận `text/event-stream`. Không lưu JWT/API key trong localStorage.
+
 ## 3. Kiểm thử
 
 Backend từ `backend/`:
@@ -116,19 +131,22 @@ Smoke test thủ công sau khi ứng dụng khởi động:
 4. Sai mật khẩu phải hiện lỗi, không refresh vô hạn. Đăng ký email trùng phải hiện lỗi.
 5. Tạo tài khoản B: hoạt động của A không xuất hiện. Các số đếm tài khoản mới bằng 0.
 6. `/settings`: lưu key → trạng thái “đã cấu hình/chưa kiểm tra”; kiểm tra kết nối với key sai phải báo lỗi an toàn, không lộ key; xóa key phải có hộp thoại xác nhận.
-7. Các mục chưa triển khai phải ghi rõ phase, không báo upload/chat thành công.
-8. Kiểm tra layout ở chiều rộng 360px, 390px, 768px và desktop; menu mobile mở/đóng bằng bàn phím và cảm ứng.
+7. `/chat` (cần provider đã cấu hình + đồng bộ model): tạo hội thoại, gửi tin nhắn thấy streaming, dừng giữa chừng vẫn lưu nội dung, tạo lại/sao chép/đổi tên/xóa hoạt động; tài khoản B không thấy hội thoại của A. Chưa cấu hình provider thì trang dẫn sang `/settings`, không có kết quả giả.
+8. Các mục chưa triển khai (Compare, Agent, Knowledge/RAG, Notes) phải ghi rõ phase, không báo upload/compare/agent thành công.
+9. Kiểm tra layout ở chiều rộng 360px, 390px, 768px và desktop; menu mobile mở/đóng bằng bàn phím và cảm ứng; màn hình chat không tràn ngang.
 
 ### Kết quả kiểm chứng của lần triển khai
 
-- Backend: **173 tests passed**, Ruff đạt, `pip check` không có dependency hỏng. Một cảnh báo deprecation upstream về Starlette/httpx, không làm test thất bại.
-- Frontend: **31 tests passed** (refresh/retry, lỗi an toàn, helper, lộ trình và UI provider); ESLint không lỗi/cảnh báo; production build Next.js thành công.
+- Backend: **237 tests passed** (173 nền tảng + 26 adapter generation + 38 chat), Ruff đạt, `pip check` không có dependency hỏng. Một cảnh báo deprecation upstream về Starlette/httpx, không làm test thất bại.
+- Frontend: **68 tests passed** (refresh/retry, lỗi an toàn, helper, lộ trình, UI provider, SSE client và UI chat); ESLint không lỗi/cảnh báo; production build Next.js thành công (`/chat` là route tĩnh, không xung đột `[section]`).
 - Script: `scripts/test_init_env.py` **3 tests passed** (giữ bí mật cũ, không xoay khóa, thay placeholder).
 - Smoke test HTTP qua **harness MongoDB in-memory (mongomock) → FastAPI** đạt: health, register, profile, dashboard, refresh rotation, logout, login. Không mock API trong smoke test này; đây là stack thật nhưng DB là in-memory, không phải MongoDB server.
 - Smoke test HTTP trên **MongoDB Atlas thật** (backend dev của người dùng) đạt: register 201, lưu key 200 (mã hóa, untested), kiểm tra kết nối trả **400 `provider_authentication_failed`** với key thử không hợp lệ (lỗi có cấu trúc, an toàn, không phải 500 — chứng minh đường adapter async hoạt động), models 200 (rỗng), delete 204, logout 204. **Đây không phải live success**: không có API key provider hợp lệ nên chưa đồng bộ được model thật.
 - **Groq live success:** adapter Groq gọi `GET https://api.groq.com/openai/v1/models` bằng key người dùng cung cấp, trả **11 model thật** (vd `openai/gpt-oss-120b`, `qwen/qwen3.8-27b`, `whisper-large-v3`), capabilities `unknown`. Chỉ đọc danh sách model, không generation; key không hardcode trong source và không lưu lại sau kiểm chứng.
+- **Groq chat live success (Phase 3):** adapter generation gọi `POST https://api.groq.com/openai/v1/chat/completions` (stream) với model `openai/gpt-oss-20b`, nhận delta nội dung `"OK"` và usage thật (input 76 / output 41 token). Adapter chỉ lấy `delta.content`, bỏ qua `reasoning_content` của model suy luận; key không xuất hiện trong nội dung sinh ra. Key chỉ đọc lúc chạy để kiểm chứng, không hardcode/lưu/commit.
+- **Geometry offline (Phase 3):** harness iframe cố định 360/390/768/1440px nhúng đúng `globals.css` + `chat.css` và DOM chat thật; đo bằng số (không chụp ảnh): `scrollWidth === clientWidth` ở cả document, `.page-content` và `.chat-layout` cho cả màn hình hội thoại lẫn setup panel → không tràn ngang; bảng Markdown rộng và code block dài cuộn nội bộ đúng thiết kế.
 - Tài khoản kiểm thử đã tạo trong DB dev (không tự xóa): `smoke-http-fix@example.com`, `smoke-proxy-c29c3a71@example.com`, `prov-smoke-5917a5c1@example.com`. Tài khoản do harness tạo chỉ tồn tại in-memory và mất khi dừng.
-- **Chưa kiểm chứng:** build/chạy Docker image (máy không có Docker); đồng bộ model thật bằng API key hợp lệ cho OpenAI/Gemini (Groq đã live); xác nhận trực quan trên thiết bị thật. Không đánh đồng mongomock tests với MongoDB integration tests.
+- **Chưa kiểm chứng:** build/chạy Docker image (máy không có Docker); đồng bộ model thật và chat live bằng API key hợp lệ cho OpenAI/Gemini (Groq đã live cả listing lẫn chat); xác nhận trực quan trên thiết bị thật của người dùng (geometry đã kiểm tra offline bằng số, không chụp ảnh). Không đánh đồng mongomock tests với MongoDB integration tests.
 
 Chạy lại HTTP smoke test sau khi khởi động ứng dụng:
 
@@ -178,9 +196,27 @@ Tất cả endpoint cần đăng nhập, trả `Cache-Control: no-store` và kh�
 
 Lỗi provider dùng `{detail:{code,message}}` đã làm sạch. Provider trả 401 không chuyển thành auth 401 của ứng dụng. “Connected” chỉ xác nhận model listing, không bảo đảm mọi model có quyền generation/quota.
 
+### Hợp đồng chat (Phase 3)
+
+Tất cả endpoint cần đăng nhập, prefix `/api/v1/ai/chat`, trả `Cache-Control: no-store`, lọc theo chủ sở hữu và không có trường bí mật.
+
+| Endpoint | Hợp đồng |
+|---|---|
+| GET `/conversations` | `{conversations:[{id,title,provider,model,system_prompt,temperature,max_output_tokens,created_at,updated_at}]}` |
+| POST `/conversations` | Body `{provider,model,title?,system_prompt?,temperature?,max_output_tokens?}` (extra=forbid); 201 + summary. Provider phải implemented + configured + enabled, model phải đã đồng bộ |
+| GET `/conversations/{id}` | `{...summary, messages:[{id,role,content,status,model,input_tokens,output_tokens,latency_ms,error_code,created_at}]}` |
+| PATCH `/conversations/{id}` | Body ≥1 trường `title?/system_prompt?/temperature?/max_output_tokens?`; không đổi provider/model; title không được null |
+| DELETE `/conversations/{id}` | 204; xóa hội thoại và toàn bộ tin nhắn của nó |
+| POST `/conversations/{id}/messages` | Body `{content}` (1–32000 ký tự, strip); trả `text/event-stream` |
+| POST `/conversations/{id}/regenerate` | Không body; thay câu trả lời assistant cuối bằng lượt sinh mới, trả `text/event-stream` |
+
+SSE gồm các event: `user_message` (tin nhắn user đã lưu), `delta` (`{text}` từng phần), `done` (`{message}` assistant hoàn chỉnh kèm usage), `error` (`{code,message}` đã làm sạch). Định dạng `event: <name>\ndata: <json>\n\n`. Lỗi trước khi stream (validation, ownership, capability, credential) trả JSON `{detail:{code,message}}` với HTTP tương ứng (404/409/422), không phải SSE. Client ngắt kết nối → tác vụ provider bị hủy, nội dung đã sinh được lưu với status `stopped`.
+
+Mã lỗi chat: `conversation_not_found` (404), `model_not_chat_capable`/`model_not_synced`/`provider_disabled`/`credentials_missing` (409), `empty_message`/`invalid_provider_configuration` (422), `generation_failed`/`provider_unavailable` (502), `provider_authentication_failed` (400), `provider_rate_limited` (429), `provider_timeout` (504), `encryption_unavailable` (503). CSRF Origin và rate limit áp dụng như các API AI khác.
+
 ## 5. Triển khai trên server
 
-Đây là nền tảng Foundation + Phase 2, **chưa phải toàn bộ sản phẩm AI hoàn thiện**. Trước khi mở public:
+Đây là nền tảng Foundation + Phase 2 + Phase 3 (Multi-model Chat), **chưa phải toàn bộ sản phẩm AI hoàn thiện**. Trước khi mở public:
 
 1. Dùng VM/server có Docker; đặt `backend/.env` riêng bằng secret mới, tuyệt đối không đưa secrets vào image/repository.
 2. Đặt `COOKIE_SECURE=true`, `CORS_ORIGINS=["https://ten-mien-cua-ban"]`; cấu hình HTTPS reverse proxy đến frontend localhost:3000. Không mở MongoDB hoặc backend trực tiếp ra Internet.
@@ -200,7 +236,7 @@ API key provider do từng người dùng nhập ở `/settings`, mã hóa ở b
 |---|---|---|
 | 1 | Hạ tầng, auth, dashboard (MongoDB) | Đã triển khai |
 | 2 | Provider OpenAI/Gemini/Groq, key mã hóa, model sync/default, bật/tắt, test connection | Đã triển khai; Groq đã live test (11 model), OpenAI/Gemini chưa live test |
-| 3 | Multi-model Chat: messages, generation/stream, capability checks, history | Chưa triển khai |
+| 3 | Multi-model Chat: messages, generation/stream SSE, capability checks, history, system prompt/temperature/token limits | Đã triển khai; Groq đã live chat (stream + usage), OpenAI/Gemini chưa live test |
 | 4 | Compare AI: chạy song song, synthesis, usage/cost ước tính vs thực tế | Chưa triển khai |
 | 5 | Agent Studio/Execution: tools allowlist, quyền, budget, logs | Chưa triển khai |
 | 6 | File Intelligence/RAG/Memory, Research/Workflow | Chưa triển khai |

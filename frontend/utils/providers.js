@@ -22,6 +22,13 @@ export function getProviderError(error) {
   return getErrorMessage(error);
 }
 
+// Persistent explanation for a stored failed check, so the reason survives after
+// the transient toast disappears (metadata already carries last_error_code).
+export function providerFailureReason(code) {
+  if (code && Object.hasOwn(errorLabels, code)) return errorLabels[code];
+  return "Lần kiểm tra gần nhất chưa thành công.";
+}
+
 export function validateApiKey(value) {
   const key = value.trim();
   if (!key) return "Vui lòng nhập API key.";

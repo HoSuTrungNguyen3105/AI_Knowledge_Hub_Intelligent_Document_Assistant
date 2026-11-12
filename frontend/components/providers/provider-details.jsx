@@ -2,7 +2,7 @@
 
 import { KeyRound, LoaderCircle, PlugZap, ShieldCheck, Trash2 } from "lucide-react";
 import { formatDate } from "../../utils/format";
-import { providerStatus } from "../../utils/providers";
+import { providerFailureReason, providerStatus } from "../../utils/providers";
 import { ModelCatalog } from "./model-catalog";
 
 export function ProviderDetails({ controller, encryptionReady }) {
@@ -22,7 +22,7 @@ export function ProviderDetails({ controller, encryptionReady }) {
       </form>
       <div className="connection-actions"><button type="button" className="button secondary" onClick={testConnection} disabled={disabled || !provider.configured}>{busy === "test" ? <LoaderCircle size={16} className="spin" /> : <PlugZap size={16} />}{busy === "test" ? "Đang kiểm tra…" : "Kiểm tra & đồng bộ model"}</button><span>{provider.last_checked_at ? `Đã kiểm tra: ${formatDate(provider.last_checked_at)}` : "Chưa thực hiện kiểm tra kết nối"}</span></div>
       <p className="provider-test-note">Chỉ gọi API liệt kê model, không gửi prompt hoặc tạo nội dung tính phí. Provider đã tắt vẫn có thể được kiểm tra.</p>
-      {provider.connection_status === "error" && <p className="provider-status-explanation">Lần kiểm tra gần nhất chưa thành công. Nếu còn danh sách model bên dưới, đó là dữ liệu của lần đồng bộ thành công trước.</p>}
+      {provider.connection_status === "error" && <p className="provider-status-explanation" role="alert"><strong>{providerFailureReason(provider.last_error_code)}</strong> Nếu còn danh sách model bên dưới, đó là dữ liệu của lần đồng bộ thành công trước.</p>}
     </div>
     <div className="provider-section">
       <div className="provider-section-heading"><div><h3>Model mặc định</h3><p>Lựa chọn này được lưu để dùng ở các tính năng Chat, Compare và Agent sắp triển khai.</p></div></div>

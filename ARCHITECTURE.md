@@ -4,7 +4,7 @@
 
 ### Hiện trạng và quyết định
 
-Đã rà soát source handwritten frontend/backend, schemas, tests, scripts và cấu hình; loại trừ secrets, thư viện và build output. Baseline hiện tại: 173 backend tests + 31 frontend tests đạt; Ruff/ESLint đạt. Backend đã chuyển sang MongoDB (motor async) thay PostgreSQL/SQLAlchemy/Alembic; Docker vẫn chưa được cài trên máy.
+Đã rà soát source handwritten frontend/backend, schemas, tests, scripts và cấu hình; loại trừ secrets, thư viện và build output. Baseline hiện tại (sau Phase 3): 237 backend tests + 68 frontend tests đạt; Ruff/ESLint đạt. Backend đã chuyển sang MongoDB (motor async) thay PostgreSQL/SQLAlchemy/Alembic; Docker vẫn chưa được cài trên máy.
 
 | Hạng mục | Hiện trạng | Phương án |
 |---|---|---|
@@ -73,6 +73,44 @@ Mỗi đợt chạy hồi quy auth/dashboard, unit/API tests, frontend build/lin
 - Gemini Models API: https://aistudio.google.com/api-reference/models
 - Gemini discovery đọc trực tiếp: https://generativelanguage.googleapis.com/$discovery/rest?version=v1beta — `GET /v1beta/models`, pageSize tối đa 1000, pageToken/nextPageToken, models[].supportedGenerationMethods và token limits.
 - Probe không có credentials: OpenAI trả 401, Gemini trả 403. Groq đã xác minh model listing thành công bằng API key thật (11 model, capabilities unknown); OpenAI/Gemini chưa có key hợp lệ để live test.
+
+### Đợt triển khai Phase 3: Multi-model Chat
+
+Triển khai sau khi Phase 2 ổn định, ưu tiên Chat trước Compare/Agent. Tái sử dụng tối đa nền tảng hiện có; không viết lại auth/dashboard/provider, không tạo collection trùng.
+
+Quyết định thiết kế:
+
+- **Tái sử dụng collections sẵn có** `conversations`, `messages`, `ai_requests` (đã có trong schema nền). Không tạo bảng mới cho chat. Thêm index compound `conversations(user_id, updated_at desc)` để liệt kê theo thời gian, `messages(conversation_id, created_at)` và `messages(user_id)`; `ai_requests(user_id)` giữ nguyên. `Conversation` bổ sung `system_prompt`, `temperature`, `max_output_tokens`; `Message`/`AIRequest` mang `input_tokens`, `output_tokens`, `latency_ms`, `error_code`, `status`.
+- **Generation async trên app loop**: khác với listing (đồng bộ, chạy trong thread), adapter generation (`ChatHTTP.stream`) là async generator tiêu thụ trực tiếp bởi `StreamingResponse`, nên client ngắt kết nối sẽ hủy request provider đang chạy. Endpoint cố định HTTPS, không follow redirect, bỏ qua proxy môi trường, giới hạn bytes/timeout, chỉ chấp nhận `Content-Encoding: identity`.
+- **SSE contract**: event `user_message` → nhiều `delta` → `done` (hoặc `error`). Định dạng `event: <name>\ndata: <json>\n\n`. Validation/ownership/capability/credential được kiểm tra TRƯỚC khi mở stream (`prepare_send`/`prepare_regenerate`); lỗi giai đoạn này trả JSON `{detail:{code,message}}` (404/409/422), không phải SSE. Lỗi giữa stream phát event `error` và lưu assistant status `error`.
+- **Capability tri-state**: chỉ chặn khi `capabilities.chat is False` rõ ràng; `unknown/null` vẫn cho phép chat (OpenAI/Groq `/models` không cung cấp capability). Model phải thuộc catalog đã đồng bộ của credential; provider phải implemented + configured + enabled.
+- **Chống lộ key**: `SecretRedactor` quét cửa sổ trượt trên text delta đã trích xuất (bắt cả trường hợp key bị chia cắt giữa hai delta); `_sse_events` cũng quét trên data thô. Key giải mã trong backend, không trả ciphertext/plaintext về browser/log; lỗi chỉ mang mã công khai cố định.
+- **Cô lập chủ sở hữu + nhất quán lịch sử**: mọi truy vấn lọc `user_id`; regenerate thay assistant cuối sau user turn cuối, giữ tính nhất quán; xóa hội thoại xóa kèm messages. Nội dung đã sinh khi hủy được lưu bền vững (`_persist_partial` shielded khi `CancelledError`) với status `stopped`. Usage token là số thật provider trả về; không tự bịa token/cost, không tăng AIRequest cho việc chỉ liệt kê.
+- **Frontend**: `/chat` là route thật (loại `chat` khỏi `sections` placeholder để `[section]` không xung đột). SSE client dùng `fetch` (axios không stream được trong browser) với `credentials: include`, `AbortController`, và refresh cookie một lần khi 401 rồi retry — gương interceptor axios nhưng không sửa `services/api.js` dùng chung. Hook dẫn xuất trạng thái loading trong render (không setState đồng bộ trong effect) để đạt rule `react-hooks/set-state-in-effect`. Markdown render bằng `react-markdown` + `remark-gfm`, KHÔNG bật raw HTML nên output model không inject markup.
+
+Hợp đồng API chat (prefix `/api/v1/ai/chat`, cần CurrentUser, `Cache-Control: no-store`):
+
+| Endpoint | Hợp đồng |
+|---|---|
+| GET `/conversations` | `{conversations:[ConversationSummary]}` |
+| POST `/conversations` | `{provider,model,title?,system_prompt?,temperature?(0–2),max_output_tokens?(1–8192)}` extra=forbid → 201 |
+| GET `/conversations/{id}` | `ConversationDetail` = summary + `messages:[MessageOut]` |
+| PATCH `/conversations/{id}` | ≥1 trường `title?/system_prompt?/temperature?/max_output_tokens?`; không đổi provider/model; title không null |
+| DELETE `/conversations/{id}` | 204; xóa hội thoại + messages |
+| POST `/conversations/{id}/messages` | `{content}` (1–32000, strip) → `text/event-stream` |
+| POST `/conversations/{id}/regenerate` | không body → `text/event-stream`, thay assistant cuối |
+
+`MessageOut`: `{id,role,content,status,model,input_tokens,output_tokens,latency_ms,error_code,created_at}`. Mã lỗi: `conversation_not_found`(404), `model_not_chat_capable`/`model_not_synced`/`provider_disabled`/`credentials_missing`(409), `empty_message`/`invalid_provider_configuration`(422), `generation_failed`/`provider_unavailable`(502), `provider_authentication_failed`(400), `provider_rate_limited`(429), `provider_timeout`(504), `encryption_unavailable`(503).
+
+Các file tạo, sửa và giữ nguyên (Phase 3):
+
+- Tạo backend: `app/services/ai/{chat,chat_types}.py` (ChatHTTP, SecretRedactor, ChatRequest/ChatEvent), `app/services/chat.py` (ChatService + PreparedChat), `app/repositories/chat.py`, `app/schemas/chat.py`, `app/api/v1/chat.py`; tests `tests/test_chat.py`, `tests/test_chat_adapters.py`.
+- Sửa tối thiểu backend: `openai_provider.py`/`gemini_provider.py` thêm `stream_chat` + redactor; `groq_provider.py` kế thừa OpenAI (chỉ khác endpoint); `models/entities.py` bổ sung trường conversation/message/ai_request; `core/database.py` thêm index chat; `main.py` đăng ký router chat + exception handler cho `/api/v1/ai`; `tests/test_security.py` thêm 4 route chat vào danh sách OpenAPI. Không nâng framework, không đổi auth/cookie.
+- Tạo frontend: `services/chat.js`, `utils/chat.js`, `hooks/use-chat.js`, `hooks/use-chat-providers.js`, `components/chat/*` (markdown, message-item, message-list, composer, conversation-list, config-editor, setup-panel, conversation-view, chat-workspace), route `app/(workspace)/chat/{page.jsx,chat.css}`, tests `tests/chat.test.js`, `tests/chat-ui.test.jsx`.
+- Sửa tối thiểu frontend: `utils/navigation.js` (bỏ `chat` khỏi sections), `components/app-shell.jsx` (nav `/chat` thật), `utils/app-config.js` (stage Phase 3), `tests/format.test.js` (sections còn 4). Không viết lại auth/dashboard/provider UI, Axios refresh hay session store.
+- Giữ nguyên: `plan_create_web.md`, `update_features.md`, API auth/provider contracts, cookie names/issuer, password hashing, collections domain cũ và dữ liệu người dùng. Không commit/push/deploy.
+
+Kiểm chứng Phase 3: backend **237 tests** + Ruff đạt; frontend **68 tests** + ESLint đạt + Next build thành công. Groq **live chat** stream nhận delta `"OK"` + usage thật (76/41), không lộ key. Geometry offline (iframe 360/390/768/1440, đo bằng số, không chụp ảnh): không tràn ngang ở document/`.page-content`/`.chat-layout` cho cả conversation view lẫn setup panel. Chưa live test OpenAI/Gemini (chưa có key hợp lệ); chưa build Docker; xác nhận thiết bị thật dành cho người dùng.
 
 ---
 

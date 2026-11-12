@@ -23,7 +23,7 @@ describe("display helpers", () => {
     expect(formatActivity({ action: "toString", description: "Original event" })).toBe("Original event");
   });
   it("labels all unimplemented modules with an explicit phase", () => {
-    expect(Object.keys(sections)).toHaveLength(5);
+    expect(Object.keys(sections)).toHaveLength(4);
     for (const section of Object.values(sections)) {
       expect(section.phase).toMatch(/^Phase [2-6]/);
       expect(section.items.length).toBeGreaterThan(0);

@@ -12,7 +12,7 @@ import { APP_NAME, APP_STAGE } from "../utils/app-config";
 
 const navigation = [
   { href: "/dashboard", label: "Tổng quan", icon: LayoutDashboard },
-  { href: "/chat", label: "AI Chat", icon: MessagesSquare, upcoming: true },
+  { href: "/chat", label: "AI Chat", icon: MessagesSquare },
   { href: "/compare", label: "Compare AI", icon: Columns2, upcoming: true },
   { href: "/agents", label: "AI Agents", icon: Bot, upcoming: true },
   { href: "/knowledge", label: "Kho kiến thức", icon: LibraryBig, upcoming: true },
