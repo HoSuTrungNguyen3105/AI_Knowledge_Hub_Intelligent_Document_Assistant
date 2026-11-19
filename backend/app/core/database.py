@@ -35,6 +35,8 @@ async def init_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.conversations.create_index("user_id")
     await db.conversations.create_index("knowledge_base_id")
     await db.conversations.create_index([("user_id", 1), ("updated_at", -1)])
+    await db.conversations.create_index("multi_chat_id")
+    await db.multi_chats.create_index([("user_id", 1), ("updated_at", -1)])
     await db.messages.create_index([("conversation_id", 1), ("created_at", 1)])
     await db.messages.create_index("user_id")
     await db.ai_requests.create_index("user_id")
@@ -43,6 +45,12 @@ async def init_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.ai_models.create_index([("credential_id", 1), ("model_id", 1)], unique=True)
     await db.comparisons.create_index("user_id")
     await db.comparisons.create_index([("user_id", 1), ("updated_at", -1)])
+    await db.agents.create_index("user_id")
+    await db.agents.create_index([("user_id", 1), ("updated_at", -1)])
+    await db.agent_executions.create_index([("user_id", 1), ("agent_id", 1), ("created_at", -1)])
+    await db.agent_executions.create_index("agent_id")
+    await db.tool_executions.create_index([("user_id", 1), ("execution_id", 1), ("created_at", 1)])
+    await db.tool_executions.create_index("agent_id")
 
 
 @asynccontextmanager

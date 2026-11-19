@@ -14,7 +14,7 @@ const navigation = [
   { href: "/dashboard", label: "Tổng quan", icon: LayoutDashboard },
   { href: "/chat", label: "AI Chat", icon: MessagesSquare },
   { href: "/compare", label: "Compare AI", icon: Columns2 },
-  { href: "/agents", label: "AI Agents", icon: Bot, upcoming: true },
+  { href: "/agents", label: "Agent Studio", icon: Bot },
   { href: "/knowledge", label: "Kho kiến thức", icon: LibraryBig, upcoming: true },
   { href: "/notes", label: "Ghi chú", icon: NotebookPen, upcoming: true },
   { href: "/settings", label: "Cài đặt AI", icon: Settings2 },

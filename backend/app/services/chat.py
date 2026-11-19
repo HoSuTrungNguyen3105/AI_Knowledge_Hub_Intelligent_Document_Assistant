@@ -325,6 +325,7 @@ class ChatService:
             system_prompt=conversation.system_prompt,
             temperature=conversation.temperature,
             max_output_tokens=conversation.max_output_tokens,
+            multi_chat_id=conversation.multi_chat_id,
             created_at=conversation.created_at,
             updated_at=conversation.updated_at,
         )

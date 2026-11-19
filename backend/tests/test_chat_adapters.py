@@ -16,10 +16,22 @@ from pydantic import SecretStr
 from app.services.ai.ai_factory import create_provider
 from app.services.ai.base_provider import ProviderError
 from app.services.ai.chat import ChatHTTP, ChatLimits
-from app.services.ai.chat_types import ChatRequest, ChatTurn
+from app.services.ai.chat_types import ChatRequest, ChatTurn, ToolCall, ToolSpec
 
 KEY = SecretStr("contract-only-chat-key")
 REQ = ChatRequest(model="test-model", turns=(ChatTurn("user", "Hello"),))
+TOOL = ToolSpec(
+    name="calculator",
+    description="Evaluate arithmetic.",
+    parameters={
+        "type": "object",
+        "properties": {"expression": {"type": "string"}},
+        "required": ["expression"],
+    },
+)
+TOOL_REQ = ChatRequest(
+    model="test-model", turns=(ChatTurn("user", "What is 2+2?"),), tools=(TOOL,)
+)
 
 
 def adapter(provider, handler, **limits):
@@ -293,3 +305,413 @@ def test_malformed_upstream_chunks_are_tolerated_without_crashing():
     assert [e.text for e in events if e.kind == "delta"] == ["valid"]
     usage = [e for e in events if e.kind == "usage"][-1]
     assert usage.input_tokens is None and usage.output_tokens is None
+
+
+# --- Function calling (Phase 5). Contract-only; no live tool execution here. ---
+
+
+def test_openai_forwards_tools_and_accumulates_streamed_tool_calls():
+    def handle(request):
+        body = json.loads(request.content)
+        assert body["tools"] == [
+            {
+                "type": "function",
+                "function": {
+                    "name": "calculator",
+                    "description": "Evaluate arithmetic.",
+                    "parameters": TOOL.parameters,
+                },
+            }
+        ]
+        return httpx.Response(
+            200,
+            text=sse(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_abc",
+                                        "type": "function",
+                                        "function": {"name": "calculator", "arguments": ""},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {"index": 0, "function": {"arguments": '{"expr'}}
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {"index": 0, "function": {"arguments": 'ession": "2+2"}'}}
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {"choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 3}},
+                "[DONE]",
+            ),
+        )
+
+    events = asyncio.run(collect("openai", handle, request=TOOL_REQ))
+    calls = [e.tool_call for e in events if e.kind == "tool_call"]
+    assert len(calls) == 1
+    assert calls[0].id == "call_abc"
+    assert calls[0].name == "calculator"
+    assert calls[0].arguments == {"expression": "2+2"}
+
+
+def test_groq_accumulates_tool_calls_like_openai():
+    def handle(request):
+        assert str(request.url) == "https://api.groq.com/openai/v1/chat/completions"
+        body = json.loads(request.content)
+        assert body["tools"][0]["function"]["name"] == "calculator"
+        return httpx.Response(
+            200,
+            text=sse(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_g",
+                                        "function": {
+                                            "name": "calculator",
+                                            "arguments": '{"expression": "3*3"}',
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "[DONE]",
+            ),
+        )
+
+    events = asyncio.run(collect("groq", handle, request=TOOL_REQ))
+    calls = [e.tool_call for e in events if e.kind == "tool_call"]
+    assert len(calls) == 1
+    assert calls[0].arguments == {"expression": "3*3"}
+
+
+def test_openai_multiple_tool_calls_emitted_in_index_order():
+    def handle(request):
+        return httpx.Response(
+            200,
+            text=sse(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 1,
+                                        "id": "call_b",
+                                        "function": {"name": "datetime", "arguments": "{}"},
+                                    },
+                                    {
+                                        "index": 0,
+                                        "id": "call_a",
+                                        "function": {
+                                            "name": "calculator",
+                                            "arguments": '{"expression": "1"}',
+                                        },
+                                    },
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "[DONE]",
+            ),
+        )
+
+    events = asyncio.run(collect("openai", handle, request=TOOL_REQ))
+    calls = [e.tool_call for e in events if e.kind == "tool_call"]
+    assert [c.id for c in calls] == ["call_a", "call_b"]
+
+
+def test_openai_serializes_assistant_tool_calls_and_tool_result_turns():
+    request = ChatRequest(
+        model="test-model",
+        turns=(
+            ChatTurn("user", "2+2?"),
+            ChatTurn(
+                "assistant",
+                "",
+                tool_calls=(
+                    ToolCall(id="call_abc", name="calculator", arguments={"expression": "2+2"}),
+                ),
+            ),
+            ChatTurn(
+                "tool", '{"result": 4}', tool_call_id="call_abc", tool_name="calculator"
+            ),
+        ),
+    )
+
+    def handle(request_):
+        body = json.loads(request_.content)
+        assert body["messages"] == [
+            {"role": "user", "content": "2+2?"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_abc",
+                        "type": "function",
+                        "function": {
+                            "name": "calculator",
+                            "arguments": '{"expression": "2+2"}',
+                        },
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_abc", "content": '{"result": 4}'},
+        ]
+        return httpx.Response(200, text=sse(openai_chunk("4"), "[DONE]"))
+
+    events = asyncio.run(collect("openai", handle, request=request))
+    assert [e.text for e in events if e.kind == "delta"] == ["4"]
+
+
+def test_openai_tool_call_with_unparseable_arguments_falls_back_to_empty():
+    def handle(request):
+        return httpx.Response(
+            200,
+            text=sse(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_x",
+                                        "function": {"name": "calculator", "arguments": "not json"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "[DONE]",
+            ),
+        )
+
+    events = asyncio.run(collect("openai", handle, request=TOOL_REQ))
+    calls = [e.tool_call for e in events if e.kind == "tool_call"]
+    assert len(calls) == 1
+    assert calls[0].arguments == {}
+
+
+def test_openai_tool_call_echoing_credential_is_rejected():
+    secret = KEY.get_secret_value()
+
+    def handle(request):
+        return httpx.Response(
+            200,
+            text=sse(
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_x",
+                                        "function": {
+                                            "name": "calculator",
+                                            "arguments": json.dumps({"expression": secret}),
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                "[DONE]",
+            ),
+        )
+
+    with pytest.raises(ProviderError) as error:
+        asyncio.run(collect("openai", handle, request=TOOL_REQ))
+    assert error.value.code == "generation_failed"
+
+
+def test_gemini_forwards_function_declarations_and_emits_tool_call():
+    def handle(request):
+        body = json.loads(request.content)
+        assert body["tools"] == [
+            {
+                "functionDeclarations": [
+                    {
+                        "name": "calculator",
+                        "description": "Evaluate arithmetic.",
+                        "parameters": TOOL.parameters,
+                    }
+                ]
+            }
+        ]
+        return httpx.Response(
+            200,
+            text=sse(
+                {
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {
+                                        "functionCall": {
+                                            "name": "calculator",
+                                            "args": {"expression": "2+2"},
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
+                    "candidates": [{"content": {"parts": [{"text": "done"}]}}],
+                    "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 4},
+                },
+            ),
+        )
+
+    events = asyncio.run(collect("gemini", handle, request=TOOL_REQ))
+    calls = [e.tool_call for e in events if e.kind == "tool_call"]
+    assert len(calls) == 1
+    assert calls[0].name == "calculator"
+    assert calls[0].arguments == {"expression": "2+2"}
+    assert calls[0].id == "gemini_calculator_1"
+    assert [e.text for e in events if e.kind == "delta"] == ["done"]
+
+
+def test_gemini_serializes_function_call_and_function_response_turns():
+    request = ChatRequest(
+        model="test-model",
+        turns=(
+            ChatTurn("user", "2+2?"),
+            ChatTurn(
+                "assistant",
+                "",
+                tool_calls=(
+                    ToolCall(
+                        id="gemini_calculator_1",
+                        name="calculator",
+                        arguments={"expression": "2+2"},
+                    ),
+                ),
+            ),
+            ChatTurn(
+                "tool", '{"result": 4}', tool_call_id="gemini_calculator_1", tool_name="calculator"
+            ),
+        ),
+    )
+
+    def handle(request_):
+        body = json.loads(request_.content)
+        assert body["contents"] == [
+            {"role": "user", "parts": [{"text": "2+2?"}]},
+            {
+                "role": "model",
+                "parts": [{"functionCall": {"name": "calculator", "args": {"expression": "2+2"}}}],
+            },
+            {
+                "role": "function",
+                "parts": [
+                    {"functionResponse": {"name": "calculator", "response": {"result": 4}}}
+                ],
+            },
+        ]
+        return httpx.Response(200, text=sse({"candidates": []}))
+
+    assert asyncio.run(collect("gemini", handle, request=request)) == []
+
+
+def test_gemini_function_response_wraps_non_object_content():
+    request = ChatRequest(
+        model="test-model",
+        turns=(
+            ChatTurn("user", "hi"),
+            ChatTurn("tool", "plain text result", tool_call_id="x", tool_name="calculator"),
+        ),
+    )
+
+    def handle(request_):
+        body = json.loads(request_.content)
+        assert body["contents"][1] == {
+            "role": "function",
+            "parts": [
+                {
+                    "functionResponse": {
+                        "name": "calculator",
+                        "response": {"result": "plain text result"},
+                    }
+                }
+            ],
+        }
+        return httpx.Response(200, text=sse({"candidates": []}))
+
+    assert asyncio.run(collect("gemini", handle, request=request)) == []
+
+
+@pytest.mark.parametrize("provider", ["openai", "groq", "gemini"])
+def test_no_tools_key_when_request_has_no_tools(provider):
+    def handle(request):
+        body = json.loads(request.content)
+        assert "tools" not in body
+        return httpx.Response(200, text=sse("[DONE]"))
+
+    assert asyncio.run(collect(provider, handle)) == []
+
+
+@pytest.mark.parametrize("index", [-1, 16])
+def test_openai_tool_accumulator_bounds(index):
+    payload = {"choices": [{"delta": {"tool_calls": [{
+        "index": index, "function": {"name": "calculator", "arguments": "{}"},
+    }]}}]}
+    with pytest.raises(ProviderError, match="invalid generation"):
+        asyncio.run(collect("openai", lambda _: httpx.Response(200, text=sse(payload)), TOOL_REQ))
+
+
+@pytest.mark.parametrize("provider", ["openai", "groq"])
+def test_decoded_tool_arguments_reject_unicode_escaped_credential(provider):
+    encoded = "".join(f"\\u{ord(char):04x}" for char in KEY.get_secret_value())
+    arguments = '{"expression":"' + encoded + '"}'
+    payload = {"choices": [{"delta": {"tool_calls": [{
+        "index": 0, "id": "call_x",
+        "function": {"name": "calculator", "arguments": arguments},
+    }]}}]}
+    with pytest.raises(ProviderError) as error:
+        asyncio.run(collect(provider, lambda _: httpx.Response(200, text=sse(payload)), TOOL_REQ))
+    assert error.value.code == "generation_failed"
+
+
+def test_gemini_decoded_tool_arguments_reject_credential():
+    encoded = "".join(f"\\u{ord(char):04x}" for char in KEY.get_secret_value())
+    body = ('data: {"candidates":[{"content":{"parts":[{"functionCall":'
+            '{"name":"calculator","args":{"expression":"' + encoded + '"}}}]}}]}\n\n')
+    with pytest.raises(ProviderError) as error:
+        asyncio.run(collect("gemini", lambda _: httpx.Response(200, text=body), TOOL_REQ))
+    assert error.value.code == "generation_failed"

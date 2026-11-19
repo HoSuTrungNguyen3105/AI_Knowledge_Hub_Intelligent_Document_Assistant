@@ -22,8 +22,9 @@ describe("display helpers", () => {
     expect(formatActivity({ action: "future.action", description: "Original event" })).toBe("Original event");
     expect(formatActivity({ action: "toString", description: "Original event" })).toBe("Original event");
   });
-  it("labels all unimplemented modules with an explicit phase", () => {
-    expect(Object.keys(sections)).toHaveLength(3);
+  it("labels only remaining unimplemented modules with an explicit phase", () => {
+    expect(Object.keys(sections)).toEqual(["knowledge", "notes"]);
+    expect(sections.agents).toBeUndefined();
     for (const section of Object.values(sections)) {
       expect(section.phase).toMatch(/^Phase [2-6]/);
       expect(section.items.length).toBeGreaterThan(0);

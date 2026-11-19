@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncIterator
 from typing import Annotated
 
@@ -6,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from app.schemas.providers import ModelCapabilities, ProviderModel
 from app.services.ai.base_provider import BaseProvider, ProviderError
 from app.services.ai.chat import ChatHTTP, SecretRedactor
-from app.services.ai.chat_types import ChatEvent, ChatRequest, token_count
+from app.services.ai.chat_types import ChatEvent, ChatRequest, ToolCall, token_count
 from app.services.ai.http import ListingSession, ModelListingHTTP
 
 
@@ -89,17 +90,64 @@ class GeminiProvider(BaseProvider):
 
         return self.http.run(listing, api_key)
 
+    @staticmethod
+    def _contents(request: ChatRequest) -> list[dict]:
+        contents: list[dict] = []
+        real_ids = {
+            call.id for turn in request.turns for call in turn.tool_calls
+            if call.replay_metadata.get("id")
+        }
+        for turn in request.turns:
+            if turn.role == "tool":
+                # Gemini expects the function result as a JSON object under
+                # functionResponse.response; tool content is the serialized dict.
+                response: dict = {}
+                raw = turn.content.strip()
+                if raw:
+                    try:
+                        parsed = json.loads(raw)
+                    except (ValueError, RecursionError):
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        response = parsed
+                    else:
+                        response = {"result": turn.content}
+                function_response = {"name": turn.tool_name or "", "response": response}
+                if turn.tool_call_id in real_ids:
+                    function_response["id"] = turn.tool_call_id
+                part = {"functionResponse": function_response}
+                # All responses to a parallel model turn must stay in one Content,
+                # in call order (including repeated calls to the same function).
+                if contents and contents[-1]["role"] == "function":
+                    contents[-1]["parts"].append(part)
+                else:
+                    contents.append({"role": "function", "parts": [part]})
+            elif turn.role == "assistant" and turn.tool_calls:
+                parts: list[dict] = []
+                if turn.content:
+                    parts.append({"text": turn.content})
+                for call in turn.tool_calls:
+                    function_call = {"name": call.name, "args": call.arguments}
+                    if call.replay_metadata.get("id"):
+                        function_call["id"] = call.id
+                    part = {"functionCall": function_call}
+                    if "thoughtSignature" in call.replay_metadata:
+                        part["thoughtSignature"] = call.replay_metadata["thoughtSignature"]
+                    parts.append(part)
+                contents.append({"role": "model", "parts": parts})
+            else:
+                contents.append(
+                    {
+                        "role": "user" if turn.role == "user" else "model",
+                        "parts": [{"text": turn.content}],
+                    }
+                )
+        return contents
+
     async def stream_chat(
         self, api_key: SecretStr, request: ChatRequest
     ) -> AsyncIterator[ChatEvent]:
-        contents = [
-            {
-                "role": "user" if turn.role == "user" else "model",
-                "parts": [{"text": turn.content}],
-            }
-            for turn in request.turns
-        ]
-        payload: dict = {"contents": contents}
+        payload: dict = {"contents": self._contents(request)}
         if request.system_prompt:
             payload["systemInstruction"] = {"parts": [{"text": request.system_prompt}]}
         generation: dict = {}
@@ -109,7 +157,21 @@ class GeminiProvider(BaseProvider):
             generation["maxOutputTokens"] = request.max_output_tokens
         if generation:
             payload["generationConfig"] = generation
+        if request.tools:
+            payload["tools"] = [
+                {
+                    "functionDeclarations": [
+                        {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.parameters,
+                        }
+                        for tool in request.tools
+                    ]
+                }
+            ]
         redactor = SecretRedactor(api_key.get_secret_value())
+        call_index = 0
         async for event in self.chat_http.stream(
             "gemini", api_key, payload, params={"alt": "sse"}, model=request.model
         ):
@@ -120,11 +182,46 @@ class GeminiProvider(BaseProvider):
                     parts = content.get("parts")
                     if isinstance(parts, list):
                         for part in parts:
-                            if isinstance(part, dict):
-                                text = part.get("text")
-                                if isinstance(text, str) and text:
-                                    redactor.feed(text)
-                                    yield ChatEvent("delta", text=text)
+                            if not isinstance(part, dict):
+                                continue
+                            text = part.get("text")
+                            if isinstance(text, str) and text:
+                                redactor.feed(text)
+                                yield ChatEvent("delta", text=text)
+                            function_call = part.get("functionCall")
+                            if isinstance(function_call, dict):
+                                name = function_call.get("name")
+                                args = function_call.get("args")
+                                if isinstance(name, str) and name:
+                                    arguments = args if isinstance(args, dict) else {}
+                                    encoded = json.dumps(arguments, ensure_ascii=False)
+                                    if call_index >= 16 or len(name) > 64 or len(encoded) > 65536:
+                                        raise ProviderError("generation_failed")
+                                    redactor.feed(name)
+                                    redactor.feed(encoded)
+                                    call_index += 1
+                                    replay: dict = {}
+                                    call_id = function_call.get("id")
+                                    if isinstance(call_id, str) and call_id:
+                                        if len(call_id) > 512:
+                                            raise ProviderError("generation_failed")
+                                        redactor.feed(call_id)
+                                        replay["id"] = True
+                                    else:
+                                        call_id = f"gemini_{name}_{call_index}"
+                                    signature = part.get("thoughtSignature")
+                                    if signature is not None:
+                                        if not isinstance(signature, str) or len(signature) > 32768:
+                                            raise ProviderError("generation_failed")
+                                        redactor.feed(signature)
+                                        replay["thoughtSignature"] = signature
+                                    yield ChatEvent(
+                                        "tool_call",
+                                        tool_call=ToolCall(
+                                            id=call_id, name=name, arguments=arguments,
+                                            replay_metadata=replay,
+                                        ),
+                                    )
             usage = event.get("usageMetadata")
             if isinstance(usage, dict):
                 yield ChatEvent(

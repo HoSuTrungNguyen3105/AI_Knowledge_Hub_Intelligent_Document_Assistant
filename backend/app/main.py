@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pymongo.errors import PyMongoError
 
-from app.api.v1 import auth, chat, compare, dashboard, health, providers
+from app.api.v1 import agents, auth, chat, compare, dashboard, health, providers
 from app.core.config import Settings, get_settings
 from app.core.database import lifespan_mongo
 from app.core.middleware import RateLimiter, SecurityMiddleware
@@ -85,6 +85,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         providers.router,
         chat.router,
         compare.router,
+        agents.router,
     ):
         application.include_router(router, prefix="/api/v1")
     return application

@@ -1,6 +1,6 @@
 # MindFlow AI
 
-Mở rộng AI Knowledge Hub theo `update_features.md`, giữ nền tảng trong `plan_create_web.md` và triển khai từng giai đoạn. **Bản hiện tại: Foundation + Phase 2 + Phase 3 + Phase 4 — Multi-model AI Chat và Multi-AI Comparison (chạy song song, synthesis tùy chọn, usage/cost ước tính).**
+Mở rộng AI Knowledge Hub theo `update_features.md`, giữ nền tảng trong `plan_create_web.md` và triển khai từng giai đoạn. **Bản hiện tại: Foundation + Phase 2–5 — Multi-model Chat, Multi-AI Comparison và AI Agent Studio/Execution với tool calling thật.**
 
 ## Đã triển khai
 
@@ -21,7 +21,12 @@ Mở rộng AI Knowledge Hub theo `update_features.md`, giữ nền tảng trong
 - **AI Synthesis (tùy chọn):** chọn một provider/model đã đồng bộ để tổng hợp các câu trả lời thành công thành một đáp án chung; chỉ chạy khi có ít nhất một câu trả lời thành công. Synthesis cũng stream và lưu lại kèm phép so sánh.
 - So sánh lưu trong collection mới `comparisons` (mỗi user chỉ thấy dữ liệu của mình); đổi tên ngầm theo prompt, xóa có xác nhận. Chi phí luôn gắn nhãn **ước tính** (`≈`), phân biệt với chi phí thực tế provider xác nhận; không tự bịa token/giá. Groq công bố giá per-token nên cột Groq có ước tính; provider không công bố giá thì hiển thị `—`.
 
-**Chưa triển khai:** Agent/tool calling, files/RAG/memory/research/workflows và ghi chú. Claude, DeepSeek, Ollama chỉ có trong registry, chưa nhận key hoặc gọi API. Các trang tương ứng ghi rõ lộ trình, không giả lập kết quả. Không cần API key AI để đăng nhập và dùng dashboard.
+- **Phase 5 — AI Agents** tại `/agents`: tạo, chỉnh sửa, nhân bản và xóa Agent; cấu hình provider/model đã đồng bộ, system prompt, temperature, token ra và tools. Avatar dùng chữ viết tắt của tên, chưa có upload ảnh.
+- Agent gọi **Calculator, DateTime và Data Analyzer** qua function calling: backend kiểm tra tool được bật + schema tham số, chạy tool thật và trả observation cho AI xử lý tiếp. Không có `eval`, shell hoặc lệnh hệ thống tùy ý.
+- Vòng lặp giới hạn **6 bước, 120 giây, ngân sách 8.000 token theo ước lượng bảo thủ**, tối đa 4 tool/bước, timeout tool 10 giây. Ngân sách tính cả context gửi lại và output; vẫn chặn khi provider không trả usage. Số token hiển thị/chi phí ước tính chỉ dùng usage provider xác nhận, không dùng ước lượng an toàn này để tính phí.
+- Lịch sử lần chạy + trace từng bước/tool lưu theo user trong `agents`, `agent_executions`, `tool_executions`; xóa Agent xóa kèm lịch sử/tool audit. Mỗi lần chạy độc lập, không tự đưa lịch sử vào memory. Key tiếp tục mã hóa, chỉ xử lý ở backend.
+
+**Chưa triển khai:** files/RAG/memory/research/workflows và ghi chú. Document Search, Knowledge Search, Text Summarizer, Web Search hiển thị chưa khả dụng cho đến khi có subsystem tương ứng ở Phase 6–7; backend từ chối chạy. Claude, DeepSeek, Ollama chỉ có trong registry, chưa nhận key hoặc gọi API. Không cần API key AI để đăng nhập và dùng dashboard.
 
 Phân tích hiện trạng, danh sách file tạo/sửa/giữ nguyên, schema và API contracts: [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -119,6 +124,17 @@ Sau Bước D (đã lưu key, bật provider, đồng bộ model), mở `/compar
 
 Stream dùng cùng origin `/api/v1/ai/compare/...` với cookie HttpOnly (`text/event-stream`). API key chỉ giải mã ở backend, không trả về browser.
 
+### Bước G — tạo và chạy Agent (Phase 5)
+
+Sau Bước D, mở `/agents`:
+
+1. Tạo Agent, đặt tên và chọn provider/model đã đồng bộ. Nhập system prompt nếu cần; bật các tool muốn cho Agent sử dụng. Model có capability `tools=false` không được chạy tools; capability chưa xác định phải được kiểm chứng bằng lần chạy thực tế, không bảo đảm từ model listing.
+2. Lưu Agent rồi gửi yêu cầu, ví dụ: “Dùng Calculator tính 17 × 23 + 5”, “Dùng DateTime lấy giờ UTC+7”, hoặc “Dùng Data Analyzer tính trung bình của 10, 20, 30, 40”. Trace hiển thị lời gọi và kết quả tool, sau đó là câu trả lời cuối.
+3. Có thể dừng khi đang stream, xem lại lịch sử, chỉnh sửa/nhân bản Agent hoặc xóa có xác nhận. Câu hỏi, câu trả lời và tham số/kết quả tool được lưu trong lịch sử của tài khoản; không gửi thông tin nhạy cảm nếu chưa muốn lưu. Chưa có memory dài hạn hay Knowledge Base.
+4. Nếu chạm giới hạn bước/token/timeout, lần chạy được lưu với trạng thái lỗi và mã nguyên nhân. Ngân sách ước lượng bảo thủ có thể từ chối prompt dài trước khi gọi provider. Token/chi phí hiển thị không phải số đo của bộ giới hạn này; chi phí luôn là ước tính từ giá công bố.
+
+Không cần cài thư viện hay đổi DB cho Phase 5. Backend `--reload` tự nạp code mới; nếu đang chạy không có reload, khởi động lại backend và frontend. Index mới được tạo idempotent khi backend khởi động; không xóa/chuyển đổi collections cũ.
+
 ## 3. Kiểm thử
 
 Backend từ `backend/`:
@@ -148,13 +164,14 @@ Smoke test thủ công sau khi ứng dụng khởi động:
 6. `/settings`: lưu key → trạng thái “đã cấu hình/chưa kiểm tra”; kiểm tra kết nối với key sai phải báo lỗi an toàn, không lộ key; xóa key phải có hộp thoại xác nhận.
 7. `/chat` (cần provider đã cấu hình + đồng bộ model): tạo hội thoại, gửi tin nhắn thấy streaming, dừng giữa chừng vẫn lưu nội dung, tạo lại/sao chép/đổi tên/xóa hoạt động; tài khoản B không thấy hội thoại của A. Chưa cấu hình provider thì trang dẫn sang `/settings`, không có kết quả giả.
 8. `/compare` (cần provider đã cấu hình + đồng bộ model): tạo phép so sánh 2–4 model, chạy song song thấy nhiều cột stream; cố tình chọn một model không chat được để xác nhận cột đó lỗi nhưng các cột khác vẫn hoàn tất; tổng hợp (synthesis) chạy khi có ≥1 câu trả lời thành công; token/độ trễ/ước tính chi phí hiển thị đúng nhãn; tài khoản B không thấy phép so sánh của A.
-9. Các mục chưa triển khai (Agent, Knowledge/RAG, Notes) phải ghi rõ phase, không báo upload/agent thành công.
-10. Kiểm tra layout ở chiều rộng 360px, 390px, 768px và desktop; menu mobile mở/đóng bằng bàn phím và cảm ứng; màn hình chat và compare không tràn ngang (2/3/4 cột tự xuống hàng ở màn hẹp).
+9. `/agents`: tạo/sửa/nhân bản/xóa Agent, gọi ba tool đang khả dụng, thấy trace và câu trả lời stream, dừng/lưu lịch sử; tài khoản B không thấy Agent/lịch sử của A. Tool chưa triển khai không chọn/chạy được.
+10. Các mục chưa triển khai (Knowledge/RAG, Memory, Notes, tools phụ thuộc Phase 6–7) ghi rõ lộ trình, không báo thành công giả.
+11. Kiểm tra layout ở chiều rộng 360px, 390px, 768px và desktop; menu mobile mở/đóng bằng bàn phím và cảm ứng; chat, compare và agents không tràn ngang.
 
 ### Kết quả kiểm chứng của lần triển khai
 
-- Backend: **251 tests passed** (bổ sung 13 tests compare và coverage pricing/non-chat Groq so với 237 của Phase 3), Ruff đạt, `pip check` không có dependency hỏng. Một cảnh báo deprecation upstream về Starlette/httpx, không làm test thất bại.
-- Frontend: **100 tests passed** (refresh/retry, lỗi an toàn, helper, lộ trình, UI provider, SSE client + UI chat, và compare: 11 contract/SSE + 17 UI); ESLint không lỗi/cảnh báo; production build Next.js thành công (`/chat` và `/compare` là route tĩnh, `[section]` chỉ sinh `/knowledge`, `/agents`, `/notes` — không xung đột).
+- Backend: **360 tests passed** (thêm tool/function-calling/Agent CRUD, ownership, budget, timeout, cancellation, audit, Gemini signed parallel replay, BSON guard và usage không đầy đủ), Ruff đạt, `pip check` không có dependency hỏng. Một cảnh báo deprecation upstream về Starlette/httpx, không làm test thất bại.
+- Frontend: **161 tests passed** (61 tests Agent mới, gồm API/SSE, helpers, hook identity/revision/cancellation, editor/run/history/capability và confirmations; hồi quy auth/provider/chat/compare); ESLint không lỗi/cảnh báo; production build Next.js thành công (`/chat`, `/compare`, `/agents` là route thật, `[section]` chỉ sinh `/knowledge`, `/notes` — không xung đột).
 - Script: `scripts/test_init_env.py` **3 tests passed** (giữ bí mật cũ, không xoay khóa, thay placeholder).
 - Smoke test HTTP qua **harness MongoDB in-memory (mongomock) → FastAPI** đạt: health, register, profile, dashboard, refresh rotation, logout, login. Không mock API trong smoke test này; đây là stack thật nhưng DB là in-memory, không phải MongoDB server.
 - Smoke test HTTP trên **MongoDB Atlas thật** (backend dev của người dùng) đạt: register 201, lưu key 200 (mã hóa, untested), kiểm tra kết nối trả **400 `provider_authentication_failed`** với key thử không hợp lệ (lỗi có cấu trúc, an toàn, không phải 500 — chứng minh đường adapter async hoạt động), models 200 (rỗng), delete 204, logout 204. **Đây không phải live success**: không có API key provider hợp lệ nên chưa đồng bộ được model thật.
@@ -163,8 +180,11 @@ Smoke test thủ công sau khi ứng dụng khởi động:
 - **Geometry offline (Phase 3):** harness iframe cố định 360/390/768/1440px nhúng đúng `globals.css` + `chat.css` và DOM chat thật; đo bằng số (không chụp ảnh): `scrollWidth === clientWidth` ở cả document, `.page-content` và `.chat-layout` cho cả màn hình hội thoại lẫn setup panel → không tràn ngang; bảng Markdown rộng và code block dài cuộn nội bộ đúng thiết kế.
 - **Groq compare live success (Phase 4):** chạy đúng đường adapter mà `CompareService` dùng (không ghi DB, key chỉ đọc lúc chạy, không in ra). Catalog 11 model (5 chat / 6 non-chat). Hai model chat `openai/gpt-oss-safeguard-20b` và `qwen/qwen3.8-27b` cùng trả lời `"4"` với usage thật (92/63 và 29/2 token) và **chi phí ước tính** từ giá per-token Groq (≈ $0.0000258 và ≈ $0.0000312). `whisper-large-v3` (non-chat) trả `generation_failed` đúng như mong đợi. **Cô lập lỗi:** 2 thành công + 1 thất bại trong cùng phép so sánh — một model lỗi KHÔNG hủy các model khác. **Synthesis** gộp các đáp án thành công, trả `"4"` (145/122 token). Key không hardcode/lưu/commit.
 - **Geometry offline (Phase 4):** harness Node + iframe cố định 1440/1200/1000/760/380px nhúng đúng `globals.css` + `chat.css` + `compare.css` và DOM compare thật (2/3/4 cột + synthesis + setup, kèm bảng Markdown/code block dài); đo bằng số (không chụp ảnh): `docOverflow = 0`, `worst = 0`, `clip = 0` ở mọi chiều rộng và mọi biến thể → không tràn ngang, không phần tử nào vượt viewport, không container nào cắt nội dung; `.run-columns` tự xuống hàng ở màn hẹp.
-- Tài khoản kiểm thử đã tạo trong DB dev (không tự xóa): `smoke-http-fix@example.com`, `smoke-proxy-c29c3a71@example.com`, `prov-smoke-5917a5c1@example.com`. Tài khoản do harness tạo chỉ tồn tại in-memory và mất khi dừng.
-- **Chưa kiểm chứng:** build/chạy Docker image (máy không có Docker); đồng bộ model thật và chat/compare live bằng API key hợp lệ cho OpenAI/Gemini (Groq đã live cả listing, chat lẫn compare/synthesis); xác nhận trực quan trên thiết bị thật của người dùng (geometry đã kiểm tra offline bằng số, không chụp ảnh). Không đánh đồng mongomock tests với MongoDB integration tests.
+- **Groq Agent live success (Phase 5):** HTTP thật qua FastAPI → MongoDB Atlas, model `openai/gpt-oss-20b`; cả ba lần chạy success trong 2 bước: Calculator `17*23+5` → `396` (input 743/output 72 token), DateTime UTC+7 → thời gian ISO hợp lệ (817/92), Data Analyzer `[10,20,30,40]` → count `4`, mean `25` (796/112). GET execution đã lưu khớp stream ở cả ba trường hợp; SSE không chứa key. Key chỉ đọc lúc kiểm thử từ nguồn người dùng cho phép, gửi qua API cấu hình và mã hóa như ứng dụng hiện hành; không hardcode/in/lưu key vào source. Tài khoản tạm và toàn bộ dữ liệu thuộc đúng tài khoản này đã được dọn sau kiểm chứng, không xóa dữ liệu người dùng cũ.
+- **Hồi quy Agent offline:** signed replay Gemini giữ đúng ID/thought signature, gom các function responses song song; opaque metadata không xuất hiện trong SSE/history. Tham số không lưu được BSON bị từ chối an toàn; hủy wrapper/đúng lúc finalizer ghi vẫn lưu terminal một lần. Usage thiếu ở bất kỳ bước nào không được báo thành tổng đầy đủ hoặc cost đầy đủ. Đây là contract tests, không phải Gemini live.
+- **Geometry offline (Phase 5):** Node + headless Chrome đo DOM JSX/CSS Agent thật trong iframe cố định 360/390/768/1000/1440px (không chụp ảnh), gồm 14 Agent tên dài, model 512 ký tự, editor, trace JSON, bảng Markdown/code dài, lịch sử/lỗi. Sau khi sửa `min-width:0`, mỗi mục danh sách còn 180–215px; document overflow ngang **0px** ở mọi khung; provider/model lịch sử xuống dòng trong khung; JSON/code/bảng cuộn nội bộ. Nhãn danh sách và select đóng được cắt bằng ellipsis theo thiết kế.
+- Tài khoản kiểm thử cũ đã tạo trong DB dev (không tự xóa): `smoke-http-fix@example.com`, `smoke-proxy-c29c3a71@example.com`, `prov-smoke-5917a5c1@example.com`. Tài khoản do harness tạo chỉ tồn tại in-memory và mất khi dừng.
+- **Chưa kiểm chứng:** build/chạy Docker image (máy không có Docker); đồng bộ model thật và chat/compare/agent live bằng API key hợp lệ cho OpenAI/Gemini (Groq đã live listing, chat, compare/synthesis và ba Agent tools); xác nhận trực quan trên thiết bị thật của người dùng. Không đánh đồng mongomock tests với MongoDB integration tests.
 
 Chạy lại HTTP smoke test sau khi khởi động ứng dụng:
 
@@ -251,9 +271,29 @@ SSE execute gồm: `comparison` (detail ban đầu), nhiều `run_delta` (`{run_
 
 Mã lỗi compare bổ sung: `comparison_not_found` (404), `invalid_comparison_targets` (422), `no_successful_runs` (409 — synthesis cần ≥1 run thành công); dùng chung các mã provider/chat ở trên. CSRF Origin và rate limit áp dụng như các API AI khác.
 
+### Hợp đồng agents (Phase 5)
+
+Prefix `/api/v1/ai/agents`; mọi endpoint cần đăng nhập, `Cache-Control: no-store`, lọc chủ sở hữu. Không có endpoint thực thi tool tùy ý.
+
+| Endpoint | Hợp đồng |
+|---|---|
+| GET `/tools` | `{tools:[{name,description,parameters,available,phase}]}`; metadata registry cố định |
+| GET/POST đường gốc | `{agents:[AgentSummary]}` / tạo `{name,provider,model,description?,system_prompt?,temperature?,max_output_tokens?,tools?}` → 201 + detail |
+| GET/PATCH/DELETE `/{id}` | Đọc/sửa cấu hình hoặc xóa Agent + executions/tool audit; trường name/provider/model/tools không được null |
+| POST `/{id}/duplicate` | 201 + bản sao cấu hình, không sao chép lịch sử |
+| POST `/{id}/run` | `{prompt}` → SSE; kiểm tra credential/model/capability và budget trước stream |
+| GET `/{id}/executions` | `{executions:[ExecutionSummary]}` |
+| GET/DELETE `/{id}/executions/{execution_id}` | Detail gồm content, steps, usage, latency, error_code, estimated_cost, tool_executions / xóa run + audit |
+
+SSE: `execution` (`{execution}`) → `step_delta` (`{step_index,text}`), `tool_call`/`tool_result` (`{step_index,tool_call}`), `step_done` (`{step}`) → `done` (`{execution}`). Lỗi runtime phát `execution_error` (`{code,message}`) trước `done` có trạng thái lỗi. Tool lỗi trả observation an toàn cho model, không thực thi ngoài allowlist. Dừng/ngắt stream lưu phần đã sinh với `stopped`.
+
+Execution trả snapshot `provider`/`model`, prompt/content, status, steps, input/output token nullable, latency/error và tool audit. Tổng input/output chỉ hiện khi tất cả bước đã gọi đều có usage phía tương ứng; nếu thiếu một phía thì cost ước tính null, không tính phí từ số token ước lượng bảo thủ. Thought signature/metadata replay riêng của Gemini không trả cho frontend hoặc lưu vào trace công khai.
+
+Mã lỗi bổ sung: `agent_not_found`/`execution_not_found` (404), `invalid_agent_tools` (422), `model_not_tool_capable`/`agent_step_limit`/`agent_budget_exceeded` (409), `agent_timeout` (504). Dùng lại các mã provider/chat hiện có; CSRF Origin/rate limit áp dụng như trước.
+
 ## 5. Triển khai trên server
 
-Đây là nền tảng Foundation + Phase 2 + Phase 3 (Multi-model Chat) + Phase 4 (Multi-AI Comparison), **chưa phải toàn bộ sản phẩm AI hoàn thiện**. Trước khi mở public:
+Đây là nền tảng Foundation + Phase 2–5 (Chat, Compare, Agent Studio/Execution), **chưa phải toàn bộ sản phẩm AI hoàn thiện**. Trước khi mở public:
 
 1. Dùng VM/server có Docker; đặt `backend/.env` riêng bằng secret mới, tuyệt đối không đưa secrets vào image/repository.
 2. Đặt `COOKIE_SECURE=true`, `CORS_ORIGINS=["https://ten-mien-cua-ban"]`; cấu hình HTTPS reverse proxy đến frontend localhost:3000. Không mở MongoDB hoặc backend trực tiếp ra Internet.
@@ -275,7 +315,7 @@ API key provider do từng người dùng nhập ở `/settings`, mã hóa ở b
 | 2 | Provider OpenAI/Gemini/Groq, key mã hóa, model sync/default, bật/tắt, test connection | Đã triển khai; Groq đã live test (11 model), OpenAI/Gemini chưa live test |
 | 3 | Multi-model Chat: messages, generation/stream SSE, capability checks, history, system prompt/temperature/token limits | Đã triển khai; Groq đã live chat (stream + usage), OpenAI/Gemini chưa live test |
 | 4 | Compare AI: chạy song song độc lập lỗi, synthesis tùy chọn, usage/độ trễ, cost ước tính (có nhãn) vs thực tế | Đã triển khai; Groq đã live compare + isolation + synthesis + pricing, OpenAI/Gemini chưa live test |
-| 5 | Agent Studio/Execution: tools allowlist, quyền, budget, logs | Chưa triển khai |
+| 5 | Agent Studio/Execution: tools allowlist, quyền, budget, logs | Đã triển khai; Groq live gọi 3 tools và lưu lịch sử trên MongoDB Atlas; OpenAI/Gemini chỉ contract tests, chưa live |
 | 6 | File Intelligence/RAG/Memory, Research/Workflow | Chưa triển khai |
 | 7 | Production: live provider tests, MongoDB/Docker integration, hardening | Chưa triển khai |
 

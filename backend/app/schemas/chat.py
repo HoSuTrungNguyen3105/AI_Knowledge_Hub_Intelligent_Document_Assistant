@@ -70,6 +70,7 @@ class ConversationSummary(BaseModel):
     system_prompt: str | None = None
     temperature: float | None = None
     max_output_tokens: int | None = None
+    multi_chat_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
 

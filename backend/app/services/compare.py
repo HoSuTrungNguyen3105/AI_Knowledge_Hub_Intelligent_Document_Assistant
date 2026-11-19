@@ -29,7 +29,7 @@ from app.services.ai.ai_factory import create_provider
 from app.services.ai.base_provider import ERRORS, BaseProvider, ProviderError
 from app.services.ai.chat import ChatHTTP
 from app.services.ai.chat_types import ChatRequest, ChatTurn
-from app.services.ai.registry import get_provider
+from app.services.synthesis import build_synthesis_prompt, estimate_cost, require_chat_target
 
 
 @dataclass
@@ -66,15 +66,7 @@ def _estimate_cost(
     model: AIModel, input_tokens: int | None, output_tokens: int | None
 ) -> float | None:
     """Estimated USD from published per-token pricing; never a confirmed charge."""
-    total = 0.0
-    has_price = False
-    if model.input_price_per_token is not None and input_tokens is not None:
-        total += model.input_price_per_token * input_tokens
-        has_price = True
-    if model.output_price_per_token is not None and output_tokens is not None:
-        total += model.output_price_per_token * output_tokens
-        has_price = True
-    return total if has_price else None
+    return estimate_cost(model, input_tokens, output_tokens)
 
 
 class CompareService:
@@ -180,15 +172,9 @@ class CompareService:
 
     @staticmethod
     def _synthesis_prompt(comparison: Comparison, runs: list[ComparisonRun]) -> str:
-        lines = [f"Câu hỏi gốc: {comparison.prompt}", "", "Các câu trả lời từ những model khác:"]
-        for run in runs:
-            lines.append(f"\n--- {run.provider} / {run.model} ---\n{run.content}")
-        lines.append(
-            "\nHãy tổng hợp các câu trả lời trên thành một câu trả lời cuối thống nhất, "
-            "chính xác và mạch lạc. Chỉ dùng thông tin từ các câu trả lời đã cho, "
-            "không bịa thêm nguồn hay trích dẫn."
+        return build_synthesis_prompt(
+            comparison.prompt, [(f"{run.provider} / {run.model}", run.content) for run in runs]
         )
-        return "\n".join(lines)
 
     async def stream_prepared(self, prepared: PreparedCompare) -> AsyncIterator[dict]:
         user_id = prepared.user_id
@@ -387,18 +373,7 @@ class CompareService:
         return comparison
 
     async def _require_target(self, user_id: UUID, provider: str, model_id: str):
-        get_provider(provider, require_implemented=True)
-        credential = await self.providers.get(user_id, provider)
-        if credential is None:
-            raise ProviderError("credentials_missing")
-        if not credential.enabled:
-            raise ProviderError("provider_disabled")
-        model = await self.providers.get_model(credential.id, model_id)
-        if model is None:
-            raise ProviderError("model_not_synced")
-        if model.capabilities.get("chat") is False:
-            raise ProviderError("model_not_chat_capable")
-        return credential, model
+        return await require_chat_target(self.providers, user_id, provider, model_id)
 
     def _summary(self, comparison: Comparison) -> ComparisonSummary:
         return ComparisonSummary(

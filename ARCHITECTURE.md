@@ -4,7 +4,7 @@
 
 ### Hiện trạng và quyết định
 
-Đã rà soát source handwritten frontend/backend, schemas, tests, scripts và cấu hình; loại trừ secrets, thư viện và build output. Baseline hiện tại (sau Phase 4): 251 backend tests + 100 frontend tests đạt; Ruff/ESLint đạt; Next build thành công. Backend đã chuyển sang MongoDB (motor async) thay PostgreSQL/SQLAlchemy/Alembic; Docker vẫn chưa được cài trên máy.
+Đã rà soát source handwritten frontend/backend, schemas, tests, scripts và cấu hình; loại trừ secrets, thư viện và build output. Baseline hiện tại (sau Phase 5): 360 backend tests + 161 frontend tests đạt; Ruff/ESLint đạt; Next build thành công. Backend đã chuyển sang MongoDB (motor async) thay PostgreSQL/SQLAlchemy/Alembic; Docker vẫn chưa được cài trên máy.
 
 | Hạng mục | Hiện trạng | Phương án |
 |---|---|---|
@@ -59,7 +59,7 @@ Lỗi provider dùng `{detail:{code,message}}` đã làm sạch. Provider trả 
 2. Multi-AI Integration: OpenAI/Gemini/Groq, credentials mã hóa, model sync/default, bật/tắt và test connection (đợt này).
 3. Multi-model Chat: tái sử dụng conversations; thêm messages, adapters generation/stream với capability checks, history/system prompt/temperature/token limits.
 4. Compare AI: chạy song song độc lập lỗi, synthesis theo lựa chọn user, usage/cost có nguồn giá và nhãn ước tính (đã triển khai — xem mục Phase 4 bên dưới).
-5. Agent Studio/Execution: agent CRUD, tools allowlist, quyền, timeout/step/token budget và logs.
+5. Agent Studio/Execution: agent CRUD, tools allowlist, quyền, timeout/step/token budget và logs (đã triển khai — xem mục Phase 5 bên dưới).
 6. File Intelligence/RAG/Memory: parse file, embedding/vector search, citations, memory tự nguyện và có thể xóa/tắt.
 7. Research/Workflow: search service cấu hình, nguồn được kiểm chứng, workflow execution.
 8. Production: live provider tests, MongoDB/Docker integration, security/performance/observability/deployment.
@@ -148,6 +148,45 @@ Các file tạo, sửa và giữ nguyên (Phase 4):
 - Giữ nguyên: `plan_create_web.md`, `update_features.md`, API auth/provider/chat contracts, cookie names/issuer, password hashing, collections domain cũ và dữ liệu người dùng. Không commit/push/deploy.
 
 Kiểm chứng Phase 4: backend **251 tests** + Ruff đạt; frontend **100 tests** + ESLint đạt + Next build thành công (`/compare` route tĩnh, `[section]` chỉ sinh knowledge/agents/notes). Groq **live compare** (đúng đường adapter CompareService dùng, không ghi DB, key không in ra): 2 model chat trả `"4"` + usage thật + chi phí ước tính từ giá Groq; 1 model non-chat (`whisper-large-v3`) `generation_failed`; **cô lập lỗi** 2 thành công + 1 thất bại không hủy nhau; **synthesis** gộp đáp án thành công trả `"4"`. Geometry offline (Node + iframe 1440/1200/1000/760/380, đo bằng số, không chụp ảnh): `docOverflow/worst/clip = 0` ở mọi chiều rộng và biến thể 2/3/4 cột + setup. Chưa live test OpenAI/Gemini (chưa có key hợp lệ); chưa build Docker; xác nhận thiết bị thật dành cho người dùng.
+
+### Đợt triển khai Phase 5: Agent Studio và Execution
+
+Triển khai Agent sau Chat/Compare, chưa chuyển sang Phase 6. Giữ Next.js/JSX, FastAPI async và MongoDB/motor; tái sử dụng provider credentials mã hóa, model catalog, `ChatHTTP`, cookie/CSRF/rate limiter, `ai_requests`, Markdown và SSE client.
+
+Quyết định thiết kế:
+
+- **Studio:** CRUD/nhân bản Agent theo user, cấu hình name/description/system prompt/provider/model/temperature/token ra/tools. Nhân bản chỉ sao chép cấu hình. Avatar là chữ viết tắt; upload ảnh, Knowledge Base và memory chưa khả dụng. Mỗi lượt chạy độc lập, không đưa lịch sử vào context của lượt sau.
+- **Dữ liệu:** thêm ba collections `agents`, `agent_executions`, `tool_executions`, không trùng collection domain đang chạy. Execution lưu snapshot provider/model, prompt, trạng thái, content, steps, usage và cost ước tính; mỗi bước chứa tool trace. Audit tool độc lập phục vụ xem lại. Mọi truy vấn lọc `user_id`; endpoint nested kiểm tra cả `agent_id`. Xóa execution xóa audit; xóa Agent xóa lịch sử/audit. Index bổ sung trong `core/database.py` được áp dụng idempotent khi khởi động theo cơ chế MongoDB hiện hành; không xóa dữ liệu hay thêm Alembic/SQL migration. Không tạo collection `agent_tools` chỉ để lặp metadata registry cố định.
+- **Tools có quyền rõ ràng:** Calculator (AST giới hạn, không `eval`), DateTime (now/diff với UTC offset cố định), Data Analyzer (thống kê mô tả trên dãy số hữu hạn). Agent chỉ dùng tool đã bật; backend validate Pydantic `extra=forbid`, giới hạn kích thước/kết quả, từ chối tool lạ hoặc chưa khả dụng. Document Search/Knowledge Search/Text Summarizer/Web Search là deferred metadata, không gọi giả. Không đọc file người dùng, truy cập mạng, tạo note hay thực thi code/shell tùy ý từ tool.
+- **Function calling:** OpenAI/Groq nhận function schemas, tích lũy fragment thành lời gọi hoàn chỉnh và replay assistant/tool turns. Gemini dùng `functionDeclarations`, `functionCall` và `functionResponse`; kết quả song song gom thành một Content theo thứ tự. Provider call ID/thought signature được giữ nguyên trên đúng Part khi replay, chỉ trong backend; không đưa opaque metadata vào API trace/audit. Capabilities tri-state: `chat=false` chặn chat, `tools=false` chặn Agent có tools; unknown chỉ cho phép thử thật, không bảo đảm hỗ trợ.
+- **Giới hạn:** tối đa 6 bước model, deadline 120 giây, 4 tool được thực thi mỗi bước, timeout tool 10 giây, 16 tool calls nhận tối đa từ một lượt sinh. Ngân sách 8.000 đơn vị ước lượng bảo thủ dùng UTF-8 bytes + framing, bao gồm system/context/tools/replay metadata và output; context gửi lại được tính lại mỗi bước. Giới hạn vẫn hoạt động khi provider không trả usage, không dùng ước lượng này làm số token hóa đơn. Tool chạy trong thread chỉ với tính toán giới hạn; timeout không phải sandbox cho code tùy ý.
+- **Persistence khi dừng:** SSE wrapper đóng inner generator rõ ràng; cleanup/finalizer chạy trong task shielded để hủy request không làm lịch sử kẹt `running`. Phần text/trace đã nhận lưu `stopped`; hủy đúng lúc finalizer đang ghi không chạy finalizer lần hai. Tham số JSON không encode được BSON (số nguyên ngoài int64, key chứa NUL, v.v.) được thay bằng marker từ chối trước SSE/audit và trả observation `tool_invalid_arguments`, không làm hỏng lưu terminal.
+- **Usage/cost trung thực:** bước nào thiếu usage thì giữ null cho bước đó. Tổng input/output chỉ hiện nếu mọi bước đã gọi đều cung cấp phía tương ứng; số 0 thật được giữ nguyên. Thiếu một phía hoặc không có giá công bố → cost ước tính null, không dùng tổng một phần như toàn bộ chi phí. Ghi một `ai_requests` aggregate cho mỗi execution.
+- **Frontend:** `/agents` là route thật, không còn placeholder `[section]`; editor, run view, step/tool trace, final Markdown, stop, history detail/delete và confirm dialogs dùng lại design system phẳng. Hook bảo vệ session/identity/revision, hủy request khi đổi Agent/unmount và bỏ event cũ. Thông báo rõ prompt/trace được lưu vào lịch sử; KB/Memory/tools giai đoạn sau bị vô hiệu hóa.
+
+Hợp đồng API (prefix `/api/v1/ai/agents`, cần đăng nhập, no-store):
+
+| Endpoint | Hợp đồng |
+|---|---|
+| GET `/tools` | `{tools:[{name,description,parameters,available,phase}]}` |
+| GET/POST đường gốc | Danh sách Agent / `{name,provider,model,description?,system_prompt?,temperature?,max_output_tokens?,tools?}` → 201 + detail |
+| GET/PATCH/DELETE `/{agent_id}` | Đọc/sửa cấu hình / xóa kèm lịch sử và audit |
+| POST `/{agent_id}/duplicate` | 201 + bản sao cấu hình, không sao chép history |
+| POST `/{agent_id}/run` | `{prompt}` → SSE; validation/ownership/capability/budget kiểm tra trước stream |
+| GET `/{agent_id}/executions` | `{executions:[ExecutionSummary]}` |
+| GET/DELETE `/{agent_id}/executions/{execution_id}` | Detail với steps/tool audit/usage / xóa run + audit |
+
+SSE: `execution` → `step_delta`, `tool_call`, `tool_result`, `step_done` → `done`; runtime lỗi phát `execution_error` rồi `done` có trạng thái lỗi. Tool lỗi thành observation an toàn để model có thể tiếp tục. Mã lỗi bổ sung: `agent_not_found`/`execution_not_found` (404), `invalid_agent_tools` (422), `model_not_tool_capable`/`agent_step_limit`/`agent_budget_exceeded` (409), `agent_timeout` (504); dùng lại mã provider/chat và chính sách key/CSRF hiện hành.
+
+Các file tạo/sửa/giữ nguyên:
+
+- Backend mới: `app/services/ai/tools.py`, `app/{schemas,repositories,services,api/v1}/agents.py`, tests tools/agent persistence/API. Backend mở rộng: `models/entities.py` + exports, `core/database.py`, `main.py`, `services/ai/{chat_types,base_provider,openai_provider,gemini_provider}.py`, tests adapter/security. Groq kế thừa OpenAI, không thêm transport trùng.
+- Frontend mới: `services/agents.js`, `utils/agents.js`, `hooks/use-agents.js`, `components/agents/*`, `app/(workspace)/agents/{page.jsx,agents.css}`, ba test files agents. Sửa nhỏ navigation/app-shell/dashboard/app-config và `use-chat-providers` (initial provider/revision để editor dùng lại đúng model picker).
+- Giữ nguyên auth/cookie/refresh, dashboard API, provider credential logic, luồng Chat/Compare, công nghệ/dependencies, đặc tả gốc, collections và dữ liệu cũ. Chỉ cập nhật nhãn lộ trình ở Chat/auth để không còn nói Agent chưa triển khai. Không commit/push/deploy.
+
+Kiểm chứng Phase 5: backend **360 tests** + Ruff + `pip check` đạt; frontend **161 tests** (61 tests Agent mới) + ESLint + production build đạt, `/agents` là route tĩnh và `[section]` chỉ còn knowledge/notes. Groq **live HTTP → FastAPI → MongoDB Atlas** với `openai/gpt-oss-20b`: Calculator `17*23+5` → `396` (743/72 token), DateTime UTC+7 → ISO hợp lệ (817/92), Data Analyzer `[10,20,30,40]` → mean `25` (796/112); cả ba success trong 2 bước và GET lịch sử khớp stream. Key chỉ đọc lúc kiểm thử, mã hóa qua API hiện hành, không xuất hiện trong SSE/source/log; tài khoản tạm và dữ liệu của riêng tài khoản này được dọn sau kiểm chứng. OpenAI/Gemini mới kiểm chứng hợp đồng offline, chưa live; Docker chưa có trên máy. Geometry offline 360/390/768/1000/1440px: overflow ngang document 0px, danh sách Agent dài không còn giãn rộng, trace/code/bảng cuộn nội bộ; xác nhận trên thiết bị thật dành cho người dùng.
+
+Nguồn hợp đồng replay Gemini: [Function calling](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/function-calling), [Thought signatures](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures). Đây là bằng chứng định dạng API, không phải live verification bằng key Gemini.
 
 ---
 

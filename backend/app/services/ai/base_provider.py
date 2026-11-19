@@ -32,6 +32,13 @@ ERRORS = {
     "comparison_not_found": (404, "Comparison not found."),
     "invalid_comparison_targets": (422, "Select 2-4 distinct synced chat models to compare."),
     "no_successful_runs": (409, "Synthesis needs at least one successful answer."),
+    "agent_not_found": (404, "Agent not found."),
+    "execution_not_found": (404, "Execution not found."),
+    "invalid_agent_tools": (422, "Select only available tools for this agent."),
+    "model_not_tool_capable": (409, "This model does not support tool calling."),
+    "agent_step_limit": (409, "The agent reached its maximum number of steps."),
+    "agent_budget_exceeded": (409, "The agent reached its token budget."),
+    "agent_timeout": (504, "The agent execution timed out."),
 }
 
 
@@ -49,7 +56,9 @@ class ProviderError(Exception):
 class BaseProvider(ABC):
     """Implemented surface: read-only model listing and chat generation/streaming.
 
-    Tool execution is intentionally not implemented. Model metadata describes
+    Generation adapters forward tool specs and surface the model's tool-call
+    requests as events; actual tool execution is handled by the agent service
+    against a fixed allowlist, never by the adapter. Model metadata describes
     upstream capabilities, not adapter functionality. Generation never exposes
     upstream text or credentials in errors; only fixed public messages cross the
     API boundary.

@@ -25,12 +25,14 @@ class ChatRepository:
         system_prompt: str | None,
         temperature: float | None,
         max_output_tokens: int | None,
+        multi_chat_id: UUID | None = None,
     ) -> Conversation:
         now = utcnow()
         doc = {
             "_id": Conversation.generate_id(),
             "user_id": user_id,
             "knowledge_base_id": None,
+            "multi_chat_id": multi_chat_id,
             "title": title,
             "provider": provider,
             "model": model,

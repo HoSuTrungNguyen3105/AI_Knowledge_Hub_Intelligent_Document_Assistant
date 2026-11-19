@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncIterator
 from typing import Annotated, Literal
 
@@ -6,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from app.schemas.providers import ProviderModel
 from app.services.ai.base_provider import BaseProvider, ProviderError
 from app.services.ai.chat import ChatHTTP, SecretRedactor
-from app.services.ai.chat_types import ChatEvent, ChatRequest, token_count
+from app.services.ai.chat_types import ChatEvent, ChatRequest, ToolCall, token_count
 from app.services.ai.http import ListingSession, ModelListingHTTP
 
 
@@ -43,6 +44,45 @@ def _token_count(value: object) -> int | None:
     return token_count(value)
 
 
+def _accumulate_tool_call(pending: dict[int, dict], fragment: dict) -> None:
+    """Merge a streamed tool_call fragment (keyed by index) into its accumulator."""
+    index = fragment.get("index")
+    if not isinstance(index, int) or isinstance(index, bool):
+        return
+    if not 0 <= index < 16:
+        raise ProviderError("generation_failed")
+    entry = pending.setdefault(index, {"id": "", "name": "", "arguments": ""})
+    call_id = fragment.get("id")
+    if isinstance(call_id, str) and call_id:
+        entry["id"] = call_id
+    function = fragment.get("function")
+    if isinstance(function, dict):
+        name = function.get("name")
+        if isinstance(name, str) and name:
+            entry["name"] += name
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            entry["arguments"] += arguments
+    if len(entry["id"]) > 512 or len(entry["name"]) > 64 or len(entry["arguments"]) > 65536:
+        raise ProviderError("generation_failed")
+
+
+def _finalize_tool_call(entry: dict) -> ToolCall | None:
+    name = entry["name"]
+    if not name:
+        return None
+    arguments: dict = {}
+    raw = entry["arguments"].strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, RecursionError):
+            parsed = None
+        if isinstance(parsed, dict):
+            arguments = parsed
+    return ToolCall(id=entry["id"] or f"call_{name}", name=name, arguments=arguments)
+
+
 class OpenAIProvider(BaseProvider):
     # Endpoint key shared by OpenAI-compatible listings and chat (e.g. Groq).
     provider_id = "openai"
@@ -76,7 +116,35 @@ class OpenAIProvider(BaseProvider):
         messages = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})
-        messages.extend({"role": turn.role, "content": turn.content} for turn in request.turns)
+        for turn in request.turns:
+            if turn.role == "tool":
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": turn.tool_call_id or "",
+                        "content": turn.content,
+                    }
+                )
+            elif turn.role == "assistant" and turn.tool_calls:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": turn.content or None,
+                        "tool_calls": [
+                            {
+                                "id": call.id,
+                                "type": "function",
+                                "function": {
+                                    "name": call.name,
+                                    "arguments": json.dumps(call.arguments, ensure_ascii=False),
+                                },
+                            }
+                            for call in turn.tool_calls
+                        ],
+                    }
+                )
+            else:
+                messages.append({"role": turn.role, "content": turn.content})
         return messages
 
     async def stream_chat(
@@ -92,7 +160,20 @@ class OpenAIProvider(BaseProvider):
             payload["temperature"] = request.temperature
         if request.max_output_tokens is not None:
             payload["max_tokens"] = request.max_output_tokens
+        if request.tools:
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    },
+                }
+                for tool in request.tools
+            ]
         redactor = SecretRedactor(api_key.get_secret_value())
+        pending: dict[int, dict] = {}
         async for event in self.chat_http.stream(self.provider_id, api_key, payload):
             choices = event.get("choices")
             if isinstance(choices, list) and choices and isinstance(choices[0], dict):
@@ -102,6 +183,11 @@ class OpenAIProvider(BaseProvider):
                     if isinstance(text, str) and text:
                         redactor.feed(text)
                         yield ChatEvent("delta", text=text)
+                    fragments = delta.get("tool_calls")
+                    if isinstance(fragments, list):
+                        for fragment in fragments:
+                            if isinstance(fragment, dict):
+                                _accumulate_tool_call(pending, fragment)
             usage = event.get("usage")
             if isinstance(usage, dict):
                 yield ChatEvent(
@@ -109,3 +195,14 @@ class OpenAIProvider(BaseProvider):
                     input_tokens=_token_count(usage.get("prompt_tokens")),
                     output_tokens=_token_count(usage.get("completion_tokens")),
                 )
+        # Emit complete tool calls only after the stream finishes accumulating.
+        for index in sorted(pending):
+            entry = pending[index]
+            redactor.feed(entry["name"])
+            redactor.feed(entry["arguments"])
+            call = _finalize_tool_call(entry)
+            if call is not None:
+                # Scan decoded JSON too: Unicode escapes can hide the raw secret.
+                redactor.feed(call.id)
+                redactor.feed(json.dumps(call.arguments, ensure_ascii=False))
+                yield ChatEvent("tool_call", tool_call=call)
