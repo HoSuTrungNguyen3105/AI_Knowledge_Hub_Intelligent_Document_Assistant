@@ -10,7 +10,6 @@ export function AgentsWorkspace() {
   const controller = useAgents();
   const { activeId, agent, detailLoading, detailError, busy, tools, deletion, setDeletion, confirmDeletion } = controller;
   return <>
-    <div className="page-heading"><div><p className="eyebrow">MindFlow AI · Không gian cá nhân</p><h1>Agent Studio</h1><p className="muted">Tạo assistant riêng, giao việc với công cụ có kiểm soát và theo dõi từng bước thực thi.</p></div></div>
     <div className="agents-layout"><AgentList controller={controller} /><div className="chat-main">
       {!activeId ? <AgentEditor key={`new:${controller.selectionRevision}`} tools={tools} busy={Boolean(busy)} onSave={controller.saveAgent} reloadTools={controller.reloadTools} /> : detailLoading ? <div className="setup-panel" role="status" aria-label="Đang tải cấu hình Agent"><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div> : detailError ? <div className="setup-panel"><p className="composer-error" role="alert">{detailError}</p><button type="button" className="button secondary" onClick={controller.reloadDetail}>Thử lại cấu hình Agent</button></div> : agent ? <AgentView key={agent.id} controller={controller} /> : null}
     </div></div>

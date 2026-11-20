@@ -12,7 +12,6 @@ export function ProviderSettings() {
   const { catalog, provider, selectedId, selectProvider, busy, reload, confirmDelete, setConfirmDelete, disconnect } = controller;
   const user = useSession((state) => state.user);
   return <>
-    <div className="page-heading"><div><p className="eyebrow">MindFlow AI · Không gian cá nhân</p><h1>Cài đặt AI</h1><p className="muted">Kết nối provider của bạn, quản lý model theo cách riêng.</p></div><button className="button secondary" onClick={reload} disabled={Boolean(busy) || catalog.loading}><RefreshCw size={15} className={catalog.loading ? "spin" : ""} />Tải lại</button></div>
     <section className="settings-account"><span className="soft-icon"><ShieldCheck size={21} /></span><div><strong>{user?.name}</strong><p>{user?.email}</p></div><span className="private-label"><LockKeyhole size={14} />Chỉ tài khoản của bạn</span></section>
     {catalog.error && <div className="error-panel settings-error" role="alert"><CircleAlert size={23} /><div><h2>Chưa tải được cấu hình AI</h2><p>{catalog.error}</p></div><button className="button secondary" onClick={reload} disabled={Boolean(busy)}>Thử lại</button></div>}
     {catalog.loading && !catalog.data ? <div className="provider-page-loading" role="status" aria-label="Đang tải provider"><div className="skeleton" /><div className="skeleton" /><div className="skeleton" /></div> : catalog.data && <>

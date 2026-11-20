@@ -12,13 +12,6 @@ export function CompareWorkspace() {
 
   return (
     <>
-      <div className="page-heading">
-        <div>
-          <p className="eyebrow">MindFlow AI · Không gian cá nhân</p>
-          <h1>Compare AI</h1>
-          <p className="muted">Gửi cùng một câu hỏi đến nhiều model song song, đối chiếu câu trả lời, thời gian, token và chi phí ước tính.</p>
-        </div>
-      </div>
       <div className="compare-layout">
         <ComparisonList comparisons={controller.comparisons} activeId={controller.activeId} onSelect={controller.selectComparison} onNew={controller.newComparison} onReload={controller.reloadList} busy={controller.busy} />
         <div className="chat-main">

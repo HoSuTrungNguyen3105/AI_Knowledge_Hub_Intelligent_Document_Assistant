@@ -12,13 +12,13 @@ export function ChatWorkspace() {
 
   return (
     <>
-      <div className="page-heading">
+      {/* <div className="page-heading">
         <div>
           <p className="eyebrow">MindFlow AI · Không gian cá nhân</p>
           <h1>AI Chat</h1>
           <p className="muted">Trò chuyện với nhiều model qua provider đã cấu hình. Streaming, lịch sử và hội thoại riêng tư.</p>
         </div>
-      </div>
+      </div> */}
       <div className="chat-layout">
         <ConversationList conversations={controller.conversations} activeId={controller.activeId} onSelect={controller.selectConversation} onNew={controller.newConversation} onReload={controller.reloadList} busy={controller.busy} />
         <div className="chat-main">

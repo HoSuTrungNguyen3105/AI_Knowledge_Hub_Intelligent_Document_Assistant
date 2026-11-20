@@ -45,7 +45,7 @@ export function AppShell({ children }) {
     <dialog ref={dialog} className="mobile-drawer" aria-label="Menu điều hướng" onCancel={() => setMenuOpen(false)} onClick={(event) => { if (event.target === event.currentTarget) setMenuOpen(false); }}><div className="drawer-content"><SidebarContent pathname={pathname} onNavigate={() => setMenuOpen(false)} mobile /></div></dialog>
     <div className="workspace-main"><header className="topbar"><div className="breadcrumbs"><button className="icon-button mobile-menu" aria-label="Mở menu điều hướng" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>{menuOpen ? <X size={22} /> : <Menu size={22} />}</button><span className="breadcrumb-parent">Không gian làm việc</span><ChevronRight size={14} className="breadcrumb-parent" /><span>{title}</span></div><div className="topbar-account"><span className="private-label"><ShieldCheck size={15} />Riêng tư</span><span className="avatar" title={user?.name} aria-label={`Tài khoản ${user?.name}`}>{initials(user?.name)}</span><button className="icon-button logout-button" onClick={logout} disabled={busy} aria-label={busy ? "Đang đăng xuất" : "Đăng xuất"} title="Đăng xuất"><LogOut size={18} /></button></div></header>
       <main id="main-content" className="page-content">{children}</main>
-      <footer className="app-footer"><span>{APP_NAME}</span><span>{APP_STAGE}</span></footer>
+      {/* <footer className="app-footer"><span>{APP_NAME}</span><span>{APP_STAGE}</span></footer> */}
     </div>
   </div>;
 }
