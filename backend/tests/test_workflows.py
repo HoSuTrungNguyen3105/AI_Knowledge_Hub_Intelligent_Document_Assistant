@@ -62,10 +62,10 @@ async def owner(client, register, db, settings):
     return client, owner_id
 
 
-def make_agent(client, name):
+def make_agent(client, name, tools=None):
     r = client.post(
         "/api/v1/ai/agents",
-        json={"name": name, "provider": "openai", "model": MODEL_A, "tools": []},
+        json={"name": name, "provider": "openai", "model": MODEL_A, "tools": tools or []},
     )
     assert r.status_code == 201, r.text
     return r.json()
@@ -198,6 +198,44 @@ async def test_full_workflow_three_agents_completed(owner, mock_http):
     events = client.get(f"{WORKFLOWS}/{wf['id']}/events").json()["events"]
     assert any(e["event_type"] == "workflow_completed" for e in events)
     # Each member agent really ran through the Phase 5 execution loop.
+    assert len(mock_http["calls"]) == 4
+
+
+async def test_workflow_completes_when_model_rejects_tools(owner, mock_http):
+    # Mirrors the live Groq/allam-2-7b case: every request carrying tools is
+    # rejected with HTTP 400, requests without tools succeed. The Phase 5
+    # agent loop must fall back to tool-free generation per agent, so the
+    # workflow still completes instead of failing every task.
+    client, _ = owner
+    lead, dev = (make_agent(client, n, tools=["calculator"]) for n in ("Lead", "Dev"))
+    team = make_team(
+        client, [(lead, "coordinator"), (dev, "developer")], coordinator=lead["id"]
+    )
+
+    def handler(request, n):
+        body = json.loads(request.content)
+        if "tools" in body:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "code": "tool_use_failed",
+                        "message": "This model does not support tool use.",
+                        "type": "invalid_request_error",
+                    }
+                },
+            )
+        return httpx.Response(200, text=sse(chunk("Done."), "[DONE]"))
+
+    mock_http["configure"](handler)
+    wf = make_workflow(client, team)
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed", done
+    assert done["final_result"] == "Done."
+    tasks = client.get(f"{WORKFLOWS}/{wf['id']}/tasks").json()["tasks"]
+    assert tasks and all(t["status"] == "completed" for t in tasks)
+    # Developer turn + coordinator synthesis, each retried once without tools.
     assert len(mock_http["calls"]) == 4
 
 
@@ -645,8 +683,8 @@ async def test_one_agent_failure_does_not_fail_workflow(owner, mock_http):
 
     def handler(request, n):
         body = request.content.decode("utf-8", "ignore")
-        if "Planner:" in body:  # planner's provider generation fails (HTTP 400)
-            return httpx.Response(400, json={"error": {"message": "bad generation"}})
+        if "Planner:" in body:  # planner's generation fails: empty stream
+            return httpx.Response(200, text=sse("[DONE]"))
         return httpx.Response(200, text=sse(chunk("Done."), "[DONE]"))
 
     mock_http["configure"](handler)
@@ -674,8 +712,8 @@ async def test_transient_failure_succeeds_on_retry(owner, mock_http):
     )
 
     def handler(request, n):
-        if n == 1:  # first attempt fails transiently, the retry succeeds
-            return httpx.Response(400, json={"error": {"message": "bad generation"}})
+        if n == 1:  # first attempt fails transiently (empty stream), retry succeeds
+            return httpx.Response(200, text=sse("[DONE]"))
         return httpx.Response(200, text=sse(chunk("Done."), "[DONE]"))
 
     mock_http["configure"](handler)
@@ -699,9 +737,7 @@ async def test_all_agents_fail_fails_workflow(owner, mock_http):
         [(lead, "coordinator"), (planner, "planner"), (dev, "developer")],
         coordinator=lead["id"],
     )
-    mock_http["configure"](
-        lambda request, n: httpx.Response(400, json={"error": {"message": "bad generation"}})
-    )
+    mock_http["configure"](lambda request, n: httpx.Response(200, text=sse("[DONE]")))
     wf = make_workflow(client, team)
     client.post(f"{WORKFLOWS}/{wf['id']}/start")
     done = await wait_done(client, wf["id"])

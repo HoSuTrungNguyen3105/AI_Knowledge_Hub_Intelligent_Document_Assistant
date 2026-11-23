@@ -338,8 +338,10 @@ class AgentService:
                 },
             }
             async with asyncio.timeout(self.limits.deadline_seconds):
+                active_tools = prepared.tools
+                tools_fallback_used = False
                 for step_index in range(self.limits.max_steps):
-                    input_estimate = _request_budget(agent, turns, prepared.tools)
+                    input_estimate = _request_budget(agent, turns, active_tools)
                     remaining = self.limits.token_budget - budget_used - input_estimate
                     if remaining <= 0:
                         raise ProviderError("agent_budget_exceeded")
@@ -349,53 +351,86 @@ class AgentService:
                     step_input = step_output = None
                     step_saved = False
                     output_estimate = 0
-                    request = ChatRequest(
-                        model=agent.model,
-                        turns=tuple(turns),
-                        system_prompt=agent.system_prompt,
-                        temperature=agent.temperature,
-                        max_output_tokens=min(agent.max_output_tokens or 2048, remaining),
-                        tools=prepared.tools,
-                    )
-                    async for event in prepared.adapter.stream_chat(prepared.api_key, request):
-                        if event.kind == "delta":
-                            output_estimate += len(event.text.encode("utf-8"))
-                            if output_estimate > remaining:
-                                raise ProviderError("agent_budget_exceeded")
-                            parts.append(event.text)
-                            final_content = "".join(parts)
+                    while True:
+                        request = ChatRequest(
+                            model=agent.model,
+                            turns=tuple(turns),
+                            system_prompt=agent.system_prompt,
+                            temperature=agent.temperature,
+                            max_output_tokens=min(agent.max_output_tokens or 2048, remaining),
+                            tools=active_tools,
+                        )
+                        try:
+                            stream = prepared.adapter.stream_chat(prepared.api_key, request)
+                            async for event in stream:
+                                if event.kind == "delta":
+                                    output_estimate += len(event.text.encode("utf-8"))
+                                    if output_estimate > remaining:
+                                        raise ProviderError("agent_budget_exceeded")
+                                    parts.append(event.text)
+                                    final_content = "".join(parts)
+                                    yield {
+                                        "event": "step_delta",
+                                        "data": {"step_index": step_index, "text": event.text},
+                                    }
+                                elif event.kind == "tool_call" and event.tool_call is not None:
+                                    if len(calls) >= 16:
+                                        raise ProviderError("generation_failed")
+                                    call = _safe_tool_call(event.tool_call)
+                                    encoded_arguments = json.dumps(
+                                        call.arguments, ensure_ascii=False
+                                    ).encode("utf-8")
+                                    output_estimate += (
+                                        len(encoded_arguments) + len(call.name) + 32
+                                    )
+                                    if output_estimate > remaining:
+                                        raise ProviderError("agent_budget_exceeded")
+                                    calls.append(call)
+                                    pending = AgentToolCall(
+                                        id=call.id, name=call.name, arguments=call.arguments,
+                                        status="pending",
+                                    )
+                                    yield {
+                                        "event": "tool_call",
+                                        "data": {
+                                            "step_index": step_index,
+                                            "tool_call": self._tool_call_out(pending).model_dump(
+                                                mode="json"
+                                            ),
+                                        },
+                                    }
+                                elif event.kind == "usage":
+                                    if event.input_tokens is not None:
+                                        step_input = event.input_tokens
+                                    if event.output_tokens is not None:
+                                        step_output = event.output_tokens
+                        except ProviderError as error:
+                            if (
+                                error.code != "model_tools_unsupported"
+                                or not active_tools
+                                or tools_fallback_used
+                            ):
+                                raise
+                            # The model rejected tool calling outright: drop
+                            # tools for the rest of this execution and retry
+                            # this step once without them.
+                            tools_fallback_used = True
+                            active_tools = ()
+                            parts = []
+                            calls = []
+                            tool_calls = []
+                            step_input = step_output = None
+                            output_estimate = 0
+                            final_content = ""
                             yield {
-                                "event": "step_delta",
-                                "data": {"step_index": step_index, "text": event.text},
-                            }
-                        elif event.kind == "tool_call" and event.tool_call is not None:
-                            if len(calls) >= 16:
-                                raise ProviderError("generation_failed")
-                            call = _safe_tool_call(event.tool_call)
-                            output_estimate += len(
-                                json.dumps(call.arguments, ensure_ascii=False).encode("utf-8")
-                            ) + len(call.name) + 32
-                            if output_estimate > remaining:
-                                raise ProviderError("agent_budget_exceeded")
-                            calls.append(call)
-                            pending = AgentToolCall(
-                                id=call.id, name=call.name, arguments=call.arguments,
-                                status="pending",
-                            )
-                            yield {
-                                "event": "tool_call",
+                                "event": "tools_fallback",
                                 "data": {
+                                    "code": "model_tools_unsupported",
                                     "step_index": step_index,
-                                    "tool_call": self._tool_call_out(pending).model_dump(
-                                        mode="json"
-                                    ),
                                 },
                             }
-                        elif event.kind == "usage":
-                            if event.input_tokens is not None:
-                                step_input = event.input_tokens
-                            if event.output_tokens is not None:
-                                step_output = event.output_tokens
+                            continue
+                        break
                     content = "".join(parts)
                     final_content = content
                     if not content.strip() and not calls:

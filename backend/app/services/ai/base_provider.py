@@ -29,6 +29,8 @@ ERRORS = {
     "conversation_not_found": (404, "Conversation not found."),
     "empty_message": (422, "Message content cannot be empty."),
     "generation_failed": (502, "The provider returned an invalid generation response."),
+    "model_tools_unsupported": (400, "The selected model does not support tool calling."),
+    "provider_request_rejected": (400, "The provider rejected the generation request."),
     "comparison_not_found": (404, "Comparison not found."),
     "invalid_comparison_targets": (422, "Select 2-4 distinct synced chat models to compare."),
     "no_successful_runs": (409, "Synthesis needs at least one successful answer."),
@@ -60,6 +62,36 @@ ERRORS = {
     "artifact_limit_exceeded": (422, "The generated website exceeds the artifact size limits."),
     "artifact_not_ready": (409, "This workflow has no ZIP artifact ready to download."),
 }
+
+
+# Bounded markers used to classify a provider 4xx error object. Upstream error
+# text is inspected in memory only to pick one fixed public code; it is never
+# copied into an exception, a log line or a response, so a credential echoed
+# by the provider cannot leak through this path.
+_TOOL_ERROR_MARKERS = ("tool", "function call", "function_call", "function-calling")
+_MAX_ERROR_FIELD_CHARS = 512
+
+
+def classify_provider_error(error: object) -> str:
+    """Classify a provider error object into a fixed public code.
+
+    Accepts the OpenAI-style ``{"code", "type", "message"}`` dict (Gemini uses
+    ``{"code", "message", "status"}``) or a bare string. Only an error that
+    clearly blames tool/function calling maps to ``model_tools_unsupported``;
+    everything else is a generic ``provider_request_rejected``.
+    """
+    fields: list[str] = []
+    if isinstance(error, dict):
+        for key in ("code", "type", "message", "status"):
+            value = error.get(key)
+            if isinstance(value, str):
+                fields.append(value[:_MAX_ERROR_FIELD_CHARS])
+    elif isinstance(error, str):
+        fields.append(error[:_MAX_ERROR_FIELD_CHARS])
+    text = " ".join(fields).lower()
+    if any(marker in text for marker in _TOOL_ERROR_MARKERS):
+        return "model_tools_unsupported"
+    return "provider_request_rejected"
 
 
 class ProviderError(Exception):

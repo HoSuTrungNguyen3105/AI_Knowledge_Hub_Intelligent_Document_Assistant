@@ -10,6 +10,8 @@ const compareErrorLabels = {
   credentials_missing: "Bạn chưa lưu API key cho provider này. Hãy vào Cài đặt AI.",
   provider_not_implemented: "Provider này chưa được tích hợp trong phiên bản hiện tại.",
   generation_failed: "Provider trả về phản hồi không hợp lệ. Không có nội dung nào được tạo.",
+  model_tools_unsupported: "Model không hỗ trợ gọi công cụ (tool calling). Hãy đổi sang model hỗ trợ tool calling.",
+  provider_request_rejected: "Provider từ chối yêu cầu tạo nội dung (400). Hãy kiểm tra model và cấu hình rồi thử lại.",
   provider_authentication_failed: "Provider từ chối API key. Hãy kiểm tra key trong Cài đặt AI.",
   provider_rate_limited: "Provider đang giới hạn yêu cầu. Vui lòng chờ rồi thử lại.",
   provider_timeout: "Provider phản hồi quá lâu. Hãy thử lại sau.",

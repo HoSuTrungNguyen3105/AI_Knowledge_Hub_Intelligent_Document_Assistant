@@ -5,7 +5,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from app.schemas.providers import ModelCapabilities, ProviderModel
-from app.services.ai.base_provider import BaseProvider, ProviderError
+from app.services.ai.base_provider import BaseProvider, ProviderError, classify_provider_error
 from app.services.ai.chat import ChatHTTP, SecretRedactor
 from app.services.ai.chat_types import ChatEvent, ChatRequest, ToolCall, token_count
 from app.services.ai.http import ListingSession, ModelListingHTTP
@@ -175,6 +175,10 @@ class GeminiProvider(BaseProvider):
         async for event in self.chat_http.stream(
             "gemini", api_key, payload, params={"alt": "sse"}, model=request.model
         ):
+            if "error" in event:
+                # Same mid-stream error shape as the OpenAI-compatible
+                # adapters: classify it instead of silently dropping it.
+                raise ProviderError(classify_provider_error(event.get("error")))
             candidates = event.get("candidates")
             if isinstance(candidates, list) and candidates and isinstance(candidates[0], dict):
                 content = candidates[0].get("content")

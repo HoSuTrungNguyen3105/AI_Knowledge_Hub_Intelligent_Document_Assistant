@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from app.schemas.providers import ProviderModel
-from app.services.ai.base_provider import BaseProvider, ProviderError
+from app.services.ai.base_provider import BaseProvider, ProviderError, classify_provider_error
 from app.services.ai.chat import ChatHTTP, SecretRedactor
 from app.services.ai.chat_types import ChatEvent, ChatRequest, ToolCall, token_count
 from app.services.ai.http import ListingSession, ModelListingHTTP
@@ -175,6 +175,11 @@ class OpenAIProvider(BaseProvider):
         redactor = SecretRedactor(api_key.get_secret_value())
         pending: dict[int, dict] = {}
         async for event in self.chat_http.stream(self.provider_id, api_key, payload):
+            if "error" in event:
+                # A mid-stream error event carries no choices; surface its
+                # classified code instead of silently ending with an empty
+                # (or partial) generation.
+                raise ProviderError(classify_provider_error(event.get("error")))
             choices = event.get("choices")
             if isinstance(choices, list) and choices and isinstance(choices[0], dict):
                 delta = choices[0].get("delta")

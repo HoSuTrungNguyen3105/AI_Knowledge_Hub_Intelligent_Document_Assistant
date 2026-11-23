@@ -227,7 +227,9 @@ async def test_execute_streams_parallel_runs_and_isolates_failure(
     assert len(done_runs) == 1 and done_runs[0]["model"] == MODEL_A
     assert done_runs[0]["content"] == "Answer A"
     assert len(error_runs) == 1 and error_runs[0]["model"] == MODEL_B
-    assert error_runs[0]["error_code"] == "generation_failed"
+    # A structured HTTP 400 rejection now surfaces its real classified code
+    # (provider_request_rejected) instead of the old generic generation_failed.
+    assert error_runs[0]["error_code"] == "provider_request_rejected"
     final = events[-1][1]["comparison"]
     statuses = {r["model"]: r["status"] for r in final["runs"]}
     assert statuses == {MODEL_A: "success", MODEL_B: "error"}
