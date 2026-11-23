@@ -52,18 +52,27 @@ from app.services.workflow_files import (
     slugify,
 )
 
-ARTIFACT_INSTRUCTIONS = """Produce the COMPLETE static website for the workflow goal as plain \
-HTML/CSS/JS that runs standalone in a browser (no backend, no build step, no \
-external build dependencies). Output ONLY fenced file blocks in EXACTLY this \
-format, one block per file, and include an index.html entry file:
+ARTIFACT_INSTRUCTIONS = """Produce the COMPLETE website deliverable for the workflow goal. \
+FIRST read the goal: if it asks for a framework or a runnable project \
+(React, Vue, Next.js, Tailwind, Vite, "source code", "project", ...) output \
+the COMPLETE project source — package.json (with working dev/build scripts \
+and every dependency the code imports), the config files the project needs \
+(for example vite.config.js, tailwind.config.js, postcss.config.js, \
+tsconfig.json), index.html, src/main.jsx (or .tsx), src/App.jsx, every \
+component/style file the entry imports, and a README.md with install/run \
+instructions. Otherwise output a standalone static website in plain \
+HTML/CSS/JS that runs directly in a browser, including an index.html entry \
+file. EVERY file must be complete and runnable as shipped: no truncation, \
+no "..." placeholders, no "rest of code unchanged" shortcuts. Output ONLY \
+fenced file blocks in EXACTLY this format, one block per file:
 
 ```file:relative/path/to/file.ext
 <full file content>
 ```
 
-Paths must be relative (for example index.html, styles.css, js/app.js). \
-Allowed extensions: html, css, js, mjs, json, md, txt, svg, xml. \
-Any text outside the file blocks is ignored."""
+Paths must be relative (for example index.html, styles.css, src/App.jsx). \
+Allowed extensions: html, css, js, mjs, cjs, jsx, ts, mts, cts, tsx, json, \
+md, txt, svg, xml. Any text outside the file blocks is ignored."""
 
 ROLE_ORDER = {
     "planner": 0,
@@ -706,7 +715,7 @@ class WorkflowService:
         agent_id = developer.agent_id if developer else team.coordinator_agent_id
         prompt = build_context(
             workflow.goal,
-            "WEBSITE_FILE_BLOCKS: produce the complete static website",
+            "WEBSITE_FILE_BLOCKS: produce the complete website or project source",
             ARTIFACT_INSTRUCTIONS,
             prior,
             self.limits.context_chars_per_result,
@@ -741,11 +750,15 @@ class WorkflowService:
             payload={
                 "file_count": len(result.files),
                 "total_bytes": result.total_bytes,
+                "mode": result.mode,
                 "rejected": result.rejected,
                 "limit_hit": result.limit_hit,
             },
         )
-        summary = "Website files created: " + ", ".join(f.path for f in result.files)
+        summary = (
+            f"Website artifact ({result.mode}) files created: "
+            + ", ".join(f.path for f in result.files)
+        )
         await self._send(
             user_id, workflow.id, None, agent_id, team.coordinator_agent_id, "HANDOFF", summary
         )

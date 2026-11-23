@@ -1,6 +1,8 @@
 """Website ZIP artifacts for Phase 6 workflows (output_type="website_zip").
 
-The Developer agent returns the whole static website as fenced file blocks:
+The Developer agent returns the whole website — either a standalone static
+site or a complete front-end project source (React/Vite/Tailwind, detected
+by a package.json) — as fenced file blocks:
 
     ```file:path/to/file.ext
     <file content>
@@ -19,13 +21,21 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass, field
 
-# Text-only extensions a static website may ship. Executables, scripts that a
-# server could run (sh/bat/py/php/...) and binaries are never accepted.
+# Text-only extensions a website or front-end project source may ship
+# (static HTML/CSS/JS plus React/Vite/Tailwind project files: .jsx/.ts/.tsx
+# and plain-text config modules). Executables, scripts that a server could
+# run (sh/bat/py/php/...) and binaries are never accepted.
 ALLOWED_EXTENSIONS = {
     "html",
     "css",
     "js",
     "mjs",
+    "cjs",
+    "jsx",
+    "ts",
+    "mts",
+    "cts",
+    "tsx",
     "json",
     "md",
     "txt",
@@ -74,12 +84,34 @@ class ExtractionResult:
         return sum(f.size_bytes for f in self.files)
 
     @property
+    def mode(self) -> str:
+        """Artifact kind derived from the extracted files.
+
+        ``project`` when a package.json is present (React/Vite/Tailwind
+        source the user builds themselves); otherwise ``static``.
+        """
+        basenames = {f.path.rsplit("/", 1)[-1].lower() for f in self.files}
+        return "project" if "package.json" in basenames else "static"
+
+    @property
     def error_code(self) -> str | None:
-        """Fatal artifact error, or None when a usable website was extracted."""
+        """Fatal artifact error, or None when a usable artifact was extracted.
+
+        Static mode needs an index.html entry. Project mode needs
+        package.json plus at least one real source file (under src/) or an
+        index.html — a bare package.json is not a runnable project.
+        """
         if not self.files:
             return "artifact_no_files"
-        if not any(f.path.lower() == "index.html" for f in self.files):
-            return "artifact_missing_index"
+        basenames = {f.path.rsplit("/", 1)[-1].lower() for f in self.files}
+        has_index = "index.html" in basenames
+        if self.mode == "project":
+            has_src = any(
+                f.path.startswith("src/") or "/src/" in f.path for f in self.files
+            )
+            return None if (has_src or has_index) else "artifact_missing_entry"
+        if not has_index:
+            return "artifact_missing_entry"
         return None
 
 
@@ -152,13 +184,35 @@ def slugify(title: str) -> str:
     return slug[:60].strip("-") or "workflow-website"
 
 
-def _guide_markdown(title: str, goal: str) -> str:
-    return (
-        "# Hướng dẫn sử dụng website\n\n"
+def _guide_markdown(title: str, goal: str, mode: str = "static") -> str:
+    header = (
+        "# Hướng dẫn sử dụng\n\n"
         "> File này do HỆ THỐNG MindFlow AI tự sinh khi đóng gói ZIP "
         "(không phải nội dung do Agent viết).\n\n"
         f"- Workflow: {title}\n"
         f"- Mục tiêu: {goal}\n\n"
+    )
+    if mode == "project":
+        return header + (
+            "## Loại sản phẩm: Source project (React/Vite/Tailwind…)\n\n"
+            "> Lưu ý trung thực: source này được đóng gói từ kết quả Agent "
+            "trả về, **chưa được build thử trên server** (server không chạy "
+            "code/npm theo chính sách an toàn). Hãy tự kiểm tra bằng các lệnh "
+            "dưới đây.\n\n"
+            "## Cách chạy\n\n"
+            "Yêu cầu: Node.js LTS đã cài trên máy.\n\n"
+            "1. Giải nén toàn bộ file ZIP vào một thư mục.\n"
+            "2. Mở terminal tại thư mục chứa `package.json` và cài thư viện:\n\n"
+            "   ```sh\n   npm install\n   ```\n\n"
+            "3. Chạy môi trường phát triển:\n\n"
+            "   ```sh\n   npm run dev\n   ```\n\n"
+            "4. Kiểm tra bản build production:\n\n"
+            "   ```sh\n   npm run build\n   ```\n\n"
+            "Nếu Agent có kèm `README.md` riêng, ưu tiên làm theo README đó "
+            "cho các chi tiết riêng của project.\n"
+        )
+    return header + (
+        "## Loại sản phẩm: Website tĩnh\n\n"
         "## Cách chạy\n\n"
         "1. Giải nén toàn bộ file ZIP vào một thư mục.\n"
         "2. Mở file `index.html` bằng trình duyệt — website tĩnh này chạy "
@@ -166,6 +220,11 @@ def _guide_markdown(title: str, goal: str) -> str:
         "3. Muốn chia sẻ/hosting: tải toàn bộ thư mục lên bất kỳ dịch vụ "
         "hosting web tĩnh nào, giữ nguyên cấu trúc thư mục.\n"
     )
+
+
+def artifact_mode(files: list[ParsedFile]) -> str:
+    basenames = {f.path.rsplit("/", 1)[-1].lower() for f in files}
+    return "project" if "package.json" in basenames else "static"
 
 
 def build_zip(files: list[ParsedFile], title: str, goal: str) -> bytes:
@@ -177,5 +236,7 @@ def build_zip(files: list[ParsedFile], title: str, goal: str) -> bytes:
             archive.writestr(parsed.path, parsed.content)
         basenames = {name.rsplit("/", 1)[-1] for name in names}
         if "readme.md" not in basenames and "huong-dan.md" not in basenames:
-            archive.writestr("HUONG-DAN.md", _guide_markdown(title, goal))
+            archive.writestr(
+                "HUONG-DAN.md", _guide_markdown(title, goal, artifact_mode(files))
+            )
     return buffer.getvalue()
