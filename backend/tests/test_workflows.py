@@ -925,3 +925,83 @@ async def test_synthesis_failure_falls_back_to_longest_team_result(owner, mock_h
     assert done["final_result"] == long_result
     events = client.get(f"{WORKFLOWS}/{wf['id']}/events").json()["events"]
     assert any(e["event_type"] == "workflow_synthesis_fallback" for e in events)
+
+
+# --- PR #9 regression context -------------------------------------------------
+# Live run 543a8073 completed with a ready ZIP, but the Developer and Tester
+# tasks stayed in_progress forever: a reviewer/tester triggered a revision,
+# _handle_revision set the target task to in_progress BEFORE re-running its
+# Agent, the re-run failed (provider_rate_limited), and the status was never
+# restored even though the earlier result was still stored.
+
+
+def _revision_team(client):
+    lead, dev, tester = (
+        make_agent(client, n) for n in ("AI Leader", "AI Developer", "AI Tester")
+    )
+    return make_team(
+        client,
+        [(lead, "coordinator"), (dev, "developer"), (tester, "tester")],
+        coordinator=lead["id"],
+    )
+
+
+async def test_failed_revision_restores_target_task(owner, mock_http):
+    client, _ = owner
+    team = _revision_team(client)
+
+    def handler(request, n):
+        body = request.content.decode("utf-8", "ignore")
+        if "Synthesize the final result" in body:
+            return httpx.Response(200, text=sse(chunk("Final."), "[DONE]"))
+        if "Revise:" in body:  # the revision re-run is rate limited
+            return httpx.Response(429, json={"error": {"message": "slow down"}})
+        if "Tester:" in body:
+            return httpx.Response(
+                200, text=sse(chunk("Needs changes. REVISION_REQUEST"), "[DONE]")
+            )
+        return httpx.Response(200, text=sse(chunk("Original dev result."), "[DONE]"))
+
+    mock_http["configure"](handler)
+    wf = make_workflow(client, team)
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed", done
+    tasks = client.get(f"{WORKFLOWS}/{wf['id']}/tasks").json()["tasks"]
+    by_title = {t["title"].split(":")[0]: t for t in tasks}
+    # The revision target is back to completed with its original result kept.
+    assert by_title["Developer"]["status"] == "completed"
+    assert by_title["Developer"]["result"] == "Original dev result."
+    assert by_title["Developer"]["revision_count"] == 1
+    assert by_title["Tester"]["status"] == "completed"
+    events = client.get(f"{WORKFLOWS}/{wf['id']}/events").json()["events"]
+    assert any(e["event_type"] == "revision_failed" for e in events)
+
+
+async def test_successful_revision_still_replaces_result(owner, mock_http):
+    client, _ = owner
+    team = _revision_team(client)
+
+    def handler(request, n):
+        body = request.content.decode("utf-8", "ignore")
+        if "Synthesize the final result" in body:
+            return httpx.Response(200, text=sse(chunk("Final."), "[DONE]"))
+        if "Revise:" in body:
+            return httpx.Response(200, text=sse(chunk("Revised dev result."), "[DONE]"))
+        if "Tester:" in body:
+            return httpx.Response(
+                200, text=sse(chunk("Needs changes. REVISION_REQUEST"), "[DONE]")
+            )
+        return httpx.Response(200, text=sse(chunk("Original dev result."), "[DONE]"))
+
+    mock_http["configure"](handler)
+    wf = make_workflow(client, team)
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed", done
+    tasks = client.get(f"{WORKFLOWS}/{wf['id']}/tasks").json()["tasks"]
+    by_title = {t["title"].split(":")[0]: t for t in tasks}
+    assert by_title["Developer"]["status"] == "completed"
+    assert by_title["Developer"]["result"] == "Revised dev result."
+    assert by_title["Developer"]["revision_count"] == 1
+    assert by_title["Tester"]["status"] == "completed"

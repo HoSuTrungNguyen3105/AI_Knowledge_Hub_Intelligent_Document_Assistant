@@ -962,6 +962,25 @@ class WorkflowService:
                         turns += 1
                         total_in += usage.get("input_tokens") or 0
                         total_out += usage.get("output_tokens") or 0
+                # Defensive sweep: a task that already produced a result must
+                # never stay in_progress once the workflow completes (for
+                # example a revision attempt that failed midway). Tasks with
+                # no result are left untouched — they honestly never finished.
+                for leftover in await self.repo.list_tasks(user_id, workflow_id):
+                    if leftover.status == "in_progress" and leftover.result:
+                        await self.repo.update_task(
+                            user_id, leftover.id, {"status": "completed"}
+                        )
+                        await self.repo.add_event(
+                            user_id,
+                            workflow_id=workflow_id,
+                            event_type="task_updated",
+                            actor_id="orchestrator",
+                            payload={
+                                "task_id": str(leftover.id),
+                                "status": "completed",
+                            },
+                        )
                 await self._send(
                     user_id,
                     workflow_id,
@@ -1127,7 +1146,15 @@ class WorkflowService:
             prior,
             self.limits.context_chars_per_result,
         )
-        content, _usage = await self._run_agent(user_id, target.assigned_agent_id, prompt)
+        try:
+            content, _usage = await self._run_agent(user_id, target.assigned_agent_id, prompt)
+        except Exception:
+            # The revision attempt failed after the target task was set to
+            # in_progress: restore its previous completed status (the stored
+            # result was never touched) so the task is not stuck forever,
+            # then let the caller record the revision_failed event.
+            await self.repo.update_task(user_id, target.id, {"status": "completed"})
+            raise
         await self.repo.update_task(user_id, target.id, {"status": "completed", "result": content})
         await self._send(
             user_id,
