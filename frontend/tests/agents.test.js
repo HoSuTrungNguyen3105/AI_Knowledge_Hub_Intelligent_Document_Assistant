@@ -112,7 +112,7 @@ describe("Agent SSE uses streamChat", () => {
 });
 
 describe("Agent utility safety and step reducer", () => {
-  it.each(["agent_not_found", "execution_not_found", "invalid_agent_tools", "agent_budget_exceeded", "agent_step_limit", "agent_timeout", "model_not_tool_capable", "tool_not_allowed"])("maps %s without echoing arbitrary upstream text", (code) => {
+  it.each(["agent_not_found", "execution_not_found", "invalid_agent_tools", "agent_budget_exceeded", "agent_step_limit", "agent_timeout", "model_not_tool_capable", "model_tools_unsupported", "provider_request_rejected", "tool_not_allowed"])("maps %s without echoing arbitrary upstream text", (code) => {
     const message = getAgentError({ response: { status: 409, data: { detail: { code, message: "PRIVATE-UPSTREAM" } } } });
     expect(message).not.toContain("PRIVATE-UPSTREAM");
     expect(message).not.toContain("không còn phù hợp");
@@ -149,6 +149,10 @@ describe("Agent utility safety and step reducer", () => {
     state = applyExecutionEvent(state, { event: "done", data: { execution: { id: "e", status: "success", content: "Answer", steps: state.steps } } });
     expect(state.status).toBe("success");
     expect(state.agent_id).toBe("a");
+  });
+  it("ignores the tools_fallback notice event without touching state", () => {
+    const state = { id: "e", agent_id: "a", steps: [], status: "running" };
+    expect(applyExecutionEvent(state, { event: "tools_fallback", data: { code: "model_tools_unsupported", step_index: 0 } })).toBe(state);
   });
   it("marks execution errors and safely displays structured trace values", () => {
     expect(applyExecutionEvent({ steps: [] }, { event: "execution_error", data: { code: "agent_timeout" } })).toMatchObject({ status: "error", error_code: "agent_timeout" });

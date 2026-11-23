@@ -167,7 +167,7 @@ def test_gemini_system_instruction_and_generation_config():
         (429, "provider_rate_limited"),
         (500, "provider_unavailable"),
         (503, "provider_unavailable"),
-        (400, "generation_failed"),
+        (400, "provider_request_rejected"),
         (302, "generation_failed"),
         (307, "generation_failed"),
     ],
@@ -189,6 +189,91 @@ def test_chat_http_errors_redacted_and_redirects_never_followed(status, code, ca
     assert error.value.code == code
     assert KEY.get_secret_value() not in str(error.value) + caplog.text
     assert "upstream-secret" not in str(error.value) + caplog.text
+
+
+TOOL_ERROR_BODY = {
+    "error": {
+        "code": "tool_use_failed",
+        "message": "The model 'test-model' does not support tool use.",
+        "type": "invalid_request_error",
+    }
+}
+
+
+def test_chat_http_400_tool_error_maps_to_model_tools_unsupported(caplog):
+    with pytest.raises(ProviderError) as error:
+        asyncio.run(collect("groq", lambda _: httpx.Response(400, json=TOOL_ERROR_BODY)))
+    assert error.value.code == "model_tools_unsupported"
+    assert KEY.get_secret_value() not in str(error.value) + caplog.text
+
+
+def test_chat_http_400_other_error_maps_to_provider_request_rejected():
+    body = {"error": {"code": "invalid_value", "message": "max_tokens must be positive."}}
+    with pytest.raises(ProviderError) as error:
+        asyncio.run(collect("openai", lambda _: httpx.Response(400, json=body)))
+    assert error.value.code == "provider_request_rejected"
+
+
+def test_chat_http_400_non_json_body_maps_to_provider_request_rejected(caplog):
+    def handle(request):
+        return httpx.Response(400, text=f"bad request {KEY.get_secret_value()}")
+
+    with pytest.raises(ProviderError) as error:
+        asyncio.run(collect("openai", handle))
+    assert error.value.code == "provider_request_rejected"
+    assert KEY.get_secret_value() not in str(error.value) + caplog.text
+
+
+def test_sse_error_event_with_tool_blame_raises_model_tools_unsupported():
+    def handle(request):
+        return httpx.Response(
+            200,
+            text=sse(
+                {
+                    "error": {
+                        "message": "Function calling is not supported for this model.",
+                        "type": "invalid_request_error",
+                    }
+                },
+                "[DONE]",
+            ),
+        )
+
+    with pytest.raises(ProviderError) as error:
+        asyncio.run(collect("groq", handle))
+    assert error.value.code == "model_tools_unsupported"
+
+
+def test_sse_error_event_without_tool_blame_raises_provider_request_rejected():
+    def handle(request):
+        return httpx.Response(
+            200, text=sse({"error": {"message": "Context length exceeded."}}, "[DONE]")
+        )
+
+    with pytest.raises(ProviderError) as error:
+        asyncio.run(collect("openai", handle))
+    assert error.value.code == "provider_request_rejected"
+
+
+def test_gemini_sse_error_event_raises_classified_code():
+    def handle(request):
+        return httpx.Response(
+            200,
+            text=sse(
+                {
+                    "error": {
+                        "code": 400,
+                        "message": "Tool use is not supported.",
+                        "status": "INVALID_ARGUMENT",
+                    }
+                },
+                "[DONE]",
+            ),
+        )
+
+    with pytest.raises(ProviderError) as error:
+        asyncio.run(collect("gemini", handle))
+    assert error.value.code == "model_tools_unsupported"
 
 
 @pytest.mark.parametrize(

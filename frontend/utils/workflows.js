@@ -195,6 +195,8 @@ export function artifactErrorLabel(code) {
 const ERROR_MESSAGES = {
   team_not_found: "Không tìm thấy nhóm Agent.",
   workflow_not_found: "Không tìm thấy workflow.",
+  model_tools_unsupported: "Model không hỗ trợ gọi công cụ (tool calling). Agent tự chạy lại không dùng công cụ; muốn dùng đủ công cụ hãy đổi sang model hỗ trợ tool calling.",
+  provider_request_rejected: "Provider từ chối yêu cầu tạo nội dung (400). Hãy kiểm tra model và cấu hình rồi thử lại.",
   invalid_team_members: "Chỉ được chọn Agent thuộc tài khoản của bạn.",
   coordinator_not_in_team: "Coordinator phải là thành viên của nhóm.",
   workflow_not_runnable: "Workflow không ở trạng thái có thể thực hiện thao tác này.",

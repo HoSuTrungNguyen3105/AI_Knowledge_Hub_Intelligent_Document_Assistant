@@ -222,6 +222,75 @@ async def test_runtime_failure_persisted_and_redacted(owner, mock_agent, status,
     assert events[-1][1]["execution"]["status"] == "error"
 
 
+TOOL_REJECTION = {
+    "error": {
+        "code": "tool_use_failed",
+        "message": "This model does not support tool use.",
+        "type": "invalid_request_error",
+    }
+}
+
+
+async def test_tools_unsupported_retries_step_without_tools(owner, mock_agent):
+    client, _ = owner
+    bodies = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "tools" in body:
+            return httpx.Response(400, json=TOOL_REJECTION)
+        return httpx.Response(200, text=sse(chunk("Plain answer"), usage(), "[DONE]"))
+
+    mock_agent(handler)
+    events = run(client, create(client))
+    names = [name for name, _ in events]
+    assert "tools_fallback" in names
+    assert events[names.index("tools_fallback")][1] == {
+        "code": "model_tools_unsupported",
+        "step_index": 0,
+    }
+    execution = events[-1][1]["execution"]
+    assert execution["status"] == "success"
+    assert execution["content"] == "Plain answer"
+    assert len(bodies) == 2
+    assert "tools" in bodies[0] and "tools" not in bodies[1]
+
+
+async def test_tools_unsupported_persistent_rejection_keeps_real_code(owner, mock_agent):
+    client, _ = owner
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(400, json=TOOL_REJECTION)
+
+    mock_agent(handler)
+    events = run(client, create(client))
+    errors = [data for name, data in events if name == "execution_error"]
+    assert errors and errors[0]["code"] == "model_tools_unsupported"
+    execution = events[-1][1]["execution"]
+    assert execution["status"] == "error"
+    assert execution["error_code"] == "model_tools_unsupported"
+    # One attempt with tools, one fallback attempt without, then it stops.
+    assert len(bodies) == 2 and "tools" not in bodies[1]
+
+
+async def test_tools_unsupported_without_tools_does_not_retry(owner, mock_agent):
+    client, _ = owner
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(400, json=TOOL_REJECTION)
+
+    mock_agent(handler)
+    events = run(client, create(client, tools=[]))
+    execution = events[-1][1]["execution"]
+    assert execution["error_code"] == "model_tools_unsupported"
+    assert len(bodies) == 1
+
+
 async def test_empty_generation_is_not_success(owner, mock_agent):
     client, _ = owner
     mock_agent(lambda _: httpx.Response(200, text=sse("[DONE]")))

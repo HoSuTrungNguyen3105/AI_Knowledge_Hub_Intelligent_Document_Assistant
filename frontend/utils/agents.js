@@ -13,6 +13,8 @@ const errors = {
   tool_not_allowed: "Agent không được phép sử dụng công cụ này.",
   unknown_tool: "Công cụ không có trong danh sách được phép.",
   model_not_tool_capable: "Model không hỗ trợ function calling. Hãy bỏ chọn công cụ hoặc đổi model.",
+  model_tools_unsupported: "Model không hỗ trợ gọi công cụ (tool calling). Agent tự chạy lại không dùng công cụ; muốn dùng đủ công cụ hãy đổi sang model hỗ trợ tool calling.",
+  provider_request_rejected: "Provider từ chối yêu cầu tạo nội dung (400). Hãy kiểm tra model và cấu hình rồi thử lại.",
   provider_not_tool_capable: "Provider không hỗ trợ function calling. Hãy bỏ chọn công cụ hoặc đổi provider.",
   function_calling_not_supported: "Provider hoặc model không hỗ trợ function calling. Hãy bỏ chọn công cụ.",
   step_limit_exceeded: "Đã đạt giới hạn 6 bước. Hãy chia nhỏ yêu cầu.",
