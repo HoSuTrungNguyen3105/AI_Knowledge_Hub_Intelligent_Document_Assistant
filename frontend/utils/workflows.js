@@ -16,6 +16,35 @@ export function roleMeta(role) {
   return ROLE_META[String(role || "member").toLowerCase()] || ROLE_META.member;
 }
 
+// Mirror of the backend's name → role inference (same ordered hint table).
+// Used when a user ticks an Agent into a team: the role select starts at the
+// role the Agent's name implies instead of the generic "member", and the
+// user can still override it manually.
+const ROLE_NAME_HINTS = [
+  ["review", "reviewer"],
+  ["test", "tester"],
+  ["qa", "tester"],
+  ["plan", "planner"],
+  ["architect", "architect"],
+  ["research", "researcher"],
+  ["develop", "developer"],
+  ["code", "developer"],
+  ["coder", "developer"],
+  ["engineer", "developer"],
+  ["lead", "coordinator"],
+  ["coordinat", "coordinator"],
+  ["manager", "coordinator"],
+];
+
+export function inferRoleFromName(name) {
+  let text = String(name || "").trim().toLowerCase();
+  if (text.startsWith("ai ")) text = text.slice(3).trim();
+  for (const [hint, role] of ROLE_NAME_HINTS) {
+    if (text.includes(hint)) return role;
+  }
+  return null;
+}
+
 export const WORKFLOW_STATUS = {
   queued: { label: "Queued", color: "#2563eb" },
   running: { label: "Running", color: "#16a34a" },
@@ -36,10 +65,14 @@ export const TASK_COLUMNS = [
 export function progressOf(tasks) {
   const total = tasks.length;
   const completed = tasks.filter((t) => t.status === "completed").length;
-  const inProgress = tasks.filter((t) => t.status === "in_progress" || t.status === "review").length;
+  const inProgress = tasks.filter((t) => t.status === "in_progress").length;
+  const review = tasks.filter((t) => t.status === "review").length;
   const pending = tasks.filter((t) => t.status === "pending").length;
+  const failed = tasks.filter((t) => t.status === "failed").length;
   const percent = total ? Math.round((completed / total) * 100) : 0;
-  return { total, completed, inProgress, pending, percent };
+  // completed + inProgress + review + pending + failed covers every board
+  // status; only cancelled tasks (workflow cancelled mid-run) sit outside.
+  return { total, completed, inProgress, review, pending, failed, percent };
 }
 
 // Agent card status derived from that agent's latest task in this workflow.

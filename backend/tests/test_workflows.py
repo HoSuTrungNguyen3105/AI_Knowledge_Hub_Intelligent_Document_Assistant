@@ -15,8 +15,14 @@ from pydantic import SecretStr
 from test_compare import KEY, MODEL_A, chunk, seed, sse
 
 from app.api.v1.agents import agent_http
+from app.repositories.workflows import WorkflowRepository
 from app.services.ai.chat import ChatHTTP
-from app.services.workflows import WorkflowService, build_context
+from app.services.workflows import (
+    WorkflowService,
+    build_context,
+    effective_role,
+    infer_role_from_name,
+)
 
 TEAMS = "/api/v1/ai/agent-teams"
 WORKFLOWS = "/api/v1/ai/agent-workflows"
@@ -506,3 +512,244 @@ def test_team_create_validation_error_is_sanitised_and_specific(owner):
     assert detail["code"] == "validation_error"
     assert any("name" in f["loc"] for f in detail["fields"])
     assert marker not in r.text
+
+
+# --- Effective roles, ordering and resilience ---------------------------------
+# Regression context: a hand-made team saved every member with role="member"
+# (only the Coordinator differed), so the orchestrator ran the Agent NAMED
+# "AI Reviewer" first ("Please complete the member part of: ...") and one
+# provider generation_failed then failed the whole workflow at 0 turns.
+
+
+def test_effective_role_inference():
+    assert infer_role_from_name("AI Reviewer") == "reviewer"
+    assert infer_role_from_name("AI Planner") == "planner"
+    assert infer_role_from_name("ai tester") == "tester"
+    assert infer_role_from_name("AI Architect") == "architect"
+    assert infer_role_from_name("AI Researcher") == "researcher"
+    assert infer_role_from_name("AI Developer") == "developer"
+    assert infer_role_from_name("AI Leader") == "coordinator"
+    assert infer_role_from_name("Bob") == "member"
+    assert infer_role_from_name(None) == "member"
+    # A specific stored role always wins over the name.
+    assert effective_role("reviewer", "AI Planner") == "reviewer"
+    assert effective_role("member", "AI Reviewer") == "reviewer"
+    assert effective_role("member", "Bob") == "member"
+    assert effective_role(None, None) == "member"
+
+
+async def make_legacy_team(db, user_id, agents_roles, coordinator_id):
+    """Insert a team directly at repository level (bypasses create_team role
+    inference) to simulate teams stored before roles were assigned."""
+    repo = WorkflowRepository(db)
+    team = await repo.create_team(
+        user_id,
+        name="Legacy",
+        description=None,
+        coordinator_agent_id=UUID(coordinator_id),
+        members=[
+            {"agent_id": UUID(a["id"]), "role": role, "enabled": True}
+            for a, role in agents_roles
+        ],
+    )
+    return {"id": str(team.id)}
+
+
+def turn_label(body: str) -> str:
+    if "Synthesize the final result" in body:
+        return "synthesis"
+    for marker, label in (
+        ("Planner:", "planner"),
+        ("Architect:", "architect"),
+        ("Researcher:", "researcher"),
+        ("Developer:", "developer"),
+        ("Tester:", "tester"),
+        ("Reviewer:", "reviewer"),
+        ("Member:", "member"),
+    ):
+        if marker in body:
+            return label
+    return "other"
+
+
+def order_recorder(order):
+    def handler(request, n):
+        body = request.content.decode("utf-8", "ignore")
+        order.append(turn_label(body))
+        return httpx.Response(200, text=sse(chunk("Done."), "[DONE]"))
+
+    return handler
+
+
+async def test_legacy_member_team_runs_in_effective_role_order(owner, mock_http, db):
+    client, user_id = owner
+    lead, planner, dev, reviewer = (
+        make_agent(client, n)
+        for n in ("AI Leader", "AI Planner", "AI Developer", "AI Reviewer")
+    )
+    # Reviewer stored FIRST, every non-coordinator role is "member".
+    team = await make_legacy_team(
+        db,
+        user_id,
+        [(reviewer, "member"), (dev, "member"), (planner, "member"), (lead, "coordinator")],
+        lead["id"],
+    )
+    order: list[str] = []
+    mock_http["configure"](order_recorder(order))
+    wf = make_workflow(client, team)
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed", done
+    member_order = [x for x in order if x not in ("synthesis", "other")]
+    assert member_order == ["planner", "developer", "reviewer"]
+    tasks = client.get(f"{WORKFLOWS}/{wf['id']}/tasks").json()["tasks"]
+    assert [t["title"].split(":")[0] for t in tasks] == ["Planner", "Developer", "Reviewer"]
+    messages = client.get(f"{WORKFLOWS}/{wf['id']}/messages").json()["messages"]
+    assignments = [m for m in messages if m["message_type"] == "TASK_ASSIGNMENT"]
+    assert len(assignments) == 3
+    assert all("member part" not in m["content"] for m in assignments)
+    assert any("Lập kế hoạch" in m["content"] for m in assignments)
+    assert any("Đánh giá" in m["content"] for m in assignments)
+
+
+async def test_reviewer_stored_first_still_runs_after_developer(owner, mock_http):
+    client, _ = owner
+    lead, dev, reviewer = (
+        make_agent(client, n) for n in ("AI Leader", "AI Developer", "AI Reviewer")
+    )
+    team = make_team(
+        client,
+        [(reviewer, "reviewer"), (dev, "developer"), (lead, "coordinator")],
+        coordinator=lead["id"],
+    )
+    order: list[str] = []
+    mock_http["configure"](order_recorder(order))
+    wf = make_workflow(client, team)
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed", done
+    member_order = [x for x in order if x not in ("synthesis", "other")]
+    assert member_order == ["developer", "reviewer"]
+
+
+async def test_one_agent_failure_does_not_fail_workflow(owner, mock_http):
+    client, _ = owner
+    lead, planner, dev = (
+        make_agent(client, n) for n in ("AI Leader", "AI Planner", "AI Developer")
+    )
+    team = make_team(
+        client,
+        [(lead, "coordinator"), (planner, "planner"), (dev, "developer")],
+        coordinator=lead["id"],
+    )
+
+    def handler(request, n):
+        body = request.content.decode("utf-8", "ignore")
+        if "Planner:" in body:  # planner's provider generation fails (HTTP 400)
+            return httpx.Response(400, json={"error": {"message": "bad generation"}})
+        return httpx.Response(200, text=sse(chunk("Done."), "[DONE]"))
+
+    mock_http["configure"](handler)
+    wf = make_workflow(client, team)
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed", done
+    assert done["final_result"] == "Done."
+    # Failed planner turn is counted, then developer, then synthesis.
+    assert done["usage"]["agent_turns"] == 3
+    tasks = client.get(f"{WORKFLOWS}/{wf['id']}/tasks").json()["tasks"]
+    by_title = {t["title"].split(":")[0]: t["status"] for t in tasks}
+    assert by_title == {"Planner": "failed", "Developer": "completed"}
+    messages = client.get(f"{WORKFLOWS}/{wf['id']}/messages").json()["messages"]
+    failed_msgs = [m for m in messages if m["message_type"] == "TASK_FAILED"]
+    assert failed_msgs and "generation_failed" in failed_msgs[0]["content"]
+    assert "AI Planner" in failed_msgs[0]["content"]
+
+
+async def test_transient_failure_succeeds_on_retry(owner, mock_http):
+    client, _ = owner
+    lead, planner = make_agent(client, "AI Leader"), make_agent(client, "AI Planner")
+    team = make_team(
+        client, [(lead, "coordinator"), (planner, "planner")], coordinator=lead["id"]
+    )
+
+    def handler(request, n):
+        if n == 1:  # first attempt fails transiently, the retry succeeds
+            return httpx.Response(400, json={"error": {"message": "bad generation"}})
+        return httpx.Response(200, text=sse(chunk("Done."), "[DONE]"))
+
+    mock_http["configure"](handler)
+    wf = make_workflow(client, team)
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed", done
+    tasks = client.get(f"{WORKFLOWS}/{wf['id']}/tasks").json()["tasks"]
+    assert len(tasks) == 1 and tasks[0]["status"] == "completed"
+    # planner attempt + planner retry + coordinator synthesis
+    assert len(mock_http["calls"]) == 3
+
+
+async def test_all_agents_fail_fails_workflow(owner, mock_http):
+    client, _ = owner
+    lead, planner, dev = (
+        make_agent(client, n) for n in ("AI Leader", "AI Planner", "AI Developer")
+    )
+    team = make_team(
+        client,
+        [(lead, "coordinator"), (planner, "planner"), (dev, "developer")],
+        coordinator=lead["id"],
+    )
+    mock_http["configure"](
+        lambda request, n: httpx.Response(400, json={"error": {"message": "bad generation"}})
+    )
+    wf = make_workflow(client, team)
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "failed" and done["error_code"] == "generation_failed"
+    assert done["usage"]["agent_turns"] == 2  # both failed member turns counted
+    tasks = client.get(f"{WORKFLOWS}/{wf['id']}/tasks").json()["tasks"]
+    assert len(tasks) == 2 and all(t["status"] == "failed" for t in tasks)
+
+
+async def test_synthesis_failure_falls_back_to_last_team_result(owner, mock_http):
+    client, _ = owner
+    lead, planner = make_agent(client, "AI Leader"), make_agent(client, "AI Planner")
+    team = make_team(
+        client, [(lead, "coordinator"), (planner, "planner")], coordinator=lead["id"]
+    )
+
+    def handler(request, n):
+        body = request.content.decode("utf-8", "ignore")
+        if "Synthesize the final result" in body:
+            return httpx.Response(400, json={"error": {"message": "bad generation"}})
+        return httpx.Response(200, text=sse(chunk("Team result."), "[DONE]"))
+
+    mock_http["configure"](handler)
+    wf = make_workflow(client, team)
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed", done
+    assert done["final_result"] == "Team result."
+    events = client.get(f"{WORKFLOWS}/{wf['id']}/events").json()["events"]
+    assert any(e["event_type"] == "workflow_synthesis_fallback" for e in events)
+
+
+def test_create_team_infers_role_from_agent_name(owner):
+    client, _ = owner
+    lead = make_agent(client, "AI Leader")
+    planner = make_agent(client, "AI Planner")
+    reviewer = make_agent(client, "AI Reviewer")
+    team = make_team(
+        client,
+        [(lead, "coordinator"), (planner, "member"), (reviewer, "member")],
+        coordinator=lead["id"],
+    )
+    roles = {m["agent_name"]: m["role"] for m in team["members"]}
+    assert roles["AI Planner"] == "planner"
+    assert roles["AI Reviewer"] == "reviewer"
+    # An explicit specific role is never rewritten by inference.
+    team2 = make_team(
+        client, [(lead, "coordinator"), (planner, "developer")], coordinator=lead["id"]
+    )
+    roles2 = {m["agent_name"]: m["role"] for m in team2["members"]}
+    assert roles2["AI Planner"] == "developer"

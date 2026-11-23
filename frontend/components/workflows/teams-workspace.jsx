@@ -7,7 +7,7 @@ import { agentsService } from "../../services/agents";
 import { teamsService } from "../../services/workflows";
 import { useChatProviders } from "../../hooks/use-chat-providers";
 import {
-  STARTER_AGENTS, createStarterSet, getWorkflowError, missingStarterAgents, roleMeta,
+  STARTER_AGENTS, createStarterSet, getWorkflowError, inferRoleFromName, missingStarterAgents, roleMeta,
 } from "../../utils/workflows";
 import { ConfirmDialog } from "../confirm-dialog";
 
@@ -161,7 +161,7 @@ export function TeamsWorkspace() {
               <div className="wf-form">
                 {agents.map((a) => <div className="wf-member-row" key={a.id}>
                   <input type="checkbox" aria-label={`Chọn ${a.name}`} checked={Boolean(form.picks[a.id])}
-                    onChange={(e) => setForm({ ...form, picks: { ...form.picks, [a.id]: e.target.checked ? (a.id === form.coordinator ? "coordinator" : "member") : undefined } })} />
+                    onChange={(e) => setForm({ ...form, picks: { ...form.picks, [a.id]: e.target.checked ? (a.id === form.coordinator ? "coordinator" : (inferRoleFromName(a.name) || "member")) : undefined } })} />
                   <span><b>{a.name}</b><br /><small className="muted">{a.provider} / {a.model}</small></span>
                   {form.picks[a.id] && <select aria-label={`Vai trò của ${a.name}`} value={form.picks[a.id]}
                     onChange={(e) => setForm({ ...form, picks: { ...form.picks, [a.id]: e.target.value } })}>
