@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { GitBranch, Play, Plus, Sparkles } from "lucide-react";
+import { GitBranch, Play, Plus, RotateCcw, Sparkles } from "lucide-react";
 import { teamsService, workflowsService } from "../../services/workflows";
 import { WORKFLOW_STATUS, getWorkflowError } from "../../utils/workflows";
 
@@ -11,21 +11,36 @@ export function WorkflowsList() {
   const router = useRouter();
   const [teams, setTeams] = useState([]);
   const [workflows, setWorkflows] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [teamsLoading, setTeamsLoading] = useState(true);
+  const [workflowsLoading, setWorkflowsLoading] = useState(true);
+  const [teamsError, setTeamsError] = useState("");
+  const [workflowsError, setWorkflowsError] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ team_id: "", title: "", goal: "" });
-
-  const load = useCallback(async (signal) => {
+  // Teams and workflows load independently so one failing request cannot
+  // blank out (or misreport) the other section.
+  const loadTeams = useCallback(async (signal) => {
     try {
-      const [teamList, workflowList] = await Promise.all([teamsService.list(signal), workflowsService.list(signal)]);
-      setTeams(teamList);
-      setWorkflows(workflowList);
+      const teamList = await teamsService.list(signal);
+      setTeams(teamList); setTeamsError("");
       setForm((f) => ({ ...f, team_id: f.team_id || teamList[0]?.id || "" }));
     } catch (e) {
-      if (e?.name !== "AbortError") setError(getWorkflowError(e, "Không tải được workflow."));
-    } finally { setLoading(false); }
+      if (e?.name !== "AbortError") setTeamsError(getWorkflowError(e, "Không tải được danh sách nhóm Agent."));
+    } finally { setTeamsLoading(false); }
   }, []);
+
+  const loadWorkflows = useCallback(async (signal) => {
+    try {
+      setWorkflows(await workflowsService.list(signal)); setWorkflowsError("");
+    } catch (e) {
+      if (e?.name !== "AbortError") setWorkflowsError(getWorkflowError(e, "Không tải được danh sách workflow."));
+    } finally { setWorkflowsLoading(false); }
+  }, []);
+
+  const load = useCallback(async (signal) => {
+    await Promise.allSettled([loadTeams(signal), loadWorkflows(signal)]);
+  }, [loadTeams, loadWorkflows]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -51,7 +66,11 @@ export function WorkflowsList() {
     {error && <p className="wf-error" role="alert">{error}</p>}
     <div className="wf-card">
       <h2><Plus size={17} /> Tạo workflow mới</h2>
-      {loading ? <p className="wf-empty">Đang tải…</p> : !teams.length ? <p className="wf-empty">Chưa có nhóm Agent. <Link className="text-link" href="/agents/teams">Tạo nhóm trước</Link> để bắt đầu.</p> : (
+      {teamsLoading ? <p className="wf-empty">Đang tải…</p> : teamsError ? (
+        <div><p className="wf-error" role="alert">{teamsError}</p>
+          <button className="wf-btn" type="button" onClick={() => { setTeamsLoading(true); loadTeams(); }}>
+            <RotateCcw size={15} /> Thử lại danh sách nhóm</button></div>
+      ) : !teams.length ? <p className="wf-empty">Chưa có nhóm Agent. <Link className="text-link" href="/agents/teams">Tạo nhóm trước</Link> để bắt đầu.</p> : (
         <form className="wf-form" onSubmit={create} style={{ marginTop: 14 }}>
           <label>Nhóm Agent<select value={form.team_id} onChange={(e) => setForm({ ...form, team_id: e.target.value })}>
             {teams.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.members.length} Agent)</option>)}</select></label>
@@ -61,6 +80,9 @@ export function WorkflowsList() {
         </form>)}
     </div>
     <div className="wf-list">
+      {workflowsError && <div className="wf-card"><p className="wf-error" role="alert">{workflowsError}</p>
+        <button className="wf-btn" type="button" onClick={() => { setWorkflowsLoading(true); loadWorkflows(); }}>
+          <RotateCcw size={15} /> Thử lại danh sách workflow</button></div>}
       {workflows.map((wf) => { const status = WORKFLOW_STATUS[wf.status] || WORKFLOW_STATUS.queued; return (
         <article className="wf-card wf-list-card" key={wf.id}>
           <h3>{wf.title}</h3>
@@ -70,7 +92,7 @@ export function WorkflowsList() {
             <span>· {new Date(wf.created_at).toLocaleString()}</span></div>
           <div className="row"><Link className="wf-btn" href={`/agents/workflows/${wf.id}`}><GitBranch size={15} /> Mở workspace</Link></div>
         </article>); })}
-      {!loading && !workflows.length && <p className="wf-empty">Chưa có workflow nào.</p>}
+      {!workflowsLoading && !workflowsError && !workflows.length && <p className="wf-empty">Chưa có workflow nào.</p>}
     </div>
   </div>;
 }
