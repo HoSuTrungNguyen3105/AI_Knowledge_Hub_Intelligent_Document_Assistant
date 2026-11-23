@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { GitBranch, Play, Plus, RotateCcw, Sparkles } from "lucide-react";
 import { teamsService, workflowsService } from "../../services/workflows";
-import { OUTPUT_TYPES, WORKFLOW_STATUS, WORKFLOW_TITLE_MAX, getWorkflowError, validateWorkflowForm } from "../../utils/workflows";
+import { DESIGN_PALETTES, DESIGN_STYLES, OUTPUT_TYPES, WORKFLOW_STATUS, WORKFLOW_TITLE_MAX, buildDesignBrief, getWorkflowError, validateWorkflowForm } from "../../utils/workflows";
 
 export function WorkflowsList() {
   const router = useRouter();
@@ -18,6 +18,7 @@ export function WorkflowsList() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ team_id: "", title: "", goal: "", output_type: "text" });
+  const [design, setDesign] = useState({ palette: "auto", style: "auto", notes: "" });
   // Teams and workflows load independently so one failing request cannot
   // blank out (or misreport) the other section.
   const loadTeams = useCallback(async (signal) => {
@@ -54,8 +55,10 @@ export function WorkflowsList() {
     if (validationError) { setError(validationError); return; }
     setBusy(true); setError("");
     try {
-      const created = await workflowsService.create({ team_id: form.team_id, title: form.title.trim(), goal: form.goal.trim(), output_type: form.output_type });
+      const designBrief = form.output_type === "website_zip" ? buildDesignBrief(design) : "";
+      const created = await workflowsService.create({ team_id: form.team_id, title: form.title.trim(), goal: form.goal.trim(), output_type: form.output_type, ...(designBrief ? { design_brief: designBrief } : {}) });
       setForm({ ...form, title: "", goal: "" });
+      setDesign({ palette: "auto", style: "auto", notes: "" });
       await load();
       router.push(`/agents/workflows/${created.id}`);
     } catch (e) { setError(getWorkflowError(e, "Không tạo được workflow.")); } finally { setBusy(false); }
@@ -81,6 +84,36 @@ export function WorkflowsList() {
             <small className="muted">Mọi yêu cầu dài, danh sách chức năng và yêu cầu đầu ra đều thuộc ô này — đừng dán vào ô Tiêu đề.</small></label>
           <label>Sản phẩm đầu ra<select value={form.output_type} onChange={(e) => setForm({ ...form, output_type: e.target.value })}>
             {OUTPUT_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
+          {form.output_type === "website_zip" && (
+            <fieldset className="wf-design">
+              <legend>Thiết kế giao diện — chọn nhanh để AI làm theo</legend>
+              <span className="wf-design-label">Màu chủ đạo</span>
+              <div className="wf-chip-row">
+                {DESIGN_PALETTES.map((p) => (
+                  <button type="button" key={p.id} aria-pressed={design.palette === p.id}
+                    className={`wf-chip${design.palette === p.id ? " selected" : ""}`}
+                    onClick={() => setDesign({ ...design, palette: p.id })}>
+                    {p.colors.length > 0 && <span className="wf-chip-dots">{p.colors.map((c) => <i key={c} style={{ background: c }} />)}</span>}
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <span className="wf-design-label">Phong cách</span>
+              <div className="wf-chip-row">
+                {DESIGN_STYLES.map((s) => (
+                  <button type="button" key={s.id} aria-pressed={design.style === s.id}
+                    className={`wf-chip${design.style === s.id ? " selected" : ""}`}
+                    onClick={() => setDesign({ ...design, style: s.id })}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+              <label>Ghi chú thiết kế thêm (tuỳ chọn)
+                <input value={design.notes} maxLength={300} onChange={(e) => setDesign({ ...design, notes: e.target.value })}
+                  placeholder="Ví dụ: font chữ tròn trịa, thêm hình minh hoạ động vật, hero thật lớn…" /></label>
+              <small className="muted">Lựa chọn này được gửi kèm cho Agent tạo file — màu sắc và phong cách sẽ bám đúng lựa chọn của bạn thay vì AI tự đoán.</small>
+            </fieldset>
+          )}
           <div><button className="wf-btn primary" type="submit" disabled={busy}><Play size={16} /> Tạo workflow</button></div>
         </form>)}
     </div>

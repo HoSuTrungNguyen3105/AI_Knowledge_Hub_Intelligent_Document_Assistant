@@ -518,6 +518,80 @@ async def test_project_zip_workflow_creates_project_artifact(owner, mock_http):
     assert created and created[0]["payload"]["mode"] == "project"
 
 
+BROKEN_PROJECT_BLOCKS = (
+    "Here is the complete project:\n"
+    "```file:package.json\n"
+    '{"name": "shop", "scripts": {"dev": "vite", "build": "vite build"}}\n```\n'
+    "```file:public/index.html\n<html><body>%PUBLIC_URL% favicon</body></html>\n```\n"
+    "```file:src/main.jsx\nimport App from './App';\n```\n"
+    "```file:src/App.jsx\nexport default function App() { return <h1>Shop</h1>; }\n```\n"
+)
+
+
+async def test_project_artifact_repairs_missing_root_index_html(owner, mock_http):
+    import io
+    import zipfile
+
+    client, _ = owner
+    lead, dev = make_agent(client, "Lead"), make_agent(client, "Dev")
+    team = make_team(client, [(lead, "coordinator"), (dev, "developer")], coordinator=lead["id"])
+
+    def handler(request, n):
+        body = request.content.decode("utf-8", "ignore")
+        if "WEBSITE_FILE_BLOCKS" in body:
+            return httpx.Response(200, text=sse(chunk(BROKEN_PROJECT_BLOCKS), "[DONE]"))
+        return httpx.Response(200, text=sse(chunk("Done."), "[DONE]"))
+
+    mock_http["configure"](handler)
+    wf = make_workflow(
+        client, team, goal="Build a React shop", output_type="website_zip"
+    )
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed" and done["artifact_status"] == "ready", done
+    paths = [f["path"] for f in client.get(f"{WORKFLOWS}/{wf['id']}/files").json()["files"]]
+    # Vite entry repaired: a root index.html now exists in the artifact.
+    assert "index.html" in paths, paths
+    download = client.get(f"{WORKFLOWS}/{wf['id']}/download.zip")
+    with zipfile.ZipFile(io.BytesIO(download.content)) as archive:
+        entry = archive.read("index.html").decode("utf-8")
+    assert '<div id="root"></div>' in entry
+    assert '<script type="module" src="/src/main.jsx"></script>' in entry
+    events = client.get(f"{WORKFLOWS}/{wf['id']}/events").json()["events"]
+    created = [e for e in events if e["event_type"] == "artifact_created"]
+    assert created and created[0]["payload"]["repaired_entry"] == "index.html"
+
+
+async def test_design_brief_is_stored_and_sent_to_artifact_turn(owner, mock_http):
+    client, _ = owner
+    lead, dev = make_agent(client, "Lead"), make_agent(client, "Dev")
+    team = make_team(client, [(lead, "coordinator"), (dev, "developer")], coordinator=lead["id"])
+    bodies = []
+
+    def handler(request, n):
+        body = request.content.decode("utf-8", "ignore")
+        bodies.append(body)
+        if "WEBSITE_FILE_BLOCKS" in body:
+            return httpx.Response(200, text=sse(chunk(PROJECT_BLOCKS), "[DONE]"))
+        return httpx.Response(200, text=sse(chunk("Done."), "[DONE]"))
+
+    mock_http["configure"](handler)
+    brief = "Color palette: purple creative. Style: playful. MARKER-BRIEF-42"
+    wf = make_workflow(
+        client, team, goal="Build a React landing page",
+        output_type="website_zip", design_brief=brief,
+    )
+    assert wf["design_brief"] == brief
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed" and done["artifact_status"] == "ready", done
+    artifact_bodies = [b for b in bodies if "WEBSITE_FILE_BLOCKS" in b]
+    assert artifact_bodies and any("DESIGN BRIEF" in b and "MARKER-BRIEF-42" in b
+                                   for b in artifact_bodies)
+    # The design instructions also demand a root-level Vite entry file.
+    assert any("PROJECT ROOT" in b for b in artifact_bodies)
+
+
 def test_workflow_create_validation_error_is_sanitised_and_specific(owner):
     client, _ = owner
     lead = make_agent(client, "Lead")
