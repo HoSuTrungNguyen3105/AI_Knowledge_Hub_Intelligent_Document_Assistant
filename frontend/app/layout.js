@@ -9,5 +9,9 @@ export const metadata = {
 };
 
 export default function RootLayout({ children }) {
-  return <html lang="vi" suppressHydrationWarning><body><Providers>{children}</Providers></body></html>;
+  // suppressHydrationWarning on <html> and <body>: browser extensions inject
+  // attributes (bis_skin_checked, bis_register, data-cc-prev-cursor, cursor
+  // styles) into the DOM before React hydrates, which otherwise surfaces as a
+  // dev-overlay hydration mismatch that is not caused by app code.
+  return <html lang="vi" suppressHydrationWarning><body suppressHydrationWarning><Providers>{children}</Providers></body></html>;
 }

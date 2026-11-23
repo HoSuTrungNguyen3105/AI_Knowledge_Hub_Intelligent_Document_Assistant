@@ -46,11 +46,19 @@ export function WorkflowDetail({ workflowId }) {
   const load = useCallback(async (signal) => {
     try {
       const wf = await workflowsService.get(workflowId, signal);
-      const [taskList, messageList, eventList, teamData] = await Promise.all([
+      setWorkflow(wf);
+      // Sub-resources load independently: one failing list must not blank the
+      // whole workspace or misreport the others.
+      const [taskRes, messageRes, eventRes, teamRes] = await Promise.allSettled([
         workflowsService.tasks(workflowId, signal), workflowsService.messages(workflowId, signal),
-        workflowsService.events(workflowId, signal), teamsService.get(wf.team_id, signal).catch(() => null),
+        workflowsService.events(workflowId, signal), teamsService.get(wf.team_id, signal),
       ]);
-      setWorkflow(wf); setTasks(taskList); setMessages(messageList); setEvents(eventList); setTeam(teamData);
+      const failed = [];
+      if (taskRes.status === "fulfilled") setTasks(taskRes.value); else failed.push("task");
+      if (messageRes.status === "fulfilled") setMessages(messageRes.value); else failed.push("tin nhắn");
+      if (eventRes.status === "fulfilled") setEvents(eventRes.value); else failed.push("sự kiện");
+      if (teamRes.status === "fulfilled") setTeam(teamRes.value);
+      setError(failed.length ? `Không tải được một phần dữ liệu (${failed.join(", ")}). Các phần khác vẫn hiển thị; trang sẽ tự thử lại.` : "");
     } catch (e) {
       if (e?.name !== "AbortError") setError(getWorkflowError(e, "Không tải được workflow."));
     } finally { setLoading(false); }

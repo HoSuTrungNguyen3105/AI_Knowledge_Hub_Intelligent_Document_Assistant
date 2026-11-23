@@ -102,6 +102,111 @@ const ERROR_MESSAGES = {
 };
 
 export function getWorkflowError(error, fallback = "Đã xảy ra lỗi. Vui lòng thử lại.") {
+  const status = error?.response?.status;
   const code = error?.response?.data?.detail?.code;
-  return ERROR_MESSAGES[code] || error?.response?.data?.detail?.message || fallback;
+  // Status-specific guidance first: a 404 on the Phase 6 routes almost always
+  // means the locally running backend predates Phase 6 and was not restarted.
+  if (status === 404) {
+    return "Backend chưa có route Agent Teams/Workflows (404). Hãy khởi động lại backend (bản Phase 6) rồi thử lại.";
+  }
+  if (status === 401) return "Phiên đăng nhập đã hết hạn (401). Hãy đăng nhập lại rồi thử lại.";
+  if (typeof status === "number" && status >= 500) {
+    return `Lỗi máy chủ (${status}${code ? ` · ${code}` : ""}). Hãy thử lại sau ít phút.`;
+  }
+  const known = ERROR_MESSAGES[code] || error?.response?.data?.detail?.message;
+  if (known) return status ? `${known} (${status}${code ? ` · ${code}` : ""})` : known;
+  if (!error?.response && error?.request) return "Không kết nối được tới backend. Hãy kiểm tra backend đang chạy rồi thử lại.";
+  return fallback;
+}
+
+// --- Starter agent set -------------------------------------------------------
+// One-click bootstrap for accounts that have no Agents yet: the seven roles
+// of the Phase 6 spec, created through the existing Agent API with Vietnamese
+// role prompts. Tool names are the Phase 5 registry ids; the caller filters
+// them against the live tools catalog (only available tools are sent).
+export const STARTER_TEAM_NAME = "Nhóm Multi-Agent";
+
+export const STARTER_AGENTS = [
+  {
+    name: "AI Leader", role: "coordinator", tools: ["data_analyzer"],
+    description: "Coordinator/Leader — điều phối workflow, giao việc và tổng hợp kết quả cuối cùng.",
+    system_prompt: "Bạn là AI Leader, Coordinator của một nhóm Agent trong MindFlow AI. Nhiệm vụ: hiểu mục tiêu chung, giao nhiệm vụ rõ ràng cho từng Agent phù hợp, theo dõi tiến độ, quyết định bước tiếp theo và tổng hợp kết quả cuối cùng cho người dùng bằng tiếng Việt. Không tự làm thay phần việc chuyên môn của Agent khác khi có thể giao việc.",
+  },
+  {
+    name: "AI Planner", role: "planner", tools: ["data_analyzer"],
+    description: "Planner — chia mục tiêu thành các task có thứ tự và phụ thuộc rõ ràng.",
+    system_prompt: "Bạn là AI Planner trong MindFlow AI. Nhiệm vụ: phân tích mục tiêu, chia thành các task nhỏ có thứ tự thực hiện và phụ thuộc rõ ràng, nêu tiêu chí hoàn thành cho từng task. Trả lời bằng tiếng Việt, ngắn gọn, dạng danh sách đánh số.",
+  },
+  {
+    name: "AI Architect", role: "architect", tools: ["data_analyzer"],
+    description: "Architect — phân tích kiến trúc hiện tại và thiết kế giải pháp.",
+    system_prompt: "Bạn là AI Architect trong MindFlow AI. Nhiệm vụ: phân tích kiến trúc hệ thống hiện tại dựa trên thông tin được cung cấp, chỉ ra ảnh hưởng/rủi ro và đề xuất thiết kế giải pháp khả thi. Không giả vờ đã đọc code hay sửa file nếu không có dữ liệu. Trả lời bằng tiếng Việt.",
+  },
+  {
+    name: "AI Developer", role: "developer", tools: ["calculator", "data_analyzer"],
+    description: "Developer — thực hiện nhiệm vụ kỹ thuật, đề xuất hướng dẫn/patch khi cần.",
+    system_prompt: "Bạn là AI Developer trong MindFlow AI. Nhiệm vụ: thực hiện nhiệm vụ kỹ thuật được giao trong phạm vi context được cấp, trình bày giải pháp/hướng dẫn/patch đề xuất rõ ràng. Không giả vờ đã sửa file trên máy chủ. Trả lời bằng tiếng Việt, kèm ví dụ cụ thể khi hữu ích.",
+  },
+  {
+    name: "AI Tester", role: "tester", tools: ["calculator", "data_analyzer"],
+    description: "Tester — kiểm tra kết quả, tìm lỗi và gửi yêu cầu sửa khi chưa đạt.",
+    system_prompt: "Bạn là AI Tester trong MindFlow AI. Nhiệm vụ: kiểm tra kết quả của Agent khác theo tiêu chí của task, liệt kê lỗi/thiếu sót cụ thể nếu có và yêu cầu sửa (REVISION_REQUEST) khi chưa đạt; xác nhận đạt khi kết quả đúng. Trả lời bằng tiếng Việt.",
+  },
+  {
+    name: "AI Reviewer", role: "reviewer", tools: ["data_analyzer"],
+    description: "Reviewer — phản biện, phê duyệt hoặc yêu cầu chỉnh sửa kết quả.",
+    system_prompt: "Bạn là AI Reviewer trong MindFlow AI. Nhiệm vụ: đánh giá chất lượng kế hoạch/kết quả được gửi, phê duyệt (APPROVAL) khi đạt hoặc yêu cầu chỉnh sửa (REVISION_REQUEST) kèm lý do cụ thể khi chưa đạt. Trả lời bằng tiếng Việt, thẳng thắn và có căn cứ.",
+  },
+  {
+    name: "AI Researcher", role: "researcher", tools: ["datetime", "data_analyzer"],
+    description: "Researcher — thu thập và tóm tắt thông tin phục vụ nhiệm vụ chung.",
+    system_prompt: "Bạn là AI Researcher trong MindFlow AI. Nhiệm vụ: thu thập, so sánh và tóm tắt thông tin liên quan tới nhiệm vụ từ context/công cụ được cấp, phân biệt rõ dữ kiện và suy luận, không bịa nguồn. Trả lời bằng tiếng Việt.",
+  },
+];
+
+const normName = (value) => String(value || "").trim().toLowerCase();
+
+export function missingStarterAgents(existingAgents) {
+  const names = new Set((existingAgents || []).map((a) => normName(a.name)));
+  return STARTER_AGENTS.filter((spec) => !names.has(normName(spec.name)));
+}
+
+// Creates the missing starter Agents (skipping names that already exist, so
+// re-clicking never duplicates), then creates the starter Team when it does
+// not exist yet. Stops at the first creation failure and reports exactly
+// which Agents were created/reused so the UI can say what happened.
+export async function createStarterSet({ existingAgents, existingTeams, provider, model, availableToolNames, createAgent, createTeam }) {
+  const byName = new Map((existingAgents || []).map((a) => [normName(a.name), a]));
+  const toolAllowlist = Array.isArray(availableToolNames) ? new Set(availableToolNames) : null;
+  const created = [];
+  const reused = [];
+  const byRole = {};
+  for (const spec of STARTER_AGENTS) {
+    const existing = byName.get(normName(spec.name));
+    if (existing) { reused.push(existing); byRole[spec.role] = existing; continue; }
+    const tools = toolAllowlist ? spec.tools.filter((name) => toolAllowlist.has(name)) : [...spec.tools];
+    let agent;
+    try {
+      agent = await createAgent({
+        name: spec.name, description: spec.description, provider, model,
+        system_prompt: spec.system_prompt, temperature: null, max_output_tokens: null, tools,
+      });
+    } catch (error) {
+      return { created, reused, failed: { name: spec.name, error }, team: null, teamSkipped: false };
+    }
+    created.push(agent); byRole[spec.role] = agent;
+  }
+  const teamExists = (existingTeams || []).some((t) => normName(t.name) === normName(STARTER_TEAM_NAME));
+  if (teamExists) return { created, reused, failed: null, team: null, teamSkipped: true };
+  const members = STARTER_AGENTS.map((spec) => ({ agent_id: byRole[spec.role].id, role: spec.role, enabled: true }));
+  try {
+    const team = await createTeam({
+      name: STARTER_TEAM_NAME,
+      description: "Nhóm Multi-Agent mẫu gồm 7 Agent theo vai trò Phase 6, do AI Leader điều phối.",
+      coordinator_agent_id: byRole.coordinator.id, members,
+    });
+    return { created, reused, failed: null, team, teamSkipped: false };
+  } catch (error) {
+    return { created, reused, failed: { name: STARTER_TEAM_NAME, error }, team: null, teamSkipped: false };
+  }
 }
