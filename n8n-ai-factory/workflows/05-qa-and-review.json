@@ -1,0 +1,295 @@
+{
+  "name": "AI Factory — QA and Review",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## QA and Review\nInput: {project_id, attempt}. Runs install/lint/test/build in the Code Execution Service sandbox, then QA Engineer and Code Reviewer agents judge the results. Output: {passed, issues[{severity, target_agent, ...}], ...}. The retry/fix loop itself lives in the Main Orchestrator.",
+        "height": 180,
+        "width": 560,
+        "color": 4
+      },
+      "id": "dc0a8846-0dd6-4194-951a-78cc692ae50a",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-factory/qa-review",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "8a7575b9-e0db-45e5-b4ac-318a078f99a8",
+      "name": "Webhook — QA Review",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        320
+      ],
+      "webhookId": "657bda17-0c8c-4a62-90a2-09a7e5a15f16"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst input = $input.first().json;\nconst body = input.body ?? input;\nconst cesBase = ($env.CODE_EXEC_URL || 'http://code-exec-service:8080').replace(/\\/$/, '');\nreturn [{ json: {\n  project_id: body.project_id,\n  attempt: body.attempt ?? 0,\n  providers: body.providers || {},\n  ces_url: `${cesBase}/projects/${body.project_id}/run`,\n  ces_body: { steps: ['install', 'lint', 'test', 'build'] }\n} }];\n"
+      },
+      "id": "5b970df6-c1a7-44b0-93ff-5835dc6038c0",
+      "name": "Prepare QA Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.ces_url }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.ces_body) }}",
+        "options": {
+          "timeout": 1500000
+        }
+      },
+      "id": "8d47c3c6-1e43-4a50-9be2-588387170965",
+      "name": "Run Build & Tests (CES)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst prep = $('Prepare QA Run').first().json;\nconst run = $input.first().json;\nreturn [{ json: {\n  project_id: prep.project_id, attempt: prep.attempt, run,\n  agent_call: {\n    project_id: prep.project_id,\n    task_id: `${prep.project_id}-qa-${prep.attempt}`,\n    agent_id: 'qa_engineer',\n    task_description: 'Review the build/test results in your context: derive test cases from the project acceptance criteria, judge each build step, and list every issue with the agent who must fix it.',\n    input_context: { build_results: run.results || [], build_ok: Boolean(run.build_ok) },\n    providers: prep.providers || {},\n    required: true\n  }\n} }];\n"
+      },
+      "id": "76cc65db-4da0-4a6e-998f-89f616ea18b5",
+      "name": "Build QA Call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.AI_FACTORY_BASE_URL || 'http://localhost:5678') + '/webhook/ai-factory/agent-execute' }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.agent_call) }}",
+        "options": {
+          "timeout": 900000
+        }
+      },
+      "id": "d42f60c6-dfb8-4482-acc0-4ed52efd9b5b",
+      "name": "Call QA Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst prep = $('Prepare QA Run').first().json;\nconst qaStage = $('Build QA Call').first().json;\nconst qaResult = $input.first().json;\nreturn [{ json: {\n  project_id: prep.project_id, attempt: prep.attempt,\n  agent_call: {\n    project_id: prep.project_id,\n    task_id: `${prep.project_id}-review-${prep.attempt}`,\n    agent_id: 'code_reviewer',\n    task_description: 'Review the project quality: structure, security, maintainability. Use the build results and the QA report in your context. Approve only when no critical or major issue remains.',\n    input_context: { build_results: qaStage.run.results || [], build_ok: Boolean(qaStage.run.build_ok), qa_report: qaResult.output || null },\n    providers: prep.providers || {},\n    required: true\n  }\n} }];\n"
+      },
+      "id": "bc37162e-5827-4641-8992-21d4c50d4feb",
+      "name": "Build Reviewer Call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.AI_FACTORY_BASE_URL || 'http://localhost:5678') + '/webhook/ai-factory/agent-execute' }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.agent_call) }}",
+        "options": {
+          "timeout": 900000
+        }
+      },
+      "id": "068d9060-3dcf-44b1-a3a1-b555b8d0d38a",
+      "name": "Call Reviewer Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1800,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst esc = (v) => (v === null || v === undefined) ? 'NULL' : `'${String(v).replace(/'/g, \"''\")}'`;\nconst escJson = (v) => (v === null || v === undefined) ? 'NULL' : `'${JSON.stringify(v).replace(/'/g, \"''\")}'::jsonb`;\n\nconst prep = $('Prepare QA Run').first().json;\nconst run = $('Build QA Call').first().json.run;\nconst qaRes = $('Call QA Agent').first().json;\nconst revRes = $input.first().json;\nconst qa = (qaRes && qaRes.output) || {};\nconst rev = (revRes && revRes.output) || {};\nconst issues = [];\nfor (const i of [...(qa.issues || []), ...(rev.issues || [])]) {\n  issues.push({ severity: i.severity || 'major', target_agent: i.target_agent || 'frontend_developer', description: i.description || '', file: i.file || '' });\n}\nif (!run.build_ok) {\n  issues.push({ severity: 'critical', target_agent: 'frontend_developer', description: 'Build step failed in the sandbox — see build_results log tails.', file: '' });\n}\nconst passed = Boolean(run.build_ok) && qa.verdict !== 'fail' && rev.verdict !== 'request_changes' && !issues.some(i => i.severity === 'critical');\nconst sql = `INSERT INTO qa_reviews (project_id, attempt, build_ok, qa_verdict, reviewer_verdict, passed, issues, logs) VALUES (${esc(prep.project_id)}::uuid, ${Number(prep.attempt) || 0}, ${run.build_ok ? 'true' : 'false'}, ${esc(qa.verdict || null)}, ${esc(rev.verdict || null)}, ${passed ? 'true' : 'false'}, ${escJson(issues)}, ${escJson(run.results || [])})`;\nreturn [{ json: {\n  sql,\n  response: {\n    project_id: prep.project_id, attempt: prep.attempt, passed,\n    build_ok: Boolean(run.build_ok),\n    qa_verdict: qa.verdict || null, reviewer_verdict: rev.verdict || null,\n    issues, build_results: run.results || []\n  }\n} }];\n"
+      },
+      "id": "a9ae77ee-7de0-441f-a3ba-29286e3b21ff",
+      "name": "Build Verdict",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2060,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql }}",
+        "options": {}
+      },
+      "id": "8efc7b5b-a245-43ba-8f03-b02c84137ba1",
+      "name": "Insert QA Review (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2320,
+        320
+      ],
+      "credentials": {
+        "postgres": {
+          "id": null,
+          "name": "AI Factory Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Build Verdict').first().json.response) }}",
+        "options": {}
+      },
+      "id": "3a6579e4-3160-431a-b50c-d567293f215c",
+      "name": "Respond — QA Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2580,
+        320
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — QA Review": {
+      "main": [
+        [
+          {
+            "node": "Prepare QA Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare QA Run": {
+      "main": [
+        [
+          {
+            "node": "Run Build & Tests (CES)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Build & Tests (CES)": {
+      "main": [
+        [
+          {
+            "node": "Build QA Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build QA Call": {
+      "main": [
+        [
+          {
+            "node": "Call QA Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call QA Agent": {
+      "main": [
+        [
+          {
+            "node": "Build Reviewer Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Reviewer Call": {
+      "main": [
+        [
+          {
+            "node": "Call Reviewer Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Reviewer Agent": {
+      "main": [
+        [
+          {
+            "node": "Build Verdict",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Verdict": {
+      "main": [
+        [
+          {
+            "node": "Insert QA Review (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert QA Review (Postgres)": {
+      "main": [
+        [
+          {
+            "node": "Respond — QA Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {}
+}

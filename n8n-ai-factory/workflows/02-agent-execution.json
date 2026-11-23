@@ -1,0 +1,321 @@
+{
+  "name": "AI Factory — Agent Execution",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Agent Execution — runs ONE agent through OpenRouter\nInput (POST JSON): {project_id, task_id, agent_id, task_description, input_context, models?}\nOutput: the unified schema {task_id, project_id, agent_id, status, output, error, artifacts, usage}.\n\n**Setup:** API keys come from the n8n environment variables GROQ_API_KEY / OLLAMA_API_KEY / OPENROUTER_API_KEY (set them in the .env file next to docker-compose.yml) — keys are NEVER stored in this JSON. Default provider, per-agent models & prompts live in the **Resolve Agent Config** code node — edit them there.",
+        "height": 180,
+        "width": 560,
+        "color": 4
+      },
+      "id": "1536230f-d0e8-4ac5-a844-52ddf0414176",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-factory/agent-execute",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "3731b1cb-5701-463e-b8a6-8a1dcedda387",
+      "name": "Webhook — Agent Execute",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        320
+      ],
+      "webhookId": "36b5d144-b321-4669-a636-fd9acdf62d1f"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst SCHEMA_RULE = 'Always respond with ONE valid JSON object and nothing else (no markdown fences, no commentary). The object MUST follow this unified schema: {\"task_id\": <echo task_id>, \"project_id\": <echo project_id>, \"agent_id\": \"<your agent id>\", \"status\": \"COMPLETED\", \"output\": {...}, \"artifacts\": [], \"error\": null}. Put your role-specific result inside \"output\" using exactly the keys specified for your role. If you truly cannot complete the task, set \"status\" to \"FAILED\" and \"error\" to a short reason.';\n\nconst AGENTS = {\n  project_manager: {\n    name: 'Project Manager', models: { openrouter: 'anthropic/claude-sonnet-4.5', groq: 'openai/gpt-oss-120b', ollama: 'gpt-oss:120b' },\n    role: 'You are the Project Manager of a multi-agent software team. Analyse the user requirement, break it into tasks, assign each task to exactly one agent, define dependencies and the order of work. You coordinate — you do not write code. Decide which agents are actually needed: a full website needs all of them; a single module or a small change needs only the relevant ones.',\n    output: '\"output\" keys: {\"summary\": string, \"tasks\": [{\"task_key\": string, \"agent_id\": string, \"title\": string, \"description\": string, \"depends_on\": [task_key]}], \"agents_needed\": [agent_id], \"risks\": [string]}. Valid agent_id values: project_manager, business_analyst, ui_ux_designer, frontend_architect, frontend_developer, backend_architect, backend_developer, integration_agent, qa_engineer, code_reviewer.'\n  },\n  business_analyst: {\n    name: 'Business Analyst', models: { openrouter: 'openai/gpt-5', groq: 'openai/gpt-oss-120b', ollama: 'gpt-oss:120b' },\n    role: 'You are the Business Analyst. Turn the requirement and the PM plan into concrete features, user stories and testable acceptance criteria.',\n    output: '\"output\" keys: {\"features\": [string], \"user_stories\": [{\"as_a\": string, \"want\": string, \"so_that\": string}], \"acceptance_criteria\": [string], \"out_of_scope\": [string]}.'\n  },\n  ui_ux_designer: {\n    name: 'UI/UX Designer', models: { openrouter: 'google/gemini-2.5-pro', groq: 'openai/gpt-oss-120b', ollama: 'gpt-oss:120b' },\n    role: 'You are the UI/UX Designer. Design the sitemap, the structure of every page, the shared components and a concrete design system (colors, typography, spacing, border radius, style notes) that the frontend must follow exactly. Aim for a modern, professional, consistent and fully responsive design.',\n    output: '\"output\" keys: {\"sitemap\": [string], \"pages\": [{\"name\": string, \"route\": string, \"sections\": [string]}], \"components\": [string], \"design_system\": {\"primary_color\": string, \"font\": string, \"style_notes\": string}}.'\n  },\n  frontend_architect: {\n    name: 'Frontend Architect', models: { openrouter: 'anthropic/claude-sonnet-4.5', groq: 'openai/gpt-oss-120b', ollama: 'gpt-oss:120b' },\n    role: 'You are the Frontend Architect. Define the frontend architecture for a Vite + React + Tailwind project: folder structure, routes, component tree with props, and the state management approach. Be concrete and consistent with the design system in your context.',\n    output: '\"output\" keys: {\"stack\": string, \"folder_structure\": [string], \"routes\": [{\"path\": string, \"component\": string}], \"components\": [{\"name\": string, \"props\": [string]}], \"state_management\": string}.'\n  },\n  frontend_developer: {\n    name: 'Frontend Developer', models: { openrouter: 'qwen/qwen3-coder', groq: 'openai/gpt-oss-20b', ollama: 'qwen3-coder:480b' },\n    role: 'You are the Frontend Developer. Write the COMPLETE frontend (React + Vite + Tailwind CSS) exactly per the architecture and design system in your context. Build every page and component — not only the home page. Every button, filter, form and navigation must actually work (client-side logic included). Use only stable, mutually compatible dependency versions (React 19, Vite 6, Tailwind CSS 3, react-router-dom 7). Return full file contents — never placeholders, never truncated code, never \"...rest unchanged\".',\n    output: '\"output\" keys: {\"summary\": string, \"files\": [{\"path\": string, \"content\": string}], \"notes\": [string]}. files MUST include package.json (with install/dev/build scripts), index.html AT THE PROJECT ROOT containing <div id=\"root\"></div> and <script type=\"module\" src=\"/src/main.jsx\"></script>, vite.config.js, tailwind.config.js, postcss.config.js, src/main.jsx, src/index.css, src/App.jsx, every component/page/data file that is imported, and README.md.'\n  },\n  backend_architect: {\n    name: 'Backend Architect', models: { openrouter: 'openai/gpt-5', groq: 'openai/gpt-oss-120b', ollama: 'gpt-oss:120b' },\n    role: 'You are the Backend Architect. Design the backend: folder structure, database schema, the complete REST API contract, and the authentication/authorisation approach. If the project genuinely needs no backend, say so in the output and return an empty api_contract.',\n    output: '\"output\" keys: {\"stack\": string, \"folder_structure\": [string], \"database\": {\"tables\": [{\"name\": string, \"columns\": [string]}]}, \"api_contract\": [{\"method\": string, \"path\": string, \"request\": string, \"response\": string}], \"auth\": {\"strategy\": string, \"roles\": [string]}}.'\n  },\n  backend_developer: {\n    name: 'Backend Developer', models: { openrouter: 'qwen/qwen3-coder', groq: 'openai/gpt-oss-20b', ollama: 'qwen3-coder:480b' },\n    role: 'You are the Backend Developer. Write the COMPLETE backend (Node.js) exactly per the API contract in your context. Backend files go under a server/ folder inside the same project and must not break the frontend build; document how to run the server in your notes. If the architecture says no backend is needed, return an empty files array and explain why in notes. Return full file contents — never placeholders.',\n    output: '\"output\" keys: {\"summary\": string, \"files\": [{\"path\": string, \"content\": string}], \"notes\": [string]}.'\n  },\n  integration_agent: {\n    name: 'Integration Agent', models: { openrouter: 'anthropic/claude-sonnet-4.5', groq: 'openai/gpt-oss-120b', ollama: 'gpt-oss:120b' },\n    role: 'You are the Integration Agent. Check the frontend and backend file sets against each other and the API contract: every API route the frontend calls exists in the backend, payload shapes match, all imports resolve, package.json covers every imported package, and there are no conflicting files. Return corrected FULL contents only for files that must change.',\n    output: '\"output\" keys: {\"verdict\": \"ok\" or \"fixed\", \"conflicts\": [{\"file\": string, \"issue\": string}], \"files\": [{\"path\": string, \"content\": string}]}.'\n  },\n  qa_engineer: {\n    name: 'QA Engineer', models: { openrouter: 'deepseek/deepseek-r1', groq: 'openai/gpt-oss-120b', ollama: 'deepseek-v3.1:671b' },\n    role: 'You are the QA Engineer. Derive test cases from the acceptance criteria, study the build/test logs and results in your context, and report every functional problem together with the agent who must fix it (frontend_developer or backend_developer).',\n    output: '\"output\" keys: {\"verdict\": \"pass\" or \"fail\", \"test_cases\": [{\"name\": string, \"result\": \"pass\" or \"fail\", \"details\": string}], \"issues\": [{\"severity\": \"critical\" or \"major\" or \"minor\", \"target_agent\": string, \"description\": string, \"file\": string}]}.'\n  },\n  code_reviewer: {\n    name: 'Code Reviewer', models: { openrouter: 'anthropic/claude-sonnet-4.5', groq: 'openai/gpt-oss-120b', ollama: 'gpt-oss:120b' },\n    role: 'You are the Code Reviewer. Review the whole project: structure, security (no hard-coded secrets, no unsafe patterns), code quality and maintainability. Approve only when there are no critical or major issues left.',\n    output: '\"output\" keys: {\"verdict\": \"approve\" or \"request_changes\", \"score\": number 0-100, \"issues\": [{\"severity\": \"critical\" or \"major\" or \"minor\", \"target_agent\": string, \"description\": string, \"file\": string}], \"comments\": [string]}.'\n  }\n};\n\nconst PROVIDERS = {\n  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', env_key: 'OPENROUTER_API_KEY' },\n  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', env_key: 'GROQ_API_KEY' },\n  ollama: { url: 'https://ollama.com/v1/chat/completions', env_key: 'OLLAMA_API_KEY' }\n};\nconst DEFAULT_PROVIDER = 'groq';\nconst input = $input.first().json;\nconst body = input.body ?? input;\nconst agentId = String(body.agent_id || '');\nconst cfg = AGENTS[agentId];\nif (!cfg) {\n  return [{ json: { fatal: { task_id: body.task_id ?? null, project_id: body.project_id ?? null, agent_id: agentId, status: 'FAILED', output: null, error: 'unknown_agent: ' + agentId, artifacts: [] } } }];\n}\nconst provider = body.provider || (body.providers && body.providers[agentId]) || DEFAULT_PROVIDER;\nconst prov = PROVIDERS[provider];\nif (!prov) {\n  return [{ json: { fatal: { task_id: body.task_id ?? null, project_id: body.project_id ?? null, agent_id: agentId, status: 'FAILED', output: null, error: 'unknown_provider: ' + provider, artifacts: [] } } }];\n}\nconst model = body.model || (body.models && body.models[agentId]) || (cfg.models && (cfg.models[provider] || cfg.models.openrouter));\nconst apiKey = $env[prov.env_key] || '';\nif (!apiKey) {\n  return [{ json: { fatal: { task_id: body.task_id ?? null, project_id: body.project_id ?? null, agent_id: agentId, status: 'FAILED', output: null, error: `missing_env_key: set ${prov.env_key} in the n8n environment (.env file next to docker-compose.yml) to use provider \"${provider}\"`, artifacts: [] } } }];\n}\nconst taskId = body.task_id || `${body.project_id || 'task'}-${agentId}`;\nconst systemPrompt = `${cfg.role}\\n\\n${cfg.output}\\n\\n${SCHEMA_RULE}`;\nconst userContent = [\n  'TASK: ' + (body.task_description || ''),\n  '',\n  'INPUT CONTEXT (JSON):',\n  JSON.stringify(body.input_context ?? {}, null, 2),\n  '',\n  `Echo task_id=\"${taskId}\" and project_id=\"${body.project_id}\" in your JSON answer.`\n].join('\\n');\n\nconst esc = (v) => (v === null || v === undefined) ? 'NULL' : `'${String(v).replace(/'/g, \"''\")}'`;\nconst escJson = (v) => (v === null || v === undefined) ? 'NULL' : `'${JSON.stringify(v).replace(/'/g, \"''\")}'::jsonb`;\n\nconst isUuid = /^[0-9a-fA-F-]{36}$/.test(String(body.project_id || ''));\nconst contextForDb = { task_description: body.task_description || '', input_context: body.input_context ?? {}, provider, model };\nconst sql_insert = isUuid\n  ? `INSERT INTO agent_runs (project_id, task_id, agent_id, agent_name, model, status, input_context, started_at) VALUES (${esc(body.project_id)}::uuid, ${esc(taskId)}, ${esc(agentId)}, ${esc(cfg.name)}, ${esc(model)}, 'RUNNING', ${escJson(contextForDb)}, now()) RETURNING id`\n  : 'SELECT NULL AS id';\nreturn [{ json: { agent_id: agentId, agent_name: cfg.name, model, provider, api_url: prov.url, auth_header: 'Bearer ' + apiKey, task_id: taskId, project_id: body.project_id ?? null, system_prompt: systemPrompt, user_content: userContent, started_ms: Date.now(), sql_insert } }];\n"
+      },
+      "id": "f7f6ebe3-247e-48b9-b150-fd9bfbbe109c",
+      "name": "Resolve Agent Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "8f92dc69-42df-47ff-8b9e-95c6a6b04db4",
+              "leftValue": "={{ !!$json.fatal }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3ab5a109-ebd0-4f90-9b10-3d7392658813",
+      "name": "Config OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        760,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.fatal) }}",
+        "options": {}
+      },
+      "id": "c6bea396-cdfe-40a2-9bf0-f03d802d34d7",
+      "name": "Respond — Fatal",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1020,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql_insert }}",
+        "options": {}
+      },
+      "id": "b98757c7-2e2b-4666-b093-ffaf4245b923",
+      "name": "Insert Run (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1020,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": null,
+          "name": "AI Factory Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst cfg = $('Resolve Agent Config').first().json;\nconst row = $input.first().json;\nreturn [{ json: {\n  run_id: row.id || null,\n  agent_id: cfg.agent_id, task_id: cfg.task_id, project_id: cfg.project_id,\n  model: cfg.model, started_ms: cfg.started_ms,\n  provider: cfg.provider, api_url: cfg.api_url, auth_header: cfg.auth_header,\n  provider_body: {\n    model: cfg.model,\n    temperature: 0.3,\n    usage: { include: true },\n    messages: [\n      { role: 'system', content: cfg.system_prompt },\n      { role: 'user', content: cfg.user_content }\n    ]\n  }\n} }];\n"
+      },
+      "id": "cb5bf069-5150-4dc8-80d0-8eb925723216",
+      "name": "Build Provider Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.api_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.auth_header }}"
+            },
+            {
+              "name": "X-Title",
+              "value": "AI Agent Factory"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.provider_body) }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "6b70a3ee-0d1c-4822-8949-926df150c613",
+      "name": "Provider Chat Completions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        220
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst meta = $('Build Provider Request').first().json;\nconst resp = $input.first().json;\nconst duration = Date.now() - (meta.started_ms || Date.now());\nconst usage = (resp && resp.usage) || {};\nlet status = 'COMPLETED', error = null, roleOutput = null;\nconst content = resp && resp.choices && resp.choices[0] && resp.choices[0].message ? resp.choices[0].message.content : null;\nif (!content) {\n  status = 'FAILED';\n  error = (resp && resp.error && (resp.error.message || resp.error)) || 'empty_or_error_response_from_provider';\n} else {\n  let text = String(content).trim().replace(/^```(?:json)?/i, '').replace(/```\\s*$/, '').trim();\n  let parsed = null;\n  try { parsed = JSON.parse(text); } catch {\n    const m = text.match(/\\{[\\s\\S]*\\}/);\n    if (m) { try { parsed = JSON.parse(m[0]); } catch { parsed = null; } }\n  }\n  if (!parsed) {\n    status = 'FAILED'; error = 'model_did_not_return_valid_json';\n    roleOutput = { raw: String(content).slice(0, 4000) };\n  } else if (parsed.status === 'FAILED') {\n    status = 'FAILED'; error = parsed.error || 'agent_reported_failure';\n    roleOutput = parsed.output ?? null;\n  } else {\n    roleOutput = parsed.output ?? parsed;\n  }\n}\n\nconst esc = (v) => (v === null || v === undefined) ? 'NULL' : `'${String(v).replace(/'/g, \"''\")}'`;\nconst escJson = (v) => (v === null || v === undefined) ? 'NULL' : `'${JSON.stringify(v).replace(/'/g, \"''\")}'::jsonb`;\n\nconst sql_update = meta.run_id\n  ? `UPDATE agent_runs SET status=${esc(status)}, output=${escJson(roleOutput)}, error=${esc(error)}, prompt_tokens=${usage.prompt_tokens ?? 'NULL'}, completion_tokens=${usage.completion_tokens ?? 'NULL'}, total_tokens=${usage.total_tokens ?? 'NULL'}, cost_usd=${usage.cost ?? 'NULL'}, duration_ms=${duration}, finished_at=now() WHERE id=${esc(meta.run_id)}::uuid`\n  : 'SELECT 1';\nreturn [{ json: {\n  sql_update,\n  response: {\n    task_id: meta.task_id, project_id: meta.project_id, agent_id: meta.agent_id,\n    status, output: roleOutput, error, artifacts: [],\n    usage: { prompt_tokens: usage.prompt_tokens ?? null, completion_tokens: usage.completion_tokens ?? null, total_tokens: usage.total_tokens ?? null, cost: usage.cost ?? null },\n    duration_ms: duration\n  }\n} }];\n"
+      },
+      "id": "f20c41cb-3645-4ba2-b0c0-0b516338ad16",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.sql_update }}",
+        "options": {}
+      },
+      "id": "dc812e99-d7ad-4c48-a528-de681982836e",
+      "name": "Update Run (Postgres)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2060,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": null,
+          "name": "AI Factory Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Parse Result').first().json.response) }}",
+        "options": {}
+      },
+      "id": "e58a38db-5b73-4788-a588-7d66257d4740",
+      "name": "Respond — Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2320,
+        220
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Agent Execute": {
+      "main": [
+        [
+          {
+            "node": "Resolve Agent Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Agent Config": {
+      "main": [
+        [
+          {
+            "node": "Config OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config OK?": {
+      "main": [
+        [
+          {
+            "node": "Respond — Fatal",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insert Run (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Run (Postgres)": {
+      "main": [
+        [
+          {
+            "node": "Build Provider Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Provider Request": {
+      "main": [
+        [
+          {
+            "node": "Provider Chat Completions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Provider Chat Completions": {
+      "main": [
+        [
+          {
+            "node": "Parse Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Result": {
+      "main": [
+        [
+          {
+            "node": "Update Run (Postgres)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Run (Postgres)": {
+      "main": [
+        [
+          {
+            "node": "Respond — Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {}
+}

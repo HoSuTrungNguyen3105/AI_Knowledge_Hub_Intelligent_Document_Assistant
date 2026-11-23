@@ -1,0 +1,95 @@
+{
+  "name": "AI Factory — Parallel Agent Execution",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Parallel Agent Execution\nInput: {project_id, phase, calls: [{agent_id, task_description, input_context, required}]}\nRuns every call against the Agent Execution webhook **in parallel**, collects all results (a failing agent does not sink the others) and reports whether every *required* call completed.",
+        "height": 180,
+        "width": 560,
+        "color": 4
+      },
+      "id": "f12dc522-504a-4159-ad07-658099af1122",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        40
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-factory/parallel",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "90adc18e-e218-48a9-b401-27b2239e5c59",
+      "name": "Webhook — Parallel Execute",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        320
+      ],
+      "webhookId": "ed4b349b-9f16-4a9b-b58e-7a439dbab6d6"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst helpers = this.helpers;\nconst input = $input.first().json;\nconst body = input.body ?? input;\nconst calls = Array.isArray(body.calls) ? body.calls : [];\nconst base = ($env.AI_FACTORY_BASE_URL || 'http://localhost:5678').replace(/\\/$/, '');\nasync function runOne(call) {\n  try {\n    if (helpers && helpers.httpRequest) {\n      return await helpers.httpRequest({\n        method: 'POST', url: `${base}/webhook/ai-factory/agent-execute`,\n        body: call, json: true, timeout: 900000\n      });\n    }\n    const res = await fetch(`${base}/webhook/ai-factory/agent-execute`, {\n      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(call)\n    });\n    return await res.json();\n  } catch (e) {\n    return { task_id: call.task_id ?? null, project_id: call.project_id ?? null, agent_id: call.agent_id, status: 'FAILED', output: null, error: String((e && e.message) || e), artifacts: [] };\n  }\n}\nconst results = await Promise.all(calls.map(runOne));\nconst requiredPairs = calls.map((c, i) => ({ call: c, result: results[i] })).filter(p => p.call.required !== false);\nconst allOk = requiredPairs.every(p => p.result && p.result.status === 'COMPLETED');\nreturn [{ json: {\n  project_id: body.project_id ?? null,\n  phase: body.phase ?? null,\n  results,\n  all_required_completed: allOk,\n  failures: results.filter(r => !r || r.status !== 'COMPLETED').map(r => ({ agent_id: r && r.agent_id, error: r && r.error }))\n} }];\n"
+      },
+      "id": "2d902e28-2862-4e21-8db0-34dffbf6ab25",
+      "name": "Run Calls In Parallel",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "2f840ed0-145b-4779-9438-9cb49e464718",
+      "name": "Respond — Parallel Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        760,
+        320
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Parallel Execute": {
+      "main": [
+        [
+          {
+            "node": "Run Calls In Parallel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Calls In Parallel": {
+      "main": [
+        [
+          {
+            "node": "Respond — Parallel Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {}
+}
