@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { downloadWorkflowZip, streamWorkflow, teamsService, workflowsService } from "../../services/workflows";
 import {
-  TASK_COLUMNS, WORKFLOW_STATUS, agentStatus, artifactErrorLabel, elapsedLabel, formatBytes,
+  TASK_COLUMNS, WORKFLOW_STATUS, agentStatus, artifactErrorLabel, artifactKindLabel, elapsedLabel, formatBytes,
   getWorkflowError, progressOf, roleMeta, stepperOf, timeLabel,
 } from "../../utils/workflows";
 
@@ -254,6 +254,9 @@ export function WorkflowDetail({ workflowId }) {
             </ul>
             <p className="muted" style={{ fontSize: 12.5 }}>
               {workflow.artifact_file_count} file · Tổng {formatBytes(artifact?.total_bytes ?? workflow.artifact_total_bytes)} — kèm file HUONG-DAN.md do hệ thống sinh.
+            </p>
+            <p className="muted" style={{ fontSize: 12.5 }}>
+              Loại sản phẩm: <strong>{artifactKindLabel(artifact?.files || [])}</strong>
             </p>
             <div className="row" style={{ marginTop: 10 }}>
               <button className="wf-btn primary" type="button" disabled={busy === "download"} onClick={downloadZip}>

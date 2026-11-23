@@ -4,8 +4,9 @@ import MockAdapter from "axios-mock-adapter";
 import { api } from "../services/api";
 import { downloadWorkflowZip, teamsService, workflowsService } from "../services/workflows";
 import {
-  OUTPUT_TYPES, STARTER_AGENTS, artifactErrorLabel, createStarterSet, formatBytes,
-  getWorkflowError, missingStarterAgents,
+  OUTPUT_TYPES, STARTER_AGENTS, artifactErrorLabel, artifactKind, artifactKindLabel,
+  createStarterSet, formatBytes,
+  getWorkflowError, missingStarterAgents, validateWorkflowForm,
   agentStatus, progressOf, roleMeta, stepperOf,
 } from "../utils/workflows";
 
@@ -136,6 +137,48 @@ describe("Teams load error reporting", () => {
   it("keeps known detail codes readable and appends the status", () => {
     expect(getWorkflowError(err(409, "workflow_already_running"), "fallback")).toContain("Workflow đang chạy.");
     expect(getWorkflowError(err(409, "workflow_already_running"), "fallback")).toContain("409");
+  });
+  it("translates sanitised validation fields into a specific message", () => {
+    const validationErr = {
+      response: {
+        status: 422,
+        data: {
+          detail: {
+            code: "validation_error",
+            fields: [{ type: "string_too_long", loc: ["body", "title"], msg: "String should have at most 200 characters" }],
+          },
+        },
+      },
+    };
+    const message = getWorkflowError(validationErr, "fallback");
+    expect(message).toContain("Tiêu đề");
+    expect(message).toContain("200");
+    expect(message).toContain("Mục tiêu chung");
+  });
+  it("explains the legacy masked code as a validation problem in this flow", () => {
+    expect(getWorkflowError(err(422, "invalid_provider_configuration"), "fallback")).toContain("Tiêu đề");
+  });
+});
+
+describe("Workflow create form validation", () => {
+  it("accepts a short title with a detailed goal", () => {
+    expect(validateWorkflowForm({ team_id: "t", title: "Landing Page bán giày sneaker", goal: "x".repeat(600) })).toBe("");
+  });
+  it("rejects the whole request pasted into the title", () => {
+    const message = validateWorkflowForm({ team_id: "t", title: "x".repeat(250), goal: "g" });
+    expect(message).toContain("200");
+    expect(message).toContain("Mục tiêu chung");
+  });
+  it("rejects missing team, empty title and empty goal", () => {
+    expect(validateWorkflowForm({ team_id: "", title: "t", goal: "g" })).toContain("nhóm Agent");
+    expect(validateWorkflowForm({ team_id: "t", title: "  ", goal: "g" })).toContain("tiêu đề");
+    expect(validateWorkflowForm({ team_id: "t", title: "t", goal: "" })).toContain("mục tiêu chung");
+  });
+  it("derives the artifact kind from the file list", () => {
+    expect(artifactKind([{ path: "index.html" }, { path: "styles.css" }])).toBe("static");
+    expect(artifactKind([{ path: "package.json" }, { path: "src/App.jsx" }])).toBe("project");
+    expect(artifactKindLabel([{ path: "package.json" }])).toContain("npm install");
+    expect(artifactErrorLabel("artifact_missing_entry")).toContain("package.json");
   });
 });
 
