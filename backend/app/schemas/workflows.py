@@ -102,17 +102,29 @@ class TeamList(BaseModel):
     teams: list[TeamOut]
 
 
+OUTPUT_TYPES = {"text", "website_zip"}
+
+
 class WorkflowCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     team_id: UUID
     title: str = Field(min_length=1, max_length=200)
     goal: str = Field(min_length=1, max_length=32000)
     max_steps: int | None = Field(default=None, ge=1, le=100)
+    output_type: str = "text"
 
     @field_validator("title", "goal")
     @classmethod
     def valid_text(cls, value: str) -> str:
         return _strip(value)
+
+    @field_validator("output_type")
+    @classmethod
+    def valid_output_type(cls, value: str) -> str:
+        output_type = value.strip().lower()
+        if output_type not in OUTPUT_TYPES:
+            raise ValueError("Invalid output_type")
+        return output_type
 
 
 class WorkflowOut(BaseModel):
@@ -120,6 +132,11 @@ class WorkflowOut(BaseModel):
     team_id: UUID
     title: str
     goal: str
+    output_type: str = "text"
+    artifact_status: str = "none"
+    artifact_file_count: int = 0
+    artifact_total_bytes: int = 0
+    artifact_error_code: str | None = None
     status: str
     current_step: int
     max_steps: int
@@ -134,6 +151,17 @@ class WorkflowOut(BaseModel):
 
 class WorkflowList(BaseModel):
     workflows: list[WorkflowOut]
+
+
+class WorkflowFileOut(BaseModel):
+    path: str
+    size_bytes: int
+
+
+class WorkflowFileList(BaseModel):
+    files: list[WorkflowFileOut]
+    total_bytes: int = 0
+    artifact_status: str = "none"
 
 
 class TaskOut(BaseModel):

@@ -3,7 +3,14 @@ from uuid import uuid4
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.models import AgentMessage, AgentTask, AgentTeam, AgentWorkflow, AgentWorkflowEvent
+from app.models import (
+    AgentMessage,
+    AgentTask,
+    AgentTeam,
+    AgentWorkflow,
+    AgentWorkflowEvent,
+    AgentWorkflowFile,
+)
 from app.models.base import utcnow
 
 
@@ -17,6 +24,7 @@ class WorkflowRepository:
         self.tasks = db.agent_tasks
         self.messages = db.agent_messages
         self.events = db.agent_workflow_events
+        self.files = db.agent_workflow_files
 
     # Teams
     async def create_team(self, user_id, *, name, description, coordinator_agent_id, members):
@@ -63,7 +71,9 @@ class WorkflowRepository:
         return result.deleted_count > 0
 
     # Workflows
-    async def create_workflow(self, user_id, *, team_id, title, goal, max_steps, budget):
+    async def create_workflow(
+        self, user_id, *, team_id, title, goal, max_steps, budget, output_type="text"
+    ):
         now = utcnow()
         doc = {
             "_id": AgentWorkflow.generate_id(),
@@ -71,6 +81,11 @@ class WorkflowRepository:
             "team_id": team_id,
             "title": title,
             "goal": goal,
+            "output_type": output_type,
+            "artifact_status": "none",
+            "artifact_file_count": 0,
+            "artifact_total_bytes": 0,
+            "artifact_error_code": None,
             "status": "queued",
             "current_step": 0,
             "max_steps": max_steps,
@@ -137,7 +152,32 @@ class WorkflowRepository:
         await self.tasks.delete_many({"workflow_id": workflow_id, "user_id": user_id})
         await self.messages.delete_many({"workflow_id": workflow_id, "user_id": user_id})
         await self.events.delete_many({"workflow_id": workflow_id, "user_id": user_id})
+        await self.files.delete_many({"workflow_id": workflow_id, "user_id": user_id})
         return True
+
+    # Artifact files (website_zip workflows only)
+    async def replace_files(self, user_id, workflow_id, files):
+        await self.files.delete_many({"workflow_id": workflow_id, "user_id": user_id})
+        docs = []
+        for parsed in files:
+            docs.append(
+                {
+                    "_id": AgentWorkflowFile.generate_id(),
+                    "user_id": user_id,
+                    "workflow_id": workflow_id,
+                    "path": parsed.path,
+                    "content": parsed.content,
+                    "size_bytes": parsed.size_bytes,
+                    "created_at": utcnow(),
+                }
+            )
+        if docs:
+            await self.files.insert_many(docs)
+        return [AgentWorkflowFile(**d) for d in docs]
+
+    async def list_files(self, user_id, workflow_id):
+        cursor = self.files.find({"user_id": user_id, "workflow_id": workflow_id}).sort("path", 1)
+        return [AgentWorkflowFile(**d) async for d in cursor]
 
     # Tasks
     async def create_task(

@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowLeft, Ban, CalendarDays, Check, CircleCheck, Code2, Crown, FlaskConical,
+  Archive, ArrowLeft, Ban, CalendarDays, Check, CircleCheck, Code2, Crown, Download, FlaskConical,
   ListTodo, MessagesSquare, Pause, Play, Plus, Search, Settings2, Sparkles, Star,
 } from "lucide-react";
-import { streamWorkflow, teamsService, workflowsService } from "../../services/workflows";
+import { downloadWorkflowZip, streamWorkflow, teamsService, workflowsService } from "../../services/workflows";
 import {
-  TASK_COLUMNS, WORKFLOW_STATUS, agentStatus, elapsedLabel, getWorkflowError,
-  progressOf, roleMeta, stepperOf, timeLabel,
+  TASK_COLUMNS, WORKFLOW_STATUS, agentStatus, artifactErrorLabel, elapsedLabel, formatBytes,
+  getWorkflowError, progressOf, roleMeta, stepperOf, timeLabel,
 } from "../../utils/workflows";
 
 const ROLE_ICONS = {
@@ -35,6 +35,7 @@ export function WorkflowDetail({ workflowId }) {
   const [tasks, setTasks] = useState([]);
   const [messages, setMessages] = useState([]);
   const [events, setEvents] = useState([]);
+  const [artifact, setArtifact] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
@@ -49,15 +50,19 @@ export function WorkflowDetail({ workflowId }) {
       setWorkflow(wf);
       // Sub-resources load independently: one failing list must not blank the
       // whole workspace or misreport the others.
-      const [taskRes, messageRes, eventRes, teamRes] = await Promise.allSettled([
+      const [taskRes, messageRes, eventRes, teamRes, fileRes] = await Promise.allSettled([
         workflowsService.tasks(workflowId, signal), workflowsService.messages(workflowId, signal),
         workflowsService.events(workflowId, signal), teamsService.get(wf.team_id, signal),
+        wf.output_type === "website_zip"
+          ? workflowsService.files(workflowId, signal)
+          : Promise.resolve(null),
       ]);
       const failed = [];
       if (taskRes.status === "fulfilled") setTasks(taskRes.value); else failed.push("task");
       if (messageRes.status === "fulfilled") setMessages(messageRes.value); else failed.push("tin nhắn");
       if (eventRes.status === "fulfilled") setEvents(eventRes.value); else failed.push("sự kiện");
       if (teamRes.status === "fulfilled") setTeam(teamRes.value);
+      if (fileRes.status === "fulfilled") setArtifact(fileRes.value);
       setError(failed.length ? `Không tải được một phần dữ liệu (${failed.join(", ")}). Các phần khác vẫn hiển thị; trang sẽ tự thử lại.` : "");
     } catch (e) {
       if (e?.name !== "AbortError") setError(getWorkflowError(e, "Không tải được workflow."));
@@ -111,6 +116,17 @@ export function WorkflowDetail({ workflowId }) {
       setWorkflow(updated);
       await load();
     } catch (e) { setError(getWorkflowError(e, "Thao tác thất bại.")); } finally { setBusy(""); }
+  }
+
+  async function downloadZip() {
+    setBusy("download"); setError("");
+    try {
+      await downloadWorkflowZip(workflowId);
+    } catch (e) {
+      setError(e?.response?.status === 409
+        ? artifactErrorLabel("artifact_not_ready")
+        : getWorkflowError(e, "Không tải được file ZIP."));
+    } finally { setBusy(""); }
   }
 
   if (loading) return <div className="wf-page"><p className="wf-empty">Đang tải workspace…</p></div>;
@@ -229,6 +245,27 @@ export function WorkflowDetail({ workflowId }) {
         </section>
         {workflow.final_result && <section className="wf-card" aria-label="Final Result">
           <h2>Kết quả cuối cùng</h2><div className="wf-final" style={{ marginTop: 10 }}>{workflow.final_result}</div>
+        </section>}
+        {workflow.output_type === "website_zip" && <section className="wf-card" aria-label="Website ZIP Artifact">
+          <h2><Archive size={17} /> Sản phẩm — Website (ZIP)</h2>
+          {workflow.artifact_status === "ready" ? <>
+            <ul className="wf-file-list">
+              {(artifact?.files || []).map((f) => <li key={f.path}><code>{f.path}</code><span>{formatBytes(f.size_bytes)}</span></li>)}
+            </ul>
+            <p className="muted" style={{ fontSize: 12.5 }}>
+              {workflow.artifact_file_count} file · Tổng {formatBytes(artifact?.total_bytes ?? workflow.artifact_total_bytes)} — kèm file HUONG-DAN.md do hệ thống sinh.
+            </p>
+            <div className="row" style={{ marginTop: 10 }}>
+              <button className="wf-btn primary" type="button" disabled={busy === "download"} onClick={downloadZip}>
+                <Download size={16} /> Tải ZIP</button>
+            </div>
+          </> : workflow.artifact_status === "failed" ? (
+            <p className="wf-error" role="alert" style={{ marginTop: 10 }}>{artifactErrorLabel(workflow.artifact_error_code)}</p>
+          ) : terminal ? (
+            <p className="wf-empty">Workflow đã kết thúc nhưng không có sản phẩm ZIP.</p>
+          ) : (
+            <p className="wf-empty">Đang chờ các Agent hoàn thành — file ZIP được tạo ở bước cuối, trước khi Coordinator tổng hợp kết quả.</p>
+          )}
         </section>}
         <section className="wf-card" aria-label="Recent Activity">
           <h2>Recent Activity</h2>

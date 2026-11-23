@@ -92,6 +92,31 @@ export function timeLabel(value) {
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+export const OUTPUT_TYPES = [
+  { value: "text", label: "Văn bản (kết quả chữ như hiện tại)" },
+  { value: "website_zip", label: "Website — xuất ZIP (website tĩnh tải về được)" },
+];
+
+export function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+const ARTIFACT_ERROR_MESSAGES = {
+  artifact_no_files: "Agent không trả về file website hợp lệ nào (đúng định dạng file blocks), nên không có ZIP. Hãy chạy lại workflow hoặc diễn đạt mục tiêu rõ hơn.",
+  artifact_missing_index: "Website do Agent tạo thiếu file index.html nên không đóng gói được. Hãy chạy lại workflow.",
+  artifact_limit_exceeded: "Website vượt giới hạn dung lượng artifact cho phép nên không được đóng gói.",
+  artifact_not_ready: "Sản phẩm ZIP chưa sẵn sàng để tải.",
+  workflow_step_limit: "Workflow đã chạm giới hạn số lượt Agent trước khi kịp tạo file ZIP.",
+  generation_failed: "Provider lỗi khi Agent tạo file website, nên không có ZIP.",
+};
+
+export function artifactErrorLabel(code) {
+  return ARTIFACT_ERROR_MESSAGES[code] || `Không tạo được file ZIP (mã lỗi: ${code || "không rõ"}).`;
+}
+
 const ERROR_MESSAGES = {
   team_not_found: "Không tìm thấy nhóm Agent.",
   workflow_not_found: "Không tìm thấy workflow.",

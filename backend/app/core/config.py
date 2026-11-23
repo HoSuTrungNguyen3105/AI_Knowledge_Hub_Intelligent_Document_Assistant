@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     workflow_max_revisions_per_task: int = Field(default=2, ge=0, le=10)
     workflow_lease_seconds: int = Field(default=900, ge=30)
     workflow_context_chars_per_result: int = Field(default=2000, ge=100)
+    # Website ZIP artifact limits (output_type="website_zip" workflows only).
+    artifact_max_files: int = Field(default=50, ge=1, le=500)
+    artifact_max_file_bytes: int = Field(default=262_144, ge=1024)
+    artifact_max_total_bytes: int = Field(default=2_097_152, ge=1024)
 
     @field_validator("credential_encryption_key")
     @classmethod

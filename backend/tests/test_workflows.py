@@ -73,10 +73,26 @@ def make_team(client, agents_roles, coordinator=None):
     return r.json()
 
 
-def make_workflow(client, team, goal="Build a login feature plan"):
-    r = client.post(WORKFLOWS, json={"team_id": team["id"], "title": "WF", "goal": goal})
+def make_workflow(client, team, goal="Build a login feature plan", **extra):
+    r = client.post(
+        WORKFLOWS, json={"team_id": team["id"], "title": "WF", "goal": goal, **extra}
+    )
     assert r.status_code == 201, r.text
     return r.json()
+
+
+SITE_BLOCKS = (
+    "Here is the complete website:\n"
+    "```file:index.html\n<html><body>Task App</body></html>\n```\n"
+    "```file:styles.css\nbody { margin: 0; }\n```\n"
+)
+
+
+def site_handler(request, n):
+    body = request.content.decode("utf-8", "ignore")
+    if "WEBSITE_FILE_BLOCKS" in body:
+        return httpx.Response(200, text=sse(chunk(SITE_BLOCKS), "[DONE]"))
+    return httpx.Response(200, text=sse(chunk("Done."), "[DONE]"))
 
 
 async def wait_done(client, workflow_id, timeout=10):
@@ -291,6 +307,98 @@ async def test_provider_error_fails_workflow_without_leaking_key(owner, mock_htt
     messages = client.get(f"{WORKFLOWS}/{wf['id']}/messages").json()["messages"]
     assert any(m["message_type"] == "TASK_FAILED" for m in messages)
     assert KEY not in json.dumps(messages)
+
+
+async def test_website_zip_workflow_creates_artifact_and_downloads(owner, mock_http):
+    import io
+    import zipfile
+
+    client, _ = owner
+    lead, dev = make_agent(client, "Lead"), make_agent(client, "Dev")
+    team = make_team(client, [(lead, "coordinator"), (dev, "developer")], coordinator=lead["id"])
+    mock_http["configure"](site_handler)
+    wf = make_workflow(client, team, goal="Build a task manager website", output_type="website_zip")
+    assert wf["output_type"] == "website_zip" and wf["artifact_status"] == "none"
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed", done
+    assert done["artifact_status"] == "ready", done
+    assert done["artifact_file_count"] == 2 and done["artifact_total_bytes"] > 0
+    listing = client.get(f"{WORKFLOWS}/{wf['id']}/files")
+    assert listing.status_code == 200
+    payload = listing.json()
+    assert payload["artifact_status"] == "ready"
+    assert [f["path"] for f in payload["files"]] == ["index.html", "styles.css"]
+    assert payload["total_bytes"] == done["artifact_total_bytes"]
+    download = client.get(f"{WORKFLOWS}/{wf['id']}/download.zip")
+    assert download.status_code == 200
+    assert download.headers["content-type"] == "application/zip"
+    assert "attachment" in download.headers["content-disposition"]
+    with zipfile.ZipFile(io.BytesIO(download.content)) as archive:
+        names = archive.namelist()
+        assert "index.html" in names and "styles.css" in names
+        assert "HUONG-DAN.md" in names  # system-generated guide
+        assert archive.read("index.html").decode() == "<html><body>Task App</body></html>"
+    events = client.get(f"{WORKFLOWS}/{wf['id']}/events").json()["events"]
+    assert any(e["event_type"] == "artifact_created" for e in events)
+
+
+async def test_text_workflow_has_no_artifact(owner, mock_http):
+    client, _ = owner
+    lead = make_agent(client, "Lead")
+    team = make_team(client, [(lead, "coordinator")])
+    wf = make_workflow(client, team)
+    assert wf["output_type"] == "text"
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed" and done["artifact_status"] == "none"
+    listing = client.get(f"{WORKFLOWS}/{wf['id']}/files").json()
+    assert listing["files"] == [] and listing["artifact_status"] == "none"
+    download = client.get(f"{WORKFLOWS}/{wf['id']}/download.zip")
+    assert download.status_code == 409
+    assert download.json()["detail"]["code"] == "artifact_not_ready"
+
+
+async def test_artifact_without_valid_files_fails_honestly(owner, mock_http):
+    client, _ = owner
+    lead, dev = make_agent(client, "Lead"), make_agent(client, "Dev")
+    team = make_team(client, [(lead, "coordinator"), (dev, "developer")], coordinator=lead["id"])
+
+    def handler(request, n):
+        body = request.content.decode("utf-8", "ignore")
+        if "WEBSITE_FILE_BLOCKS" in body:
+            return httpx.Response(200, text=sse(chunk("Sorry, I cannot produce files."), "[DONE]"))
+        return httpx.Response(200, text=sse(chunk("Done."), "[DONE]"))
+
+    mock_http["configure"](handler)
+    wf = make_workflow(client, team, output_type="website_zip")
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    # The text workflow still completes; only the artifact is marked failed.
+    assert done["status"] == "completed", done
+    assert done["artifact_status"] == "failed"
+    assert done["artifact_error_code"] == "artifact_no_files"
+    assert client.get(f"{WORKFLOWS}/{wf['id']}/download.zip").status_code == 409
+    events = client.get(f"{WORKFLOWS}/{wf['id']}/events").json()["events"]
+    assert any(e["event_type"] == "artifact_failed" for e in events)
+
+
+async def test_artifact_endpoints_are_owner_scoped(
+    owner, client_factory, register, db, settings, mock_http
+):
+    client, _ = owner
+    lead, dev = make_agent(client, "Lead"), make_agent(client, "Dev")
+    team = make_team(client, [(lead, "coordinator"), (dev, "developer")], coordinator=lead["id"])
+    mock_http["configure"](site_handler)
+    wf = make_workflow(client, team, output_type="website_zip")
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    assert (await wait_done(client, wf["id"]))["artifact_status"] == "ready"
+    other = client_factory()
+    register(other, email="other-zip@example.com")
+    other_id = UUID(other.get("/api/v1/auth/me").json()["id"])
+    await seed(db, settings, other_id)
+    assert other.get(f"{WORKFLOWS}/{wf['id']}/files").status_code == 404
+    assert other.get(f"{WORKFLOWS}/{wf['id']}/download.zip").status_code == 404
 
 
 async def test_step_limit_enforced(owner, db, settings):

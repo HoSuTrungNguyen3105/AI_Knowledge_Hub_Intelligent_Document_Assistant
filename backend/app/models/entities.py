@@ -319,6 +319,11 @@ class AgentWorkflow(BaseDocument, BaseModel):
     title: str
     goal: str
     status: str = "queued"  # queued|running|waiting(paused)|completed|failed|cancelled
+    output_type: str = "text"  # text|website_zip
+    artifact_status: str = "none"  # none|ready|failed (website_zip workflows only)
+    artifact_file_count: int = 0
+    artifact_total_bytes: int = 0
+    artifact_error_code: str | None = None
     current_step: int = 0
     max_steps: int = 12
     budget: dict = Field(default_factory=dict)
@@ -368,6 +373,20 @@ class AgentMessage(BaseDocument, BaseModel):
     created_at: datetime
     processed_at: datetime | None = None
     error_code: str | None = None
+
+
+class AgentWorkflowFile(BaseDocument, BaseModel):
+    """One extracted website file of a website_zip workflow artifact."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID = Field(alias="_id")
+    user_id: UUID
+    workflow_id: UUID
+    path: str
+    content: str
+    size_bytes: int
+    created_at: datetime
 
 
 class AgentWorkflowEvent(BaseDocument, BaseModel):

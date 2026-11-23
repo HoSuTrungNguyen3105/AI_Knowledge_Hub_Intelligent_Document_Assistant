@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import MockAdapter from "axios-mock-adapter";
 import { api } from "../services/api";
-import { teamsService, workflowsService } from "../services/workflows";
+import { downloadWorkflowZip, teamsService, workflowsService } from "../services/workflows";
 import {
-  STARTER_AGENTS, createStarterSet, getWorkflowError, missingStarterAgents,
+  OUTPUT_TYPES, STARTER_AGENTS, artifactErrorLabel, createStarterSet, formatBytes,
+  getWorkflowError, missingStarterAgents,
   agentStatus, progressOf, roleMeta, stepperOf,
 } from "../utils/workflows";
 
@@ -63,6 +64,61 @@ describe("Phase 6 derivations from real data", () => {
     expect(roleMeta("coordinator").color).toBe("#7c3aed");
     expect(roleMeta("developer").color).toBe("#ea580c");
     expect(roleMeta("unknown").label).toBe("Member");
+  });
+});
+
+describe("Website ZIP artifact", () => {
+  it("offers text and website_zip output types with text as the default first option", () => {
+    expect(OUTPUT_TYPES.map((o) => o.value)).toEqual(["text", "website_zip"]);
+  });
+  it("lists artifact files through the files endpoint", async () => {
+    mock.onGet("/ai/agent-workflows/w1/files").reply(200, {
+      files: [{ path: "index.html", size_bytes: 42 }], total_bytes: 42, artifact_status: "ready",
+    });
+    const data = await workflowsService.files("w1");
+    expect(data.artifact_status).toBe("ready");
+    expect(data.files).toEqual([{ path: "index.html", size_bytes: 42 }]);
+  });
+  it("formats bytes and explains artifact failures in Vietnamese", () => {
+    expect(formatBytes(500)).toBe("500 B");
+    expect(formatBytes(2048)).toBe("2.0 KB");
+    expect(formatBytes(3 * 1024 * 1024)).toBe("3.00 MB");
+    expect(artifactErrorLabel("artifact_no_files")).toContain("không có ZIP");
+    expect(artifactErrorLabel("artifact_missing_index")).toContain("index.html");
+    expect(artifactErrorLabel("weird_code")).toContain("weird_code");
+  });
+  it("downloads the ZIP with credentials and clicks a blob anchor", async () => {
+    const realCreate = document.createElement.bind(document);
+    const anchor = realCreate("a");
+    anchor.click = vi.fn();
+    const createSpy = vi.spyOn(document, "createElement").mockImplementation((tag) => (
+      tag === "a" ? anchor : realCreate(tag)
+    ));
+    URL.createObjectURL = vi.fn(() => "blob:zip");
+    URL.revokeObjectURL = vi.fn();
+    const fetchMock = vi.fn(async () => ({
+      ok: true, status: 200,
+      blob: async () => new Blob(["PK"], { type: "application/zip" }),
+      headers: { get: () => 'attachment; filename="my-site.zip"' },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const name = await downloadWorkflowZip("w1");
+      expect(name).toBe("my-site.zip");
+      expect(fetchMock).toHaveBeenCalledWith("/api/v1/ai/agent-workflows/w1/download.zip",
+        expect.objectContaining({ credentials: "include" }));
+      expect(anchor.download).toBe("my-site.zip");
+      expect(anchor.click).toHaveBeenCalledTimes(1);
+    } finally {
+      createSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+  it("surfaces a 409 when the artifact is not ready", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 409, headers: { get: () => "" } })));
+    try {
+      await expect(downloadWorkflowZip("w1")).rejects.toMatchObject({ response: { status: 409 } });
+    } finally { vi.unstubAllGlobals(); }
   });
 });
 
