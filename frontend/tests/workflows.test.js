@@ -4,8 +4,8 @@ import MockAdapter from "axios-mock-adapter";
 import { api } from "../services/api";
 import { downloadWorkflowZip, teamsService, workflowsService } from "../services/workflows";
 import {
-  OUTPUT_TYPES, STARTER_AGENTS, artifactErrorLabel, artifactKind, artifactKindLabel,
-  createStarterSet, formatBytes,
+  DESIGN_PALETTES, DESIGN_STYLES, OUTPUT_TYPES, STARTER_AGENTS, artifactErrorLabel, artifactKind, artifactKindLabel,
+  buildDesignBrief, createStarterSet, formatBytes,
   getWorkflowError, inferRoleFromName, missingStarterAgents, validateWorkflowForm,
   agentStatus, officeLayout, progressOf, roleMeta, stepperOf, taskPercent,
 } from "../utils/workflows";
@@ -287,5 +287,27 @@ describe("office simulation layout", () => {
     expect(taskPercent("failed")).toBe(100);
     expect(taskPercent("pending")).toBe(0);
     expect(taskPercent("cancelled")).toBe(0);
+  });
+});
+
+describe("design brief builder", () => {
+  it("is empty when everything is left to the AI", () => {
+    expect(buildDesignBrief()).toBe("");
+    expect(buildDesignBrief({ palette: "auto", style: "auto", notes: "  " })).toBe("");
+  });
+  it("composes palette, style and free notes", () => {
+    const brief = buildDesignBrief({ palette: "blue", style: "playful", notes: "thêm tuyết rơi" });
+    expect(brief).toContain("#2563eb");
+    expect(brief).toContain("kid-friendly");
+    expect(brief).toContain("thêm tuyết rơi");
+  });
+  it("option lists have unique ids and real briefs", () => {
+    for (const list of [DESIGN_PALETTES, DESIGN_STYLES]) {
+      expect(new Set(list.map((o) => o.id)).size).toBe(list.length);
+      for (const option of list.filter((o) => o.id !== "auto")) {
+        expect(option.brief.length).toBeGreaterThan(20);
+      }
+    }
+    expect(DESIGN_PALETTES.find((p) => p.id === "purple").colors).toContain("#7c3aed");
   });
 });

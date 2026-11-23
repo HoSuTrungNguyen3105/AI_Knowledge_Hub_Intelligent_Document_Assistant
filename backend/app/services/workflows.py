@@ -48,6 +48,7 @@ from app.services.workflow_files import (
     ArtifactLimits,
     ParsedFile,
     build_zip,
+    ensure_project_entry,
     extract_files,
     slugify,
 )
@@ -58,13 +59,28 @@ FIRST read the goal: if it asks for a framework or a runnable project \
 the COMPLETE project source — package.json (with working dev/build scripts \
 and every dependency the code imports), the config files the project needs \
 (for example vite.config.js, tailwind.config.js, postcss.config.js, \
-tsconfig.json), index.html, src/main.jsx (or .tsx), src/App.jsx, every \
+tsconfig.json), src/main.jsx (or .tsx), src/App.jsx, every \
 component/style file the entry imports, and a README.md with install/run \
-instructions. Otherwise output a standalone static website in plain \
-HTML/CSS/JS that runs directly in a browser, including an index.html entry \
-file. EVERY file must be complete and runnable as shipped: no truncation, \
-no "..." placeholders, no "rest of code unchanged" shortcuts. Output ONLY \
-fenced file blocks in EXACTLY this format, one block per file:
+instructions. For a Vite/React project the entry file MUST be index.html \
+at the PROJECT ROOT (in the same folder as package.json) containing \
+<div id="root"></div> and <script type="module" src="/src/main.jsx">\
+</script> — do NOT place index.html under public/: Vite does not use \
+public/index.html as its entry, so the project would not start. Otherwise \
+output a standalone static website in plain HTML/CSS/JS that runs \
+directly in a browser, including an index.html entry file. EVERY file \
+must be complete and runnable as shipped: no truncation, no "..." \
+placeholders, no "rest of code unchanged" shortcuts. \
+DESIGN QUALITY — the result must look like a professionally designed \
+product, not a bare wireframe: use a coherent color palette with one \
+clear primary color, tasteful gradients and soft shadows, rounded \
+corners, generous consistent spacing, a strong typographic hierarchy \
+(large hero heading, clear section titles), hover/transition states on \
+interactive elements, and a responsive mobile-first layout. Use inline \
+SVG icons and CSS/SVG artwork instead of external image URLs. All \
+content must be complete and realistic (real names, prices and copy in \
+the language of the goal) — never lorem ipsum. If a DESIGN BRIEF is \
+included with the goal, follow it exactly (palette, style, mood). \
+Output ONLY fenced file blocks in EXACTLY this format, one block per file:
 
 ```file:relative/path/to/file.ext
 <full file content>
@@ -397,6 +413,7 @@ class WorkflowService:
             title=w.title,
             goal=w.goal,
             output_type=getattr(w, "output_type", "text") or "text",
+            design_brief=getattr(w, "design_brief", None),
             artifact_status=getattr(w, "artifact_status", "none") or "none",
             artifact_file_count=getattr(w, "artifact_file_count", 0) or 0,
             artifact_total_bytes=getattr(w, "artifact_total_bytes", 0) or 0,
@@ -433,6 +450,7 @@ class WorkflowService:
             max_steps=max_steps,
             budget=budget,
             output_type=payload.output_type,
+            design_brief=payload.design_brief,
         )
         await self.repo.add_event(
             user_id,
@@ -1055,10 +1073,17 @@ class WorkflowService:
         """
         developer = next((e for e in plan if e["role"] == "developer"), None)
         agent_id = developer["member"].agent_id if developer else team.coordinator_agent_id
+        instructions = ARTIFACT_INSTRUCTIONS
+        design_brief = getattr(workflow, "design_brief", None)
+        if design_brief:
+            instructions += (
+                "\n\nDESIGN BRIEF chosen by the user (follow it exactly for "
+                f"colors, style and mood): {design_brief}"
+            )
         prompt = build_context(
             workflow.goal,
             "WEBSITE_FILE_BLOCKS: produce the complete website or project source",
-            ARTIFACT_INSTRUCTIONS,
+            instructions,
             prior,
             self.limits.context_chars_per_result,
         )
@@ -1079,6 +1104,9 @@ class WorkflowService:
         if result.error_code is not None:
             await self._artifact_failed(user_id, workflow.id, result.error_code, agent_id)
             return 1, in_tokens, out_tokens
+        # Repair the classic Vite mistake (index.html only under public/,
+        # or missing entirely) so the ZIP always has a root entry file.
+        repaired_entry = ensure_project_entry(result, workflow.title)
         await self.repo.replace_files(user_id, workflow.id, result.files)
         await self.repo.update_workflow(
             user_id,
@@ -1101,6 +1129,7 @@ class WorkflowService:
                 "mode": result.mode,
                 "rejected": result.rejected,
                 "limit_hit": result.limit_hit,
+                "repaired_entry": repaired_entry,
             },
         )
         summary = (

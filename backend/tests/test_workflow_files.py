@@ -11,6 +11,7 @@ from app.services.workflow_files import (
     ArtifactLimits,
     ParsedFile,
     build_zip,
+    ensure_project_entry,
     extract_files,
     normalize_path,
     slugify,
@@ -78,6 +79,54 @@ def test_project_mode_needs_no_root_index_html():
     result = extract_files(text, LIMITS)
     assert result.mode == "project"
     assert result.error_code is None
+
+
+def test_ensure_entry_synthesises_root_index_for_vite_project():
+    # The classic failure: the model shipped a CRA-style public/index.html
+    # (no module script) and no root index.html — Vite cannot start.
+    text = (
+        block("package.json", '{"scripts": {"dev": "vite", "build": "vite build"}}')
+        + block("public/index.html", "<html><body>%PUBLIC_URL%</body></html>")
+        + block("src/main.jsx", "import App from './App';")
+        + block("src/App.jsx", "export default function App() { return null; }")
+    )
+    result = extract_files(text, LIMITS)
+    assert result.mode == "project"
+    entry = ensure_project_entry(result, "Shop Giày <Dep>")
+    assert entry == "index.html"
+    created = next(f for f in result.files if f.path == "index.html")
+    assert '<div id="root"></div>' in created.content
+    assert '<script type="module" src="/src/main.jsx"></script>' in created.content
+    assert "Shop Giày &lt;Dep&gt;" in created.content  # title is HTML-escaped
+
+
+def test_ensure_entry_moves_valid_public_index_to_root():
+    public = (
+        '<html><body><div id="root"></div>'
+        '<script type="module" src="/src/main.jsx"></script></body></html>'
+    )
+    text = (
+        block("package.json", '{"scripts": {"dev": "vite"}}')
+        + block("public/index.html", public)
+        + block("src/main.jsx", "import App from './App';")
+    )
+    result = extract_files(text, LIMITS)
+    assert ensure_project_entry(result, "Shop") == "index.html"
+    paths = [f.path for f in result.files]
+    assert "index.html" in paths and "public/index.html" not in paths
+    assert next(f for f in result.files if f.path == "index.html").content == public
+
+
+def test_ensure_entry_noop_when_root_index_exists_or_static():
+    text = (
+        block("package.json", '{"scripts": {"dev": "vite"}}')
+        + block("index.html", "<html><body>root</body></html>")
+        + block("src/main.jsx", "import App from './App';")
+    )
+    result = extract_files(text, LIMITS)
+    assert ensure_project_entry(result, "Shop") is None
+    static = extract_files(block("styles.css", "body {}"), LIMITS)
+    assert ensure_project_entry(static, "Shop") is None
 
 
 def test_project_mode_bare_package_json_is_not_runnable():

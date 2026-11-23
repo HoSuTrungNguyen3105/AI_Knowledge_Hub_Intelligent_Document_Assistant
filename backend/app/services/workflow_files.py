@@ -15,6 +15,7 @@ central size limits from Settings, and builds the ZIP fully in memory with
 the stdlib. Nothing here executes agent content.
 """
 
+import html
 import io
 import re
 import unicodedata
@@ -174,6 +175,86 @@ def extract_files(text: str, limits: ArtifactLimits) -> ExtractionResult:
         result.files.append(parsed)
     result.files.sort(key=lambda f: f.path)
     return result
+
+
+# Candidate entry source files for a Vite-style project, in preference order.
+_ENTRY_SOURCES = (
+    "src/main.jsx",
+    "src/main.tsx",
+    "src/main.js",
+    "src/main.ts",
+    "src/index.jsx",
+    "src/index.tsx",
+    "src/index.js",
+)
+
+_VITE_INDEX_TEMPLATE = """<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/{entry}"></script>
+  </body>
+</html>
+"""
+
+
+def ensure_project_entry(result: ExtractionResult, title: str) -> str | None:
+    """Guarantee a project artifact has its entry ``index.html`` at the
+    project root (next to package.json), repairing the common model mistake
+    of shipping only ``public/index.html`` (a Create React App convention —
+    Vite ignores it as an entry and the project then cannot start).
+
+    - A ``public/index.html`` that already loads the src entry as a module
+      is MOVED to the root.
+    - Otherwise a standard Vite ``index.html`` is synthesised pointing at
+      the project's real entry source (``src/main.jsx`` etc.).
+    Returns the entry path when a repair happened, else None. Static
+    artifacts and projects that already have a root index.html are left
+    untouched; when no entry source exists nothing is invented and the
+    caller keeps the previous validation behaviour.
+    """
+    if result.mode != "project" or not result.files:
+        return None
+    package = next(
+        (f for f in result.files if f.path.rsplit("/", 1)[-1].lower() == "package.json"),
+        None,
+    )
+    if package is None:
+        return None
+    prefix = package.path[: -len("package.json")]
+    entry_path = f"{prefix}index.html"
+    if any(f.path == entry_path for f in result.files):
+        return None
+    public_index = next(
+        (f for f in result.files if f.path == f"{prefix}public/index.html"), None
+    )
+    if (
+        public_index is not None
+        and 'type="module"' in public_index.content
+        and "/src/" in public_index.content
+    ):
+        public_index.path = entry_path
+        result.files.sort(key=lambda f: f.path)
+        return entry_path
+    entry_source = next(
+        (f"{prefix}{name}" for name in _ENTRY_SOURCES
+         if any(f.path == f"{prefix}{name}" for f in result.files)),
+        None,
+    )
+    if entry_source is None:
+        return None
+    content = _VITE_INDEX_TEMPLATE.format(
+        title=html.escape(title or "MindFlow Website", quote=True),
+        entry=entry_source,
+    )
+    result.files.append(ParsedFile(path=entry_path, content=content))
+    result.files.sort(key=lambda f: f.path)
+    return entry_path
 
 
 def slugify(title: str) -> str:

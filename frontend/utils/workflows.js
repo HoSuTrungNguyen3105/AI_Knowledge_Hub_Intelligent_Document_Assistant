@@ -130,6 +130,42 @@ export const OUTPUT_TYPES = [
   { value: "website_zip", label: "Website — xuất ZIP (website tĩnh hoặc source project React/Vite/Tailwind)" },
 ];
 
+// Quick-pick design options for website artifacts. Each non-auto option
+// carries an English `brief` sentence: the selections are composed by
+// buildDesignBrief() into the workflow's design_brief, which the backend
+// injects verbatim into the artifact (file-generation) prompt.
+export const DESIGN_PALETTES = [
+  { id: "auto", label: "AI tự chọn", colors: [], brief: "" },
+  { id: "blue", label: "Xanh dương công nghệ", colors: ["#2563eb", "#0ea5e9", "#e0f2fe"], brief: "Color palette: technology blue — primary #2563eb, sky accents #0ea5e9, light blue-grey background, white cards." },
+  { id: "purple", label: "Tím sáng tạo", colors: ["#7c3aed", "#a855f7", "#f3e8ff"], brief: "Color palette: creative purple — primary #7c3aed, violet accents #a855f7, soft lavender background." },
+  { id: "green", label: "Xanh lá tươi mát", colors: ["#16a34a", "#22c55e", "#dcfce7"], brief: "Color palette: fresh green — primary #16a34a, bright green accents, very light green background." },
+  { id: "orange", label: "Cam năng động", colors: ["#ea580c", "#f59e0b", "#ffedd5"], brief: "Color palette: energetic orange — primary #ea580c, amber accents #f59e0b, warm cream background." },
+  { id: "pink", label: "Hồng pastel", colors: ["#db2777", "#f472b6", "#fce7f3"], brief: "Color palette: pastel pink — primary #db2777, soft pink accents, blush background." },
+  { id: "red", label: "Đỏ nổi bật", colors: ["#dc2626", "#ef4444", "#fee2e2"], brief: "Color palette: bold red — primary #dc2626, strong red accents, light warm background." },
+  { id: "mono", label: "Đơn sắc tối giản", colors: ["#111827", "#6b7280", "#f9fafb"], brief: "Color palette: monochrome minimal — near-black #111827 primary and text, greys, off-white background." },
+];
+
+export const DESIGN_STYLES = [
+  { id: "auto", label: "AI tự chọn", brief: "" },
+  { id: "modern", label: "Hiện đại tối giản", brief: "Style: modern minimal — clean layout, lots of whitespace, rounded cards, soft shadows, one strong hero section." },
+  { id: "playful", label: "Vui nhộn cho trẻ em", brief: "Style: playful and kid-friendly — big rounded shapes, chunky buttons, bright cheerful accents, friendly CSS/SVG illustrations, large readable text." },
+  { id: "corporate", label: "Doanh nghiệp chuyên nghiệp", brief: "Style: professional corporate — structured grid, restrained colors, formal typography, trust sections (stats, testimonials, partners)." },
+  { id: "premium", label: "Sang trọng cao cấp", brief: "Style: premium luxury — elegant display headings, dark and gold accents, generous spacing, refined details." },
+  { id: "vibrant", label: "Tươi sáng nhiều màu", brief: "Style: vibrant and colorful — bold gradient hero, colorful section backgrounds, energetic cards and badges." },
+  { id: "dark", label: "Dark mode", brief: "Style: dark mode — deep dark background (#0f172a family), glowing accent color, high-contrast text, subtle borders." },
+];
+
+export function buildDesignBrief({ palette = "auto", style = "auto", notes = "" } = {}) {
+  const parts = [];
+  const paletteOption = DESIGN_PALETTES.find((p) => p.id === palette);
+  if (paletteOption?.brief) parts.push(paletteOption.brief);
+  const styleOption = DESIGN_STYLES.find((s) => s.id === style);
+  if (styleOption?.brief) parts.push(styleOption.brief);
+  const extra = String(notes || "").trim();
+  if (extra) parts.push(`Extra design notes from the user: ${extra}`);
+  return parts.join(" ");
+}
+
 export const WORKFLOW_TITLE_MAX = 200;
 
 const FIELD_LABELS = {
