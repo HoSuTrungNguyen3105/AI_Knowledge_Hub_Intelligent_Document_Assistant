@@ -79,12 +79,100 @@ ROLE_ORDER = {
     "architect": 1,
     "researcher": 2,
     "developer": 3,
-    "tester": 4,
-    "reviewer": 5,
-    "coordinator": 6,
-    "member": 7,
+    "member": 4,
+    "tester": 5,
+    "reviewer": 6,
+    "coordinator": 0,
 }
 REVIEW_ROLES = {"reviewer", "tester"}
+# Quality roles only ever run after every production role has been processed.
+QA_ROLES = {"tester", "reviewer"}
+PRODUCTION_ROLES = {"planner", "architect", "researcher", "developer", "member"}
+
+ROLE_LABELS_VI = {
+    "coordinator": "Điều phối",
+    "planner": "Lập kế hoạch",
+    "architect": "Kiến trúc",
+    "researcher": "Nghiên cứu",
+    "developer": "Phát triển",
+    "tester": "Kiểm thử",
+    "reviewer": "Đánh giá",
+    "member": "Thành viên",
+}
+
+SPECIFIC_ROLES = {
+    "planner",
+    "architect",
+    "researcher",
+    "developer",
+    "tester",
+    "reviewer",
+    "coordinator",
+}
+
+# Ordered (substring, role) hints used to infer a role from an Agent's name
+# when the team member only carries the generic "member" role (teams created
+# by hand before roles were assigned, or with every member left as "member").
+_NAME_ROLE_HINTS = (
+    ("review", "reviewer"),
+    ("test", "tester"),
+    ("qa", "tester"),
+    ("plan", "planner"),
+    ("architect", "architect"),
+    ("research", "researcher"),
+    ("develop", "developer"),
+    ("code", "developer"),
+    ("coder", "developer"),
+    ("engineer", "developer"),
+    ("lead", "coordinator"),
+    ("coordinat", "coordinator"),
+    ("manager", "coordinator"),
+)
+
+
+def infer_role_from_name(name: str | None) -> str:
+    """Infer a specific role from an Agent name; "member" when unknown."""
+    text = (name or "").strip().lower()
+    if text.startswith("ai "):
+        text = text[3:].strip()
+    for hint, role in _NAME_ROLE_HINTS:
+        if hint in text:
+            return role
+    return "member"
+
+
+def effective_role(member_role: str | None, agent_name: str | None) -> str:
+    """The role an Agent actually runs with in a workflow.
+
+    A specific stored role wins. The generic "member" role (or anything
+    unrecognised) falls back to inference from the Agent's name, so a team
+    whose members were all saved as "member" still runs Planner first and
+    Reviewer last instead of in raw storage order.
+    """
+    role = (member_role or "").strip().lower()
+    if role in SPECIFIC_ROLES:
+        return role
+    return infer_role_from_name(agent_name)
+
+
+def run_role_for(eff_role: str) -> str:
+    """Map an effective role to the role used for ordering/titles.
+
+    A member whose effective role is coordinator (but who is not the team's
+    coordinator — that Agent is excluded from the member loop) acts as a
+    supporting planner; the final synthesis stays with the team coordinator.
+    """
+    return "planner" if eff_role == "coordinator" else eff_role
+
+
+# Provider errors worth one retry before a member task is marked failed.
+TRANSIENT_ERROR_CODES = {
+    "generation_failed",
+    "provider_timeout",
+    "provider_rate_limited",
+    "provider_unavailable",
+    "agent_timeout",
+}
 
 
 @dataclass(frozen=True)
@@ -94,6 +182,7 @@ class WorkflowLimits:
     max_revisions_per_task: int = 2
     lease_seconds: int = 900
     context_chars_per_result: int = 2000
+    retry_backoff_seconds: float = 2.0
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "WorkflowLimits":
@@ -193,14 +282,36 @@ class WorkflowService:
             updated_at=team.updated_at,
         )
 
+    @staticmethod
+    def _with_inferred_roles(members, agents_by_id):
+        """Store the inferred role when a member is submitted as "member".
+
+        Teams submitted with every member left as the generic role would
+        otherwise persist the mistake; when the Agent's name clearly implies
+        a role (AI Planner, AI Reviewer, ...) that role is stored instead.
+        Members with an explicit specific role are never rewritten.
+        """
+        resolved = []
+        for m in members:
+            role = m.role
+            if role == "member":
+                agent = agents_by_id.get(m.agent_id)
+                inferred = infer_role_from_name(agent.name if agent else None)
+                if inferred != "member":
+                    role = inferred
+            resolved.append(m.model_copy(update={"role": role}))
+        return resolved
+
     async def create_team(self, user_id, payload: TeamCreate) -> TeamOut:
-        await self._validate_members(user_id, payload.coordinator_agent_id, payload.members)
+        agents = await self._validate_members(
+            user_id, payload.coordinator_agent_id, payload.members
+        )
         team = await self.repo.create_team(
             user_id,
             name=payload.name,
             description=payload.description,
             coordinator_agent_id=payload.coordinator_agent_id,
-            members=payload.members,
+            members=self._with_inferred_roles(payload.members, agents),
         )
         return await self._team_out(user_id, team)
 
@@ -227,7 +338,13 @@ class WorkflowService:
         members = values.get("members", team.members)
         coordinator = values.get("coordinator_agent_id", team.coordinator_agent_id)
         member_models = members if members and hasattr(members[0], "agent_id") else []
-        if member_models:
+        if member_models and "members" in values:
+            agents = await self._validate_members(user_id, coordinator, member_models)
+            values = {
+                **values,
+                "members": self._with_inferred_roles(member_models, agents),
+            }
+        elif member_models:
             await self._validate_members(user_id, coordinator, member_models)
         elif coordinator not in [m.agent_id for m in team.members]:
             raise ProviderError("coordinator_not_in_team")
@@ -429,6 +546,23 @@ class WorkflowService:
             raise ProviderError(error_code if error_code in _KNOWN_CODES else "generation_failed")
         return content, usage
 
+    async def _run_agent_resilient(self, user_id, agent_id, prompt: str) -> tuple[str, dict]:
+        """One agent turn with a single retry for transient provider errors.
+
+        A flaky provider response (empty generation, timeout, rate limit,
+        5xx) must not kill a whole workflow on the first attempt; permanent
+        errors (auth, configuration, not found) are raised immediately.
+        """
+        attempt = 0
+        while True:
+            try:
+                return await self._run_agent(user_id, agent_id, prompt)
+            except ProviderError as error:
+                if error.code not in TRANSIENT_ERROR_CODES or attempt >= 1:
+                    raise
+                attempt += 1
+                await asyncio.sleep(self.limits.retry_backoff_seconds)
+
     async def _send(self, user_id, workflow_id, task_id, frm, to, mtype, content):
         message = await self.repo.create_message(
             user_id,
@@ -451,6 +585,29 @@ class WorkflowService:
         )
         return message
 
+    async def _mark_task_failed(
+        self, user_id, workflow, team, task, member, *, agent_name, label, code
+    ) -> None:
+        """Record one member task as failed without aborting the workflow."""
+        await self.repo.update_task(user_id, task.id, {"status": "failed"})
+        await self.repo.add_event(
+            user_id,
+            workflow_id=workflow.id,
+            event_type="task_updated",
+            actor_id=str(member.agent_id),
+            payload={"task_id": str(task.id), "status": "failed", "code": code},
+        )
+        await self._send(
+            user_id,
+            workflow.id,
+            task.id,
+            member.agent_id,
+            team.coordinator_agent_id,
+            "TASK_FAILED",
+            f"Agent {agent_name or member.agent_id} (vai trò {label}) không hoàn thành "
+            f"được phần việc — mã lỗi: {code}. Workflow vẫn tiếp tục với các Agent còn lại.",
+        )
+
     # --- Orchestrator ------------------------------------------------------------
     async def run_workflow(self, user_id, workflow_id, lease_owner: str) -> None:
         """Sequential MVP orchestration. Runs detached from any HTTP request."""
@@ -468,25 +625,57 @@ class WorkflowService:
             event_type="workflow_started",
             actor_id=str(team.coordinator_agent_id),
         )
-        members = [m for m in team.members if m.enabled and m.agent_id != team.coordinator_agent_id]
-        members.sort(key=lambda m: ROLE_ORDER.get(m.role, 7))
+        raw_members = [
+            m for m in team.members if m.enabled and m.agent_id != team.coordinator_agent_id
+        ]
+        # Resolve every member's EFFECTIVE role before ordering: a team saved
+        # with all roles as "member" must still run Planner first and the
+        # Reviewer last. Production roles (planner → architect → researcher →
+        # developer → member) always run before quality roles (tester,
+        # reviewer), which are deferred until production work is done —
+        # regardless of the order members were stored in.
+        plan: list[dict] = []
+        for index, member in enumerate(raw_members):
+            agent = await self.agents.get_agent(user_id, member.agent_id)
+            eff = effective_role(member.role, agent.name if agent else None)
+            role = run_role_for(eff)
+            plan.append(
+                {
+                    "member": member,
+                    "agent": agent,
+                    "effective_role": eff,
+                    "role": role,
+                    "label": ROLE_LABELS_VI.get(role, "Thành viên"),
+                    "index": index,
+                }
+            )
+        plan.sort(key=lambda e: (ROLE_ORDER.get(e["role"], 4), e["index"]))
         turns = int((workflow.usage or {}).get("agent_turns", 0))
         total_in = int((workflow.usage or {}).get("input_tokens") or 0)
         total_out = int((workflow.usage or {}).get("output_tokens") or 0)
         prior: list[tuple[str, str]] = []
         existing = await self.repo.list_tasks(user_id, workflow_id)
         done_task_ids = {t.assigned_agent_id for t in existing if t.status == "completed"}
+        completed_count = 0
+        failed_codes: list[str] = []
+        attempted_count = 0
         for t in existing:
-            if t.status == "completed" and t.result:
-                agent = (
-                    await self.agents.get_agent(user_id, t.assigned_agent_id)
-                    if t.assigned_agent_id
-                    else None
-                )
-                prior.append((agent.name if agent else "Agent", t.result))
+            if t.status == "completed":
+                completed_count += 1
+                if t.result:
+                    agent = (
+                        await self.agents.get_agent(user_id, t.assigned_agent_id)
+                        if t.assigned_agent_id
+                        else None
+                    )
+                    prior.append((agent.name if agent else "Agent", t.result))
         try:
             async with asyncio.timeout(self.limits.timeout_seconds):
-                for member in members:
+                for entry in plan:
+                    member = entry["member"]
+                    agent = entry["agent"]
+                    role = entry["role"]
+                    label = entry["label"]
                     if member.agent_id in done_task_ids:
                         continue
                     if time.monotonic() - started > self.limits.timeout_seconds:
@@ -504,10 +693,6 @@ class WorkflowService:
                         return
                     if turns >= workflow.max_steps:
                         raise ProviderError("workflow_step_limit")
-                    agent = await self.agents.get_agent(user_id, member.agent_id)
-                    if agent is None:
-                        raise ProviderError("agent_not_found")
-                    role = member.role
                     task = await self.repo.create_task(
                         user_id,
                         workflow_id=workflow_id,
@@ -521,7 +706,11 @@ class WorkflowService:
                         workflow_id=workflow_id,
                         event_type="task_created",
                         actor_id=str(team.coordinator_agent_id),
-                        payload={"task_id": str(task.id), "role": role},
+                        payload={
+                            "task_id": str(task.id),
+                            "role": role,
+                            "effective_role": entry["effective_role"],
+                        },
                     )
                     await self._send(
                         user_id,
@@ -530,13 +719,14 @@ class WorkflowService:
                         team.coordinator_agent_id,
                         member.agent_id,
                         "TASK_ASSIGNMENT",
-                        f"Please complete the {role} part of: {workflow.goal}",
+                        f"Hãy hoàn thành phần việc của {label} cho mục tiêu: {workflow.goal}",
                     )
                     claimed_task = await self.repo.transition_task(
                         user_id, task.id, ["pending"], {"status": "in_progress"}
                     )
                     if claimed_task is None:
                         continue  # already handled elsewhere; never double-process
+                    attempted_count += 1
                     prompt = build_context(
                         workflow.goal,
                         task.title,
@@ -544,30 +734,62 @@ class WorkflowService:
                         prior,
                         self.limits.context_chars_per_result,
                     )
+                    if agent is None:
+                        await self._mark_task_failed(
+                            user_id, workflow, team, task, member,
+                            agent_name=None, label=label, code="agent_not_found",
+                        )
+                        failed_codes.append("agent_not_found")
+                        continue
                     try:
-                        content, usage = await self._run_agent(user_id, member.agent_id, prompt)
+                        content, usage = await self._run_agent_resilient(
+                            user_id, member.agent_id, prompt
+                        )
                     except ProviderError as error:
-                        await self.repo.update_task(user_id, task.id, {"status": "failed"})
-                        await self._send(
+                        # One failed Agent must not kill the whole workflow:
+                        # record the failure honestly, count the spent turn,
+                        # and continue with the next Agent.
+                        turns += 1
+                        failed_codes.append(error.code)
+                        await self._mark_task_failed(
+                            user_id, workflow, team, task, member,
+                            agent_name=agent.name, label=label, code=error.code,
+                        )
+                        await self.repo.update_workflow(
                             user_id,
                             workflow_id,
-                            task.id,
-                            member.agent_id,
-                            team.coordinator_agent_id,
-                            "TASK_FAILED",
-                            f"Task failed with error code {error.code}.",
+                            {
+                                "current_step": turns,
+                                "usage": {
+                                    "agent_turns": turns,
+                                    "input_tokens": total_in,
+                                    "output_tokens": total_out,
+                                },
+                            },
                         )
-                        raise
+                        continue
                     turns += 1
                     total_in += usage.get("input_tokens") or 0
                     total_out += usage.get("output_tokens") or 0
                     # Reviewer/tester may demand a revision of the previous result.
                     if role in REVIEW_ROLES and "REVISION_REQUEST" in content.upper() and prior:
-                        await self._handle_revision(user_id, workflow, team, prior, member, content)
-                        content += "\n(Revision requested and sent to the previous agent.)"
+                        try:
+                            await self._handle_revision(
+                                user_id, workflow, team, prior, member, content
+                            )
+                            content += "\n(Revision requested and sent to the previous agent.)"
+                        except ProviderError as error:
+                            await self.repo.add_event(
+                                user_id,
+                                workflow_id=workflow_id,
+                                event_type="revision_failed",
+                                actor_id=str(member.agent_id),
+                                payload={"task_id": str(task.id), "code": error.code},
+                            )
                     await self.repo.update_task(
                         user_id, task.id, {"status": "completed", "result": content}
                     )
+                    completed_count += 1
                     await self.repo.add_event(
                         user_id,
                         workflow_id=workflow_id,
@@ -598,9 +820,15 @@ class WorkflowService:
                             },
                         },
                     )
+                # Every attempted member failed and nothing was ever completed:
+                # only then is the workflow itself a failure.
+                if attempted_count and failed_codes and completed_count == 0:
+                    await self._fail(user_id, workflow_id, failed_codes[0])
+                    return
                 # Website ZIP artifact step (website_zip workflows only): one
                 # extra bounded turn, before the Coordinator synthesis.
-                if getattr(workflow, "output_type", "text") == "website_zip":
+                is_zip = getattr(workflow, "output_type", "text") == "website_zip"
+                if is_zip and completed_count >= 1:
                     current = await self.repo.get_workflow(user_id, workflow_id)
                     if current is not None and current.status == "running":
                         if turns >= workflow.max_steps:
@@ -610,7 +838,7 @@ class WorkflowService:
                             )
                         else:
                             a_turns, a_in, a_out = await self._build_artifact(
-                                user_id, workflow, team, members, prior
+                                user_id, workflow, team, plan, prior
                             )
                             turns += a_turns
                             total_in += a_in
@@ -641,10 +869,28 @@ class WorkflowService:
                         prior,
                         self.limits.context_chars_per_result,
                     )
-                    final, usage = await self._run_agent(user_id, team.coordinator_agent_id, prompt)
-                    turns += 1
-                    total_in += usage.get("input_tokens") or 0
-                    total_out += usage.get("output_tokens") or 0
+                    try:
+                        final, usage = await self._run_agent(
+                            user_id, team.coordinator_agent_id, prompt
+                        )
+                    except ProviderError as error:
+                        if not prior:
+                            raise
+                        # The team's work is done; a failing synthesis must
+                        # not throw it away. Fall back to the last real team
+                        # result and say so in the event timeline.
+                        final = prior[-1][1]
+                        await self.repo.add_event(
+                            user_id,
+                            workflow_id=workflow_id,
+                            event_type="workflow_synthesis_fallback",
+                            actor_id=str(team.coordinator_agent_id),
+                            payload={"code": error.code},
+                        )
+                    else:
+                        turns += 1
+                        total_in += usage.get("input_tokens") or 0
+                        total_out += usage.get("output_tokens") or 0
                 await self._send(
                     user_id,
                     workflow_id,
@@ -704,15 +950,21 @@ class WorkflowService:
             payload={"code": code},
         )
 
-    async def _build_artifact(self, user_id, workflow, team, members, prior):
+    async def _build_artifact(self, user_id, workflow, team, plan, prior):
         """Ask the Developer (else Coordinator) for the complete website files.
+
+        ``plan`` is the orchestrator's resolved member plan (effective
+        roles), so the Developer is found by effective role even when the
+        stored team role was the generic "member". The artifact turn runs
+        even when that Agent's main task failed earlier — it gets its own
+        resilient attempt here.
 
         Returns (turns_used, input_tokens, output_tokens). Never raises: any
         failure is recorded on the workflow as artifact_status=failed so the
         text workflow still completes honestly, without a fake ZIP.
         """
-        developer = next((m for m in members if m.role == "developer"), None)
-        agent_id = developer.agent_id if developer else team.coordinator_agent_id
+        developer = next((e for e in plan if e["role"] == "developer"), None)
+        agent_id = developer["member"].agent_id if developer else team.coordinator_agent_id
         prompt = build_context(
             workflow.goal,
             "WEBSITE_FILE_BLOCKS: produce the complete website or project source",
@@ -721,7 +973,7 @@ class WorkflowService:
             self.limits.context_chars_per_result,
         )
         try:
-            content, usage = await self._run_agent(user_id, agent_id, prompt)
+            content, usage = await self._run_agent_resilient(user_id, agent_id, prompt)
         except ProviderError as error:
             await self._artifact_failed(user_id, workflow.id, error.code, agent_id)
             return 0, 0, 0
