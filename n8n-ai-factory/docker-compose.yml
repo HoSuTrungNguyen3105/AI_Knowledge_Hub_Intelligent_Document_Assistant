@@ -1,0 +1,81 @@
+# AI Agent Factory — development environment
+# Services: n8n (orchestration) + PostgreSQL (state) + Code Execution Service
+# (sandboxed file/build/ZIP). Copy .env.example to .env and adjust first.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aifactory}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aifactory_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-ai_factory}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aifactory}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  n8n:
+    # Pin an exact version in production, e.g. docker.n8n.io/n8nio/n8n:1.68.0
+    image: docker.n8n.io/n8nio/n8n:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-ai_factory}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-aifactory}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-aifactory_dev_password}
+      N8N_PORT: 5678
+      GENERIC_TIMEZONE: ${TIMEZONE:-Asia/Ho_Chi_Minh}
+      # Workflows read these through $env expressions:
+      AI_FACTORY_BASE_URL: http://localhost:5678
+      CODE_EXEC_URL: http://code-exec-service:8080
+      # AI provider keys — read by the Agent Execution workflow via $env.
+      # Values come from the .env file next to this compose file. The keys
+      # themselves NEVER appear inside the workflow JSON files.
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  code-exec-service:
+    build: ./code-execution-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 8080
+      DATA_DIR: /data
+      # docker | local (local = dev only, no isolation)
+      SANDBOX_MODE: ${SANDBOX_MODE:-docker}
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-node:20-alpine}
+      # Absolute path of ./ces-data/workspaces ON THE HOST — needed so the
+      # sandbox containers (spawned via the host Docker daemon) mount the
+      # same files the service writes. Set in .env; see README.
+      HOST_WORKSPACES_DIR: ${HOST_WORKSPACES_DIR:-}
+      # URL the *user's browser* uses to download ZIPs:
+      PUBLIC_BASE_URL: ${PUBLIC_CES_URL:-http://localhost:8080}
+      DATABASE_URL: postgres://${POSTGRES_USER:-aifactory}:${POSTGRES_PASSWORD:-aifactory_dev_password}@postgres:5432/${POSTGRES_DB:-ai_factory}
+    ports:
+      - "${CES_PORT:-8080}:8080"
+    volumes:
+      - ./ces-data:/data
+      # Required for spawning sandbox containers. This grants the service
+      # Docker-daemon access — run it only on a machine you control.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  pgdata:
+  n8n_data:
