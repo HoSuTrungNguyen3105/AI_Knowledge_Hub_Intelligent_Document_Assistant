@@ -50,6 +50,10 @@ ERRORS = {
     "workflow_step_limit": (409, "The workflow reached its maximum number of agent turns."),
     "workflow_revision_limit": (409, "The task reached its maximum number of revisions."),
     "workflow_timeout": (504, "The workflow timed out."),
+    "artifact_no_files": (422, "The agent did not return any valid website files."),
+    "artifact_missing_index": (422, "The generated website is missing index.html."),
+    "artifact_limit_exceeded": (422, "The generated website exceeds the artifact size limits."),
+    "artifact_not_ready": (409, "This workflow has no ZIP artifact ready to download."),
 }
 
 

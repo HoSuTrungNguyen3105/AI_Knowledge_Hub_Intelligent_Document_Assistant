@@ -36,12 +36,34 @@ from app.schemas.workflows import (
     TeamOut,
     TeamPatch,
     WorkflowCreate,
+    WorkflowFileList,
+    WorkflowFileOut,
     WorkflowList,
     WorkflowOut,
 )
 from app.services.agents import AgentService
 from app.services.ai.base_provider import ProviderError
 from app.services.ai.chat import ChatHTTP
+from app.services.workflow_files import (
+    ArtifactLimits,
+    ParsedFile,
+    build_zip,
+    extract_files,
+    slugify,
+)
+
+ARTIFACT_INSTRUCTIONS = """Produce the COMPLETE static website for the workflow goal as plain \
+HTML/CSS/JS that runs standalone in a browser (no backend, no build step, no \
+external build dependencies). Output ONLY fenced file blocks in EXACTLY this \
+format, one block per file, and include an index.html entry file:
+
+```file:relative/path/to/file.ext
+<full file content>
+```
+
+Paths must be relative (for example index.html, styles.css, js/app.js). \
+Allowed extensions: html, css, js, mjs, json, md, txt, svg, xml. \
+Any text outside the file blocks is ignored."""
 
 ROLE_ORDER = {
     "planner": 0,
@@ -217,6 +239,11 @@ class WorkflowService:
             team_id=w.team_id,
             title=w.title,
             goal=w.goal,
+            output_type=getattr(w, "output_type", "text") or "text",
+            artifact_status=getattr(w, "artifact_status", "none") or "none",
+            artifact_file_count=getattr(w, "artifact_file_count", 0) or 0,
+            artifact_total_bytes=getattr(w, "artifact_total_bytes", 0) or 0,
+            artifact_error_code=getattr(w, "artifact_error_code", None),
             status=w.status,
             current_step=w.current_step,
             max_steps=w.max_steps,
@@ -248,6 +275,7 @@ class WorkflowService:
             goal=payload.goal,
             max_steps=max_steps,
             budget=budget,
+            output_type=payload.output_type,
         )
         await self.repo.add_event(
             user_id,
@@ -299,6 +327,25 @@ class WorkflowService:
         await self._require_workflow(user_id, workflow_id)
         events = await self.repo.list_events(user_id, workflow_id)
         return EventList(events=[EventOut(**e.model_dump()) for e in events])
+
+    # --- Website ZIP artifact --------------------------------------------------
+    async def list_files(self, user_id, workflow_id) -> WorkflowFileList:
+        workflow = await self._require_workflow(user_id, workflow_id)
+        files = await self.repo.list_files(user_id, workflow_id)
+        return WorkflowFileList(
+            files=[WorkflowFileOut(path=f.path, size_bytes=f.size_bytes) for f in files],
+            total_bytes=sum(f.size_bytes for f in files),
+            artifact_status=workflow.artifact_status,
+        )
+
+    async def build_download(self, user_id, workflow_id) -> tuple[str, bytes]:
+        """Return (zip filename, zip bytes) or raise artifact_not_ready."""
+        workflow = await self._require_workflow(user_id, workflow_id)
+        files = await self.repo.list_files(user_id, workflow_id)
+        if workflow.artifact_status != "ready" or not files:
+            raise ProviderError("artifact_not_ready")
+        parsed = [ParsedFile(path=f.path, content=f.content) for f in files]
+        return f"{slugify(workflow.title)}.zip", build_zip(parsed, workflow.title, workflow.goal)
 
     # --- State controls --------------------------------------------------------
     async def pause_workflow(self, user_id, workflow_id) -> WorkflowOut:
@@ -542,6 +589,35 @@ class WorkflowService:
                             },
                         },
                     )
+                # Website ZIP artifact step (website_zip workflows only): one
+                # extra bounded turn, before the Coordinator synthesis.
+                if getattr(workflow, "output_type", "text") == "website_zip":
+                    current = await self.repo.get_workflow(user_id, workflow_id)
+                    if current is not None and current.status == "running":
+                        if turns >= workflow.max_steps:
+                            await self._artifact_failed(
+                                user_id, workflow_id, "workflow_step_limit",
+                                team.coordinator_agent_id,
+                            )
+                        else:
+                            a_turns, a_in, a_out = await self._build_artifact(
+                                user_id, workflow, team, members, prior
+                            )
+                            turns += a_turns
+                            total_in += a_in
+                            total_out += a_out
+                            await self.repo.update_workflow(
+                                user_id,
+                                workflow_id,
+                                {
+                                    "current_step": turns,
+                                    "usage": {
+                                        "agent_turns": turns,
+                                        "input_tokens": total_in,
+                                        "output_tokens": total_out,
+                                    },
+                                },
+                            )
                 # Coordinator synthesis (counts as a turn, bounded by max_steps).
                 current = await self.repo.get_workflow(user_id, workflow_id)
                 if current is None or current.status in ("cancelled", "waiting"):
@@ -598,6 +674,83 @@ class WorkflowService:
             await self._fail(user_id, workflow_id, error.code)
         except Exception:
             await self._fail(user_id, workflow_id, "generation_failed")
+
+    async def _artifact_failed(self, user_id, workflow_id, code, actor_id) -> None:
+        await self.repo.replace_files(user_id, workflow_id, [])
+        await self.repo.update_workflow(
+            user_id,
+            workflow_id,
+            {
+                "artifact_status": "failed",
+                "artifact_file_count": 0,
+                "artifact_total_bytes": 0,
+                "artifact_error_code": code,
+            },
+        )
+        await self.repo.add_event(
+            user_id,
+            workflow_id=workflow_id,
+            event_type="artifact_failed",
+            actor_id=str(actor_id),
+            payload={"code": code},
+        )
+
+    async def _build_artifact(self, user_id, workflow, team, members, prior):
+        """Ask the Developer (else Coordinator) for the complete website files.
+
+        Returns (turns_used, input_tokens, output_tokens). Never raises: any
+        failure is recorded on the workflow as artifact_status=failed so the
+        text workflow still completes honestly, without a fake ZIP.
+        """
+        developer = next((m for m in members if m.role == "developer"), None)
+        agent_id = developer.agent_id if developer else team.coordinator_agent_id
+        prompt = build_context(
+            workflow.goal,
+            "WEBSITE_FILE_BLOCKS: produce the complete static website",
+            ARTIFACT_INSTRUCTIONS,
+            prior,
+            self.limits.context_chars_per_result,
+        )
+        try:
+            content, usage = await self._run_agent(user_id, agent_id, prompt)
+        except ProviderError as error:
+            await self._artifact_failed(user_id, workflow.id, error.code, agent_id)
+            return 0, 0, 0
+        in_tokens = usage.get("input_tokens") or 0
+        out_tokens = usage.get("output_tokens") or 0
+        result = extract_files(content, ArtifactLimits.from_settings(self.settings))
+        if result.error_code is not None:
+            await self._artifact_failed(user_id, workflow.id, result.error_code, agent_id)
+            return 1, in_tokens, out_tokens
+        await self.repo.replace_files(user_id, workflow.id, result.files)
+        await self.repo.update_workflow(
+            user_id,
+            workflow.id,
+            {
+                "artifact_status": "ready",
+                "artifact_file_count": len(result.files),
+                "artifact_total_bytes": result.total_bytes,
+                "artifact_error_code": None,
+            },
+        )
+        await self.repo.add_event(
+            user_id,
+            workflow_id=workflow.id,
+            event_type="artifact_created",
+            actor_id=str(agent_id),
+            payload={
+                "file_count": len(result.files),
+                "total_bytes": result.total_bytes,
+                "rejected": result.rejected,
+                "limit_hit": result.limit_hit,
+            },
+        )
+        summary = "Website files created: " + ", ".join(f.path for f in result.files)
+        await self._send(
+            user_id, workflow.id, None, agent_id, team.coordinator_agent_id, "HANDOFF", summary
+        )
+        prior.append(("Website artifact", summary))
+        return 1, in_tokens, out_tokens
 
     async def _handle_revision(
         self, user_id, workflow, team, prior, reviewer_member, feedback_text=""

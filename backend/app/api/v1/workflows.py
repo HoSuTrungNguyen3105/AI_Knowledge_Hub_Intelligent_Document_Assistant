@@ -18,6 +18,7 @@ from app.schemas.workflows import (
     TeamOut,
     TeamPatch,
     WorkflowCreate,
+    WorkflowFileList,
     WorkflowList,
     WorkflowOut,
 )
@@ -140,6 +141,28 @@ async def cancel_workflow(
     workflow_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
 ):
     return await _service(db, settings, http).cancel_workflow(user.id, workflow_id)
+
+
+@router.get("/ai/agent-workflows/{workflow_id}/files", response_model=WorkflowFileList)
+async def list_files(
+    workflow_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    return await _service(db, settings, http).list_files(user.id, workflow_id)
+
+
+@router.get("/ai/agent-workflows/{workflow_id}/download.zip")
+async def download_zip(
+    workflow_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    filename, content = await _service(db, settings, http).build_download(user.id, workflow_id)
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @router.get("/ai/agent-workflows/{workflow_id}/messages", response_model=MessageList)

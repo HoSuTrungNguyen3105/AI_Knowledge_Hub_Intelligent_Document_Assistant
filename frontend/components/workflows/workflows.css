@@ -33,6 +33,10 @@
 .wf-badge.high { background: #fee2e2; color: #b91c1c; }
 .wf-badge.normal { background: #fef3c7; color: #92400e; }
 .wf-badge.low { background: #dcfce7; color: #166534; }
+.wf-badge.zip { background: #ede9fe; color: #6d28d9; margin-top: 0; }
+.wf-file-list { list-style: none; margin: 10px 0; padding: 0; display: grid; gap: 6px; }
+.wf-file-list li { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; background: var(--surface-soft, #f3f5fb); border-radius: 8px; padding: 6px 10px; }
+.wf-file-list code { overflow-wrap: anywhere; }
 .wf-progress-ring { display: flex; align-items: center; gap: 16px; margin-top: 12px; }
 .wf-ring { transform: rotate(-90deg); }
 .wf-ring .track { stroke: #e8eaf3; }

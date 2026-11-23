@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { GitBranch, Play, Plus, RotateCcw, Sparkles } from "lucide-react";
 import { teamsService, workflowsService } from "../../services/workflows";
-import { WORKFLOW_STATUS, getWorkflowError } from "../../utils/workflows";
+import { OUTPUT_TYPES, WORKFLOW_STATUS, getWorkflowError } from "../../utils/workflows";
 
 export function WorkflowsList() {
   const router = useRouter();
@@ -17,7 +17,7 @@ export function WorkflowsList() {
   const [workflowsError, setWorkflowsError] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ team_id: "", title: "", goal: "" });
+  const [form, setForm] = useState({ team_id: "", title: "", goal: "", output_type: "text" });
   // Teams and workflows load independently so one failing request cannot
   // blank out (or misreport) the other section.
   const loadTeams = useCallback(async (signal) => {
@@ -53,7 +53,7 @@ export function WorkflowsList() {
     if (!form.team_id || !form.title.trim() || !form.goal.trim()) { setError("Chọn nhóm, nhập tiêu đề và mục tiêu."); return; }
     setBusy(true); setError("");
     try {
-      const created = await workflowsService.create({ team_id: form.team_id, title: form.title.trim(), goal: form.goal.trim() });
+      const created = await workflowsService.create({ team_id: form.team_id, title: form.title.trim(), goal: form.goal.trim(), output_type: form.output_type });
       setForm({ ...form, title: "", goal: "" });
       await load();
       router.push(`/agents/workflows/${created.id}`);
@@ -76,6 +76,8 @@ export function WorkflowsList() {
             {teams.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.members.length} Agent)</option>)}</select></label>
           <label>Tiêu đề<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Ví dụ: Phân tích chức năng Knowledge Base" /></label>
           <label>Mục tiêu chung<textarea rows={3} value={form.goal} onChange={(e) => setForm({ ...form, goal: e.target.value })} placeholder="Mô tả mục tiêu cả nhóm cần hoàn thành…" /></label>
+          <label>Sản phẩm đầu ra<select value={form.output_type} onChange={(e) => setForm({ ...form, output_type: e.target.value })}>
+            {OUTPUT_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
           <div><button className="wf-btn primary" type="submit" disabled={busy}><Play size={16} /> Tạo workflow</button></div>
         </form>)}
     </div>
@@ -89,7 +91,8 @@ export function WorkflowsList() {
           <p className="muted" style={{ fontSize: 12.5 }}>{wf.goal}</p>
           <div className="row"><span className="wf-dot" style={{ background: status.color }} /><span>{status.label}</span>
             <span>· Bước {wf.current_step}/{wf.max_steps}</span>
-            <span>· {new Date(wf.created_at).toLocaleString()}</span></div>
+            <span>· {new Date(wf.created_at).toLocaleString()}</span>
+            {wf.output_type === "website_zip" && <span className="wf-badge zip">Website · ZIP{wf.artifact_status === "ready" ? " sẵn sàng" : wf.artifact_status === "failed" ? " lỗi" : ""}</span>}</div>
           <div className="row"><Link className="wf-btn" href={`/agents/workflows/${wf.id}`}><GitBranch size={15} /> Mở workspace</Link></div>
         </article>); })}
       {!workflowsLoading && !workflowsError && !workflows.length && <p className="wf-empty">Chưa có workflow nào.</p>}

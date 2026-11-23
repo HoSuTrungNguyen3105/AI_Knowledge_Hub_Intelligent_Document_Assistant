@@ -170,6 +170,8 @@ def test_openapi_has_only_implemented_routes_and_safe_responses(app):
         "/api/v1/ai/agent-workflows/{workflow_id}/pause",
         "/api/v1/ai/agent-workflows/{workflow_id}/resume",
         "/api/v1/ai/agent-workflows/{workflow_id}/cancel",
+        "/api/v1/ai/agent-workflows/{workflow_id}/files",
+        "/api/v1/ai/agent-workflows/{workflow_id}/download.zip",
         "/api/v1/ai/agent-workflows/{workflow_id}/messages",
         "/api/v1/ai/agent-workflows/{workflow_id}/tasks",
         "/api/v1/ai/agent-workflows/{workflow_id}/events",

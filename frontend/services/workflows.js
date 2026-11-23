@@ -73,7 +73,41 @@ export const workflowsService = {
     const { data } = await api.get(`${workflowPath(id)}/events`, { signal });
     return data.events;
   },
+  async files(id, signal) {
+    const { data } = await api.get(`${workflowPath(id)}/files`, { signal });
+    return data;
+  },
 };
+
+export function triggerBlobDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Download the website ZIP artifact (owner-scoped; the backend rebuilds the
+// ZIP from the stored validated files). Mirrors streamWorkflow's 401 flow.
+export async function downloadWorkflowZip(id) {
+  const url = `/api/v1${workflowPath(id)}/download.zip`;
+  const init = { method: "GET", credentials: "include" };
+  let response = await fetch(url, init);
+  if (response.status === 401) {
+    await refreshClient.post("/auth/refresh");
+    response = await fetch(url, init);
+  }
+  if (!response.ok) throw { response: { status: response.status, data: null } };
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  const filename = match ? match[1] : "website.zip";
+  triggerBlobDownload(blob, filename);
+  return filename;
+}
 
 // GET SSE stream of workflow events (observation only; disconnecting does not
 // cancel the workflow — cancellation is the dedicated POST /cancel action).
