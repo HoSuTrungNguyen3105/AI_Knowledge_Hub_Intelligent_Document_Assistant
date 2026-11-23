@@ -6,7 +6,7 @@ import { downloadWorkflowZip, teamsService, workflowsService } from "../services
 import {
   OUTPUT_TYPES, STARTER_AGENTS, artifactErrorLabel, artifactKind, artifactKindLabel,
   createStarterSet, formatBytes,
-  getWorkflowError, missingStarterAgents, validateWorkflowForm,
+  getWorkflowError, inferRoleFromName, missingStarterAgents, validateWorkflowForm,
   agentStatus, progressOf, roleMeta, stepperOf,
 } from "../utils/workflows";
 
@@ -47,8 +47,33 @@ describe("Phase 6 derivations from real data", () => {
     { assigned_agent_id: "a3", title: "Reviewer: X", status: "pending" },
   ];
   it("computes progress counts and percent", () => {
-    expect(progressOf(tasks)).toEqual({ total: 3, completed: 1, inProgress: 1, pending: 1, percent: 33 });
+    expect(progressOf(tasks)).toEqual({
+      total: 3, completed: 1, inProgress: 1, review: 0, pending: 1, failed: 0, percent: 33,
+    });
     expect(progressOf([]).percent).toBe(0);
+  });
+  it("counts failed and review tasks so the board accounts for every task", () => {
+    const mixed = [
+      { status: "completed" }, { status: "in_progress" }, { status: "review" },
+      { status: "pending" }, { status: "failed" }, { status: "failed" },
+    ];
+    const progress = progressOf(mixed);
+    expect(progress).toEqual({
+      total: 6, completed: 1, inProgress: 1, review: 1, pending: 1, failed: 2, percent: 17,
+    });
+    expect(progress.completed + progress.inProgress + progress.review
+      + progress.pending + progress.failed).toBe(progress.total);
+  });
+  it("infers a team role from the Agent name, mirroring the backend", () => {
+    expect(inferRoleFromName("AI Planner")).toBe("planner");
+    expect(inferRoleFromName("AI Reviewer")).toBe("reviewer");
+    expect(inferRoleFromName("AI Tester")).toBe("tester");
+    expect(inferRoleFromName("AI Architect")).toBe("architect");
+    expect(inferRoleFromName("AI Researcher")).toBe("researcher");
+    expect(inferRoleFromName("AI Developer")).toBe("developer");
+    expect(inferRoleFromName("AI Leader")).toBe("coordinator");
+    expect(inferRoleFromName("Bob")).toBeNull();
+    expect(inferRoleFromName("")).toBeNull();
   });
   it("derives agent status from its latest task", () => {
     expect(agentStatus("a2", tasks, { status: "running" }).label).toBe("Working");

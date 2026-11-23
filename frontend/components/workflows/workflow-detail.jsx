@@ -174,7 +174,7 @@ export function WorkflowDetail({ workflowId }) {
         <section className="wf-card" aria-label="Task Board">
           <h2><ListTodo size={17} /> Task Board</h2>
           <div className="wf-task-columns">
-            {TASK_COLUMNS.slice(0, 4).map((col) => <div className="wf-task-col" key={col.key}>
+            {TASK_COLUMNS.map((col) => <div className="wf-task-col" key={col.key}>
               <h3>{col.label} ({tasks.filter((t) => t.status === col.key).length})</h3>
               {tasks.filter((t) => t.status === col.key).map((t) => <div className="wf-task" key={t.id}>
                 <p>{t.title}</p>
@@ -192,7 +192,9 @@ export function WorkflowDetail({ workflowId }) {
             <ul className="wf-progress-counts">
               <li><span className="wf-dot" style={{ background: "#16a34a" }} />Completed<b>{progress.completed}</b></li>
               <li><span className="wf-dot" style={{ background: "#2563eb" }} />In Progress<b>{progress.inProgress}</b></li>
-              <li><span className="wf-dot" style={{ background: "#dc2626" }} />Pending<b>{progress.pending}</b></li>
+              <li><span className="wf-dot" style={{ background: "#d97706" }} />Review<b>{progress.review}</b></li>
+              <li><span className="wf-dot" style={{ background: "#64748b" }} />Pending<b>{progress.pending}</b></li>
+              <li><span className="wf-dot" style={{ background: "#dc2626" }} />Failed<b>{progress.failed}</b></li>
             </ul></div>
           <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>Overall Progress — tính từ {progress.total} task thật của workflow.</p>
         </section>
