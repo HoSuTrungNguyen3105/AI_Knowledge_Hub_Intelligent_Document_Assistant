@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Archive, ArrowLeft, Ban, CalendarDays, Check, CircleCheck, Code2, Crown, Download, FlaskConical,
-  ListTodo, MessagesSquare, Pause, Play, Plus, Search, Settings2, Sparkles, Star,
+  Archive, ArrowLeft, Ban, Building2, CalendarDays, Check, CircleCheck, Code2, Crown, Download, FlaskConical,
+  LayoutGrid, ListTodo, MessagesSquare, Pause, Play, Plus, Search, Settings2, Sparkles, Star,
 } from "lucide-react";
 import { downloadWorkflowZip, streamWorkflow, teamsService, workflowsService } from "../../services/workflows";
+import { AgentOffice } from "./agent-office";
+import { RenameAgentDialog } from "../agents/rename-agent";
 import {
   TASK_COLUMNS, WORKFLOW_STATUS, agentStatus, artifactErrorLabel, artifactKindLabel, elapsedLabel, formatBytes,
   getWorkflowError, progressOf, roleMeta, stepperOf, timeLabel,
@@ -39,6 +41,8 @@ export function WorkflowDetail({ workflowId }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const [view, setView] = useState("workspace");
+  const [renameMember, setRenameMember] = useState(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [, setTick] = useState(0);
   const messagesRef = useRef(null);
@@ -145,6 +149,10 @@ export function WorkflowDetail({ workflowId }) {
         {error && <p className="wf-error" role="alert">{error}</p>}
       </div>
       <div className="wf-actions">
+        <div className="wf-view-toggle" role="group" aria-label="Chế độ xem">
+          <button type="button" className={`wf-btn${view === "workspace" ? " primary" : ""}`} onClick={() => setView("workspace")} aria-pressed={view === "workspace"}><LayoutGrid size={16} /> Workspace</button>
+          <button type="button" className={`wf-btn${view === "office" ? " primary" : ""}`} onClick={() => setView("office")} aria-pressed={view === "office"}><Building2 size={16} /> Mô phỏng văn phòng</button>
+        </div>
         <Link className="wf-btn" href="/agents/workflows"><Plus size={16} /> New Task</Link>
         {workflow.status === "queued" && <button className="wf-btn primary" type="button" disabled={Boolean(busy)} onClick={() => act("start")}><Play size={16} /> Run Workflow</button>}
         {workflow.status === "waiting" && <button className="wf-btn primary" type="button" disabled={Boolean(busy)} onClick={() => act("resume")}><Play size={16} /> Resume</button>}
@@ -154,6 +162,7 @@ export function WorkflowDetail({ workflowId }) {
       </div>
     </div>
 
+    {view === "office" ? <AgentOffice workflow={workflow} team={team} tasks={tasks} messages={messages} onRenameAgent={setRenameMember} /> : <>
     <div className="wf-agent-strip" aria-label="Agent tham gia">
       {members.map((m) => {
         const meta = roleMeta(m.role); const Icon = ROLE_ICONS[m.role] || Sparkles;
@@ -282,5 +291,7 @@ export function WorkflowDetail({ workflowId }) {
         </section>
       </div>
     </div>
+    </>}
+    {renameMember && <RenameAgentDialog agent={{ id: renameMember.agent_id, name: renameMember.agent_name }} onClose={() => setRenameMember(null)} onRenamed={() => load()} />}
   </div>;
 }

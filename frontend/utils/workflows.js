@@ -242,6 +242,54 @@ export function getWorkflowError(error, fallback = "Đã xảy ra lỗi. Vui lò
   return fallback;
 }
 
+// --- Office simulation view --------------------------------------------------
+// Desk anchors (percent coordinates inside the office room) for the
+// simulation view. The coordinator sits at the head desk (top center, like
+// the reference mock); the remaining members fill the side desks in order.
+// Positions are layout only — every status, task and message shown in the
+// office still comes from the real workflow data.
+export const OFFICE_DESK_SLOTS = [
+  { x: 50, y: 15 },
+  { x: 17, y: 42 },
+  { x: 83, y: 42 },
+  { x: 32, y: 72 },
+  { x: 68, y: 72 },
+  { x: 50, y: 45 },
+  { x: 12, y: 74 },
+  { x: 88, y: 74 },
+];
+
+// Floor waypoints idle agents wander between in the simulation.
+export const OFFICE_WAYPOINTS = [
+  { x: 50, y: 90 },
+  { x: 10, y: 16 },
+  { x: 90, y: 16 },
+  { x: 50, y: 58 },
+  { x: 24, y: 90 },
+  { x: 76, y: 90 },
+];
+
+export function officeLayout(members) {
+  const list = members || [];
+  const coordinator = list.find((m) => m.role === "coordinator");
+  const rest = list.filter((m) => m !== coordinator);
+  const ordered = coordinator ? [coordinator, ...rest] : [...list];
+  return ordered.map((member, index) => {
+    const slot = OFFICE_DESK_SLOTS[index % OFFICE_DESK_SLOTS.length];
+    return { agent_id: member.agent_id, x: slot.x, y: slot.y };
+  });
+}
+
+// Coarse per-task progress used by the office task rail: a task is either
+// untouched, being worked on, under review, or finished.
+export function taskPercent(status) {
+  if (status === "completed") return 100;
+  if (status === "in_progress") return 55;
+  if (status === "review") return 80;
+  if (status === "failed") return 100;
+  return 0;
+}
+
 // --- Starter agent set -------------------------------------------------------
 // One-click bootstrap for accounts that have no Agents yet: the seven roles
 // of the Phase 6 spec, created through the existing Agent API with Vietnamese

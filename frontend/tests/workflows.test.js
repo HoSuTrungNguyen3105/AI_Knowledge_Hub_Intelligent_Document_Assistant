@@ -7,7 +7,7 @@ import {
   OUTPUT_TYPES, STARTER_AGENTS, artifactErrorLabel, artifactKind, artifactKindLabel,
   createStarterSet, formatBytes,
   getWorkflowError, inferRoleFromName, missingStarterAgents, validateWorkflowForm,
-  agentStatus, progressOf, roleMeta, stepperOf,
+  agentStatus, officeLayout, progressOf, roleMeta, stepperOf, taskPercent,
 } from "../utils/workflows";
 
 const mock = new MockAdapter(api);
@@ -261,5 +261,31 @@ describe("Starter agent set (one-click bootstrap)", () => {
       createTeam: async () => ({}),
     });
     expect(payloads.every((p) => p.tools.every((t) => t === "data_analyzer"))).toBe(true);
+  });
+});
+
+describe("office simulation layout", () => {
+  const member = (agent_id, role) => ({ agent_id, role, agent_name: agent_id });
+  it("puts the coordinator at the head desk and gives unique slots", () => {
+    const members = [member("dev", "developer"), member("lead", "coordinator"), member("qa", "tester")];
+    const layout = officeLayout(members);
+    expect(layout[0]).toMatchObject({ agent_id: "lead", x: 50, y: 15 });
+    const keys = layout.map((s) => `${s.x}:${s.y}`);
+    expect(new Set(keys).size).toBe(3);
+    expect(layout.map((s) => s.agent_id).sort()).toEqual(["dev", "lead", "qa"]);
+  });
+  it("handles empty and coordinator-less teams", () => {
+    expect(officeLayout([])).toEqual([]);
+    expect(officeLayout(null)).toEqual([]);
+    const layout = officeLayout([member("a", "planner"), member("b", "member")]);
+    expect(layout).toHaveLength(2);
+  });
+  it("maps task statuses to coarse office progress", () => {
+    expect(taskPercent("completed")).toBe(100);
+    expect(taskPercent("in_progress")).toBe(55);
+    expect(taskPercent("review")).toBe(80);
+    expect(taskPercent("failed")).toBe(100);
+    expect(taskPercent("pending")).toBe(0);
+    expect(taskPercent("cancelled")).toBe(0);
   });
 });

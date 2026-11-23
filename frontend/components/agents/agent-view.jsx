@@ -2,18 +2,20 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Copy, Pencil, Play, Square, Trash2 } from "lucide-react";
+import { Copy, PenLine, Pencil, Play, Square, Trash2 } from "lucide-react";
 import { useChatProviders } from "../../hooks/use-chat-providers";
 import { initials } from "../../utils/format";
 import { toolCapability } from "../../utils/agents";
 import { AgentEditor } from "./agent-editor";
+import { RenameAgentDialog } from "./rename-agent";
 import { ExecutionHistory } from "./execution-history";
 import { ExecutionDetail } from "./execution-detail";
 
 export function AgentView({ controller }) {
-  const { agent, tools, busy, editing, setEditing, saveAgent, duplicateAgent, setDeletion, run, stop, isStreaming, streamError, reloadTools } = controller;
+  const { agent, tools, busy, editing, setEditing, saveAgent, duplicateAgent, setDeletion, run, stop, isStreaming, streamError, reloadTools, reloadList, reloadDetail } = controller;
   const providers = useChatProviders(agent.provider);
   const [prompt, setPrompt] = useState("");
+  const [renaming, setRenaming] = useState(false);
   const provider = providers.available.find((item) => item.id === agent.provider);
   const model = providers.providerId === agent.provider ? providers.models.find((item) => item.id === agent.model) : null;
   const capability = toolCapability(provider, model);
@@ -24,7 +26,7 @@ export function AgentView({ controller }) {
 
   function submit(event) { event.preventDefault(); if (!blocked && !isStreaming && prompt.trim()) run(prompt.trim()); }
   return <section className="conversation-view agent-view">
-    <header className="conversation-header"><div className="agent-list-row"><span className="avatar agent-avatar" aria-hidden="true">{initials(agent.name)}</span><div className="conversation-title"><h2>{agent.name}</h2><span className="conversation-model">{agent.provider} · {agent.model}</span></div></div><div className="conversation-tools"><button type="button" className="icon-button" onClick={() => setEditing(true)} aria-label="Chỉnh sửa Agent" disabled={Boolean(busy) || isStreaming}><Pencil size={17} /></button><button type="button" className="icon-button" onClick={duplicateAgent} aria-label="Nhân bản Agent" disabled={Boolean(busy) || isStreaming}><Copy size={17} /></button><button type="button" className="icon-button danger" onClick={() => setDeletion({ agentId: agent.id })} aria-label="Xóa Agent" disabled={Boolean(busy) || isStreaming}><Trash2 size={17} /></button></div></header>
+    <header className="conversation-header"><div className="agent-list-row"><span className="avatar agent-avatar" aria-hidden="true">{initials(agent.name)}</span><div className="conversation-title"><h2>{agent.name}</h2><span className="conversation-model">{agent.provider} · {agent.model}</span></div></div><div className="conversation-tools"><button type="button" className="icon-button" onClick={() => setRenaming(true)} aria-label="Đổi tên Agent" disabled={Boolean(busy) || isStreaming}><PenLine size={17} /></button><button type="button" className="icon-button" onClick={() => setEditing(true)} aria-label="Chỉnh sửa Agent" disabled={Boolean(busy) || isStreaming}><Pencil size={17} /></button><button type="button" className="icon-button" onClick={duplicateAgent} aria-label="Nhân bản Agent" disabled={Boolean(busy) || isStreaming}><Copy size={17} /></button><button type="button" className="icon-button danger" onClick={() => setDeletion({ agentId: agent.id })} aria-label="Xóa Agent" disabled={Boolean(busy) || isStreaming}><Trash2 size={17} /></button></div></header>
     <div className="agent-body">
       <div className="agent-overview"><p className="message-text">{agent.description || "Agent chưa có mô tả."}</p><p className="setup-note">Công cụ: {agent.tools.length ? agent.tools.join(", ") : "Không chọn · chỉ văn bản"}</p><p className="setup-note">Knowledge Base (KB) và Memory chưa khả dụng. Các lượt chạy độc lập.</p><p className="setup-note">Giới hạn mỗi lượt: 6 bước · 120 giây · 8000 đơn vị ước lượng bảo thủ (không phải token tính phí). Tối đa 4 tool mỗi bước; timeout tool 10 giây.</p></div>
       <form className="agent-run-form setup-panel" onSubmit={submit}>
@@ -41,5 +43,6 @@ export function AgentView({ controller }) {
       </form>
       <div className="agent-results"><ExecutionHistory controller={controller} /><ExecutionDetail controller={controller} /></div>
     </div>
+    {renaming && <RenameAgentDialog agent={agent} onClose={() => setRenaming(false)} onRenamed={() => { reloadList?.(); reloadDetail?.(); }} />}
   </section>;
 }
