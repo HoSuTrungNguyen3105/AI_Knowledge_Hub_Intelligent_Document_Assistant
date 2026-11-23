@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AgentAvatar } from "./agent-avatar";
 import {
   CalendarDays, Check, CircleCheck, Clock, Code2, Crown, FlaskConical, LoaderCircle,
   Pencil, Search, Sparkles, Star, X,
@@ -61,6 +62,25 @@ export function AgentOffice({ workflow, team, tasks, messages, onRenameAgent }) 
   // Wander engine: working agents stay at their desk; idle agents sometimes
   // stroll to a floor waypoint and later walk back. Pure decoration.
   const [spots, setSpots] = useState({});
+  const [movingIds, setMovingIds] = useState(() => new Set());
+  const prevSpots = useRef({});
+  const moveTimers = useRef({});
+  useEffect(() => () => { Object.values(moveTimers.current).forEach(clearTimeout); }, []);
+  // An agent is "walking" (leg animation on) from the moment its target
+  // spot changes until the CSS transition (2.6s) has had time to finish.
+  useEffect(() => {
+    for (const [agentId, spot] of Object.entries(spots)) {
+      const prev = prevSpots.current[agentId];
+      if (prev && (prev.x !== spot.x || prev.y !== spot.y)) {
+        setMovingIds((current) => new Set(current).add(agentId));
+        clearTimeout(moveTimers.current[agentId]);
+        moveTimers.current[agentId] = setTimeout(() => {
+          setMovingIds((current) => { const next = new Set(current); next.delete(agentId); return next; });
+        }, 2650);
+      }
+    }
+    prevSpots.current = spots;
+  }, [spots]);
   useEffect(() => {
     setSpots((prev) => {
       const next = {};
@@ -123,20 +143,28 @@ export function AgentOffice({ workflow, team, tasks, messages, onRenameAgent }) 
             <div className="wf-desk-table"><div className="wf-desk-screen" style={{ borderColor: meta.color }} /></div>
           </div>;
         })}
+        {layout.map((slot) => <div className="wf-desk-front" key={`front-${slot.agent_id}`}
+          style={{ left: `${slot.x}%`, top: `${slot.y}%` }} />)}
         {members.map((m) => {
           const meta = roleMeta(m.role);
           const Icon = ROLE_ICONS[m.role] || Sparkles;
           const desk = deskById.get(m.agent_id);
           const spot = (desk && spots[m.agent_id]) || desk || { x: 50, y: 50 };
           const away = desk ? Math.abs(spot.x - desk.x) > 0.5 || Math.abs(spot.y - desk.y) > 0.5 : false;
+          const walking = movingIds.has(m.agent_id);
+          const working = Boolean(bubbleById.get(m.agent_id)?.working);
           const st = statusById.get(m.agent_id) || { label: "Waiting", color: "#2563eb" };
           const bubble = bubbleById.get(m.agent_id);
+          // 2.5D depth: agents lower in the room stand closer to the viewer
+          // and render slightly larger.
+          const depthScale = 0.8 + (spot.y / 100) * 0.38;
           return <div className={`wf-office-agent${away ? " away" : ""}`} key={m.agent_id}
-            style={{ left: `${spot.x}%`, top: `${spot.y}%` }}>
+            style={{ left: `${spot.x}%`, top: `${spot.y}%`, transform: `translate(-50%, -50%) scale(${depthScale.toFixed(2)})` }}>
             {bubble && <div className={`wf-office-bubble${bubble.working ? " working" : ""}`} title={bubble.text}>
               {truncate(bubble.text, 46)}{bubble.working && <span className="wf-typing"><i /><i /><i /></span>}
             </div>}
-            <span className="wf-office-avatar" style={{ background: meta.color }}><Icon size={22} /></span>
+            <span className="wf-office-shadow" />
+            <span className="wf-office-avatar"><AgentAvatar color={meta.color} role={m.role} walking={walking} working={!away && working} /></span>
             <button type="button" className="wf-office-nameplate" onClick={() => onRenameAgent?.(m)}
               title="Bấm để đổi tên Agent" aria-label={`Đổi tên ${m.agent_name || "Agent"}`}>
               <Icon size={12} /> {m.agent_name || "Agent"} <Pencil size={11} />
