@@ -69,13 +69,22 @@ class PreparedAgent:
     model: AIModel
     prompt: str
     tools: tuple[ToolSpec, ...]
+    # Per-run output cap override (e.g. workflow artifact generation); never
+    # written back to the stored Agent record.
+    max_output_tokens_override: int | None = None
 
 
 def _request_budget(agent: Agent, turns: list[ChatTurn], tools: tuple[ToolSpec, ...]) -> int:
     """Conservative UTF-8 byte estimate + framing, not provider-confirmed usage.
 
-    Enforced even when the provider omits usage. Repeated context and tool specs
-    count again for every model request; this safety estimate is never billed.
+    The estimate gates each request before it is sent and is the amount
+    charged to the run budget for any step whose provider omits usage, so the
+    budget stays enforced even when the provider reports nothing. When the
+    provider DOES report real per-step usage, the real numbers are charged
+    instead (see stream_prepared) — byte counts of multibyte text would
+    otherwise inflate the charge well past the tokens actually consumed.
+    Repeated context and tool specs count again for every model request;
+    this safety estimate is never billed.
     """
     payload = {
         "system": agent.system_prompt or "",
@@ -241,7 +250,12 @@ class AgentService:
         return ToolCatalog(tools=[ToolCatalogItem(**item) for item in tool_catalog()])
 
     async def prepare_run(
-        self, user_id: UUID, agent_id: UUID, payload: RunRequest
+        self,
+        user_id: UUID,
+        agent_id: UUID,
+        payload: RunRequest,
+        *,
+        max_output_tokens_override: int | None = None,
     ) -> PreparedAgent:
         agent = await self._require_agent(user_id, agent_id)
         credential, model = await self._require_target(user_id, agent.provider, agent.model)
@@ -262,6 +276,7 @@ class AgentService:
         return PreparedAgent(
             user_id, agent, create_provider(agent.provider, chat_http=self.chat_http),
             key, model, payload.prompt, tools,
+            max_output_tokens_override=max_output_tokens_override,
         )
 
     async def stream_prepared(self, prepared: PreparedAgent) -> AsyncIterator[dict]:
@@ -351,13 +366,18 @@ class AgentService:
                     step_input = step_output = None
                     step_saved = False
                     output_estimate = 0
+                    output_cap = (
+                        prepared.max_output_tokens_override
+                        or agent.max_output_tokens
+                        or 2048
+                    )
                     while True:
                         request = ChatRequest(
                             model=agent.model,
                             turns=tuple(turns),
                             system_prompt=agent.system_prompt,
                             temperature=agent.temperature,
-                            max_output_tokens=min(agent.max_output_tokens or 2048, remaining),
+                            max_output_tokens=min(output_cap, remaining),
                             tools=active_tools,
                         )
                         try:
@@ -435,8 +455,13 @@ class AgentService:
                     final_content = content
                     if not content.strip() and not calls:
                         raise ProviderError("generation_failed")
-                    budget_used += max(step_input or 0, input_estimate) + max(
-                        step_output or 0, output_estimate
+                    # Charge the provider's real usage when it reported any;
+                    # fall back to the byte estimate only for the side(s) the
+                    # provider omitted, so the budget is still enforced then.
+                    budget_used += (
+                        step_input if step_input is not None else input_estimate
+                    ) + (
+                        step_output if step_output is not None else output_estimate
                     )
                     if budget_used > self.limits.token_budget:
                         raise ProviderError("agent_budget_exceeded")

@@ -349,6 +349,39 @@ async def test_budget_rejects_large_prompt_before_stream(owner, db, mock_agent):
     assert await db.agent_executions.count_documents({}) == 0
 
 
+async def test_budget_charges_real_usage_when_provider_reports_it(owner, db, settings):
+    # Byte-heavy Vietnamese system prompt: the UTF-8 byte estimate of each
+    # request is several thousand, so charging estimates (the old max()
+    # accounting) would blow the default 8k budget before the second step.
+    # The provider reports tiny real usage per step; real usage is charged.
+    _, user_id = owner
+    calls = 0
+
+    def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, text=sse(tool_chunk(), usage(10, 4), "[DONE]"))
+        return httpx.Response(200, text=sse(chunk("4"), usage(12, 2), "[DONE]"))
+
+    service = AgentService(db, settings, ChatHTTP(transport=httpx.MockTransport(handler)))
+    agent = await service.create_agent(
+        user_id,
+        AgentCreate(
+            **{
+                **PAYLOAD,
+                "system_prompt": "Bạn là trợ lý tính toán rất cẩn thận và tỉ mỉ. " * 100,
+            }
+        ),
+    )
+    prepared = await service.prepare_run(user_id, agent.id, RunRequest(prompt="2+2?"))
+    final = [e async for e in service.stream_prepared(prepared)][-1]["data"]["execution"]
+    assert final["status"] == "success", final
+    assert final["error_code"] is None
+    assert final["input_tokens"] == 22 and final["output_tokens"] == 6
+    assert calls == 2
+
+
 async def test_total_usage_budget_stops_before_tool_execution(owner, db, settings):
     service, prepared = await service_prepared(
         owner, db, settings,

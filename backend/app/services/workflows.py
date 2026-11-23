@@ -41,7 +41,7 @@ from app.schemas.workflows import (
     WorkflowList,
     WorkflowOut,
 )
-from app.services.agents import AgentService
+from app.services.agents import AgentLimits, AgentService
 from app.services.ai.base_provider import ProviderError
 from app.services.ai.chat import ChatHTTP
 from app.services.workflow_files import (
@@ -175,6 +175,18 @@ TRANSIENT_ERROR_CODES = {
 }
 
 
+# Per-run Agent budgets for orchestrated turns. Workflow prompts carry the
+# goal plus prior Agent results, so the shared Agent Studio budget (8k
+# tokens / 120s) starves member turns; these larger caps apply ONLY to runs
+# started by the orchestrator, never to interactive Agent Studio runs.
+WORKFLOW_AGENT_LIMITS = AgentLimits(token_budget=48_000, deadline_seconds=240.0)
+# The artifact turn must emit a whole website/project in one answer: bigger
+# token budget, a much larger output cap and a longer deadline (still inside
+# the 600s overall workflow timeout).
+ARTIFACT_AGENT_LIMITS = AgentLimits(token_budget=96_000, deadline_seconds=420.0)
+ARTIFACT_MAX_OUTPUT_TOKENS = 16_384
+
+
 @dataclass(frozen=True)
 class WorkflowLimits:
     max_agent_turns: int = 12
@@ -183,6 +195,11 @@ class WorkflowLimits:
     lease_seconds: int = 900
     context_chars_per_result: int = 2000
     retry_backoff_seconds: float = 2.0
+    # Provider rate limits are enforced per minute (e.g. Groq free tier), so
+    # the generic 2s backoff is useless there: rate-limited turns get their
+    # own retry count and a half-minute pause between attempts.
+    rate_limit_retries: int = 2
+    rate_limit_backoff_seconds: float = 30.0
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "WorkflowLimits":
@@ -193,6 +210,15 @@ class WorkflowLimits:
             lease_seconds=settings.workflow_lease_seconds,
             context_chars_per_result=settings.workflow_context_chars_per_result,
         )
+
+
+def longest_prior_result(prior: list[tuple[str, str]]) -> str:
+    """Fallback final result when no synthesis turn can run.
+
+    The LONGEST team result is the most substantive deliverable; the last
+    turn may be a short review note, which would make a poor final answer.
+    """
+    return max((content for _, content in prior), key=len, default="")
 
 
 def build_context(
@@ -240,8 +266,13 @@ class WorkflowService:
         self.chat_http = chat_http
         self.limits = limits or WorkflowLimits.from_settings(settings)
 
-    def _agent_service(self) -> AgentService:
-        return AgentService(self.db, self.settings, self.chat_http)
+    def _agent_service(self, limits: AgentLimits | None = None) -> AgentService:
+        return AgentService(
+            self.db,
+            self.settings,
+            self.chat_http,
+            limits=limits or WORKFLOW_AGENT_LIMITS,
+        )
 
     # --- Teams -------------------------------------------------------------
     async def _validate_members(self, user_id, coordinator_agent_id, members):
@@ -527,9 +558,22 @@ class WorkflowService:
         return claimed, owner
 
     # --- Agent execution -------------------------------------------------------
-    async def _run_agent(self, user_id, agent_id, prompt: str) -> tuple[str, dict]:
-        service = self._agent_service()
-        prepared = await service.prepare_run(user_id, agent_id, RunRequest(prompt=prompt))
+    async def _run_agent(
+        self,
+        user_id,
+        agent_id,
+        prompt: str,
+        *,
+        limits: AgentLimits | None = None,
+        max_output_tokens: int | None = None,
+    ) -> tuple[str, dict]:
+        service = self._agent_service(limits)
+        prepared = await service.prepare_run(
+            user_id,
+            agent_id,
+            RunRequest(prompt=prompt),
+            max_output_tokens_override=max_output_tokens,
+        )
         content, status, error_code, usage = "", "error", "generation_failed", {}
         async for event in service.stream_prepared(prepared):
             if event["event"] == "done":
@@ -546,22 +590,49 @@ class WorkflowService:
             raise ProviderError(error_code if error_code in _KNOWN_CODES else "generation_failed")
         return content, usage
 
-    async def _run_agent_resilient(self, user_id, agent_id, prompt: str) -> tuple[str, dict]:
-        """One agent turn with a single retry for transient provider errors.
+    async def _run_agent_resilient(
+        self,
+        user_id,
+        agent_id,
+        prompt: str,
+        *,
+        limits: AgentLimits | None = None,
+        max_output_tokens: int | None = None,
+    ) -> tuple[str, dict]:
+        """One agent turn with bounded retries for transient provider errors.
 
-        A flaky provider response (empty generation, timeout, rate limit,
-        5xx) must not kill a whole workflow on the first attempt; permanent
-        errors (auth, configuration, not found) are raised immediately.
+        A flaky provider response (empty generation, timeout, 5xx) gets one
+        retry after a short pause and must not kill a whole workflow on the
+        first attempt. A rate limit is different: providers meter it per
+        minute, so it gets up to ``rate_limit_retries`` extra attempts with
+        a long backoff. Permanent errors (auth, configuration, not found)
+        are raised immediately. The caller's overall workflow timeout still
+        bounds the total wait.
         """
         attempt = 0
+        rate_limit_attempt = 0
         while True:
             try:
-                return await self._run_agent(user_id, agent_id, prompt)
+                return await self._run_agent(
+                    user_id,
+                    agent_id,
+                    prompt,
+                    limits=limits,
+                    max_output_tokens=max_output_tokens,
+                )
             except ProviderError as error:
-                if error.code not in TRANSIENT_ERROR_CODES or attempt >= 1:
+                if error.code == "provider_rate_limited":
+                    if rate_limit_attempt >= self.limits.rate_limit_retries:
+                        raise
+                    rate_limit_attempt += 1
+                    await asyncio.sleep(self.limits.rate_limit_backoff_seconds)
+                elif error.code in TRANSIENT_ERROR_CODES:
+                    if attempt >= 1:
+                        raise
+                    attempt += 1
+                    await asyncio.sleep(self.limits.retry_backoff_seconds)
+                else:
                     raise
-                attempt += 1
-                await asyncio.sleep(self.limits.retry_backoff_seconds)
 
     async def _send(self, user_id, workflow_id, task_id, frm, to, mtype, content):
         message = await self.repo.create_message(
@@ -860,7 +931,7 @@ class WorkflowService:
                 if current is None or current.status in ("cancelled", "waiting"):
                     return
                 if turns >= workflow.max_steps:
-                    final = prior[-1][1] if prior else ""
+                    final = longest_prior_result(prior)
                 else:
                     prompt = build_context(
                         workflow.goal,
@@ -877,9 +948,9 @@ class WorkflowService:
                         if not prior:
                             raise
                         # The team's work is done; a failing synthesis must
-                        # not throw it away. Fall back to the last real team
-                        # result and say so in the event timeline.
-                        final = prior[-1][1]
+                        # not throw it away. Fall back to the longest real
+                        # team result and say so in the event timeline.
+                        final = longest_prior_result(prior)
                         await self.repo.add_event(
                             user_id,
                             workflow_id=workflow_id,
@@ -973,7 +1044,13 @@ class WorkflowService:
             self.limits.context_chars_per_result,
         )
         try:
-            content, usage = await self._run_agent_resilient(user_id, agent_id, prompt)
+            content, usage = await self._run_agent_resilient(
+                user_id,
+                agent_id,
+                prompt,
+                limits=ARTIFACT_AGENT_LIMITS,
+                max_output_tokens=ARTIFACT_MAX_OUTPUT_TOKENS,
+            )
         except ProviderError as error:
             await self._artifact_failed(user_id, workflow.id, error.code, agent_id)
             return 0, 0, 0

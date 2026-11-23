@@ -789,3 +789,139 @@ def test_create_team_infers_role_from_agent_name(owner):
     )
     roles2 = {m["agent_name"]: m["role"] for m in team2["members"]}
     assert roles2["AI Planner"] == "developer"
+
+
+# --- PR #7 regression context -------------------------------------------------
+# Live run ca4bf8f4 (7 Agents on openai/gpt-oss-20b): the Planner succeeded but
+# Leader/Architect/Developer and the ZIP artifact step died with
+# agent_budget_exceeded — the shared 8k Agent Studio budget was charged with
+# UTF-8 BYTE estimates (~3x inflation for Vietnamese context) — and the
+# Reviewer died with provider_rate_limited because the generic 2s retry
+# backoff is useless against Groq's per-minute rate-limit window.
+
+
+def _usage_event(i=60, o=25):
+    return {"choices": [], "usage": {"prompt_tokens": i, "completion_tokens": o}}
+
+
+async def test_workflow_heavy_vietnamese_context_completes(owner, mock_http):
+    client, _ = owner
+    lead, planner, dev = (
+        make_agent(client, n) for n in ("AI Leader", "AI Planner", "AI Developer")
+    )
+    team = make_team(
+        client,
+        [(lead, "coordinator"), (planner, "planner"), (dev, "developer")],
+        coordinator=lead["id"],
+    )
+
+    def handler(request, n):
+        return httpx.Response(
+            200,
+            text=sse(chunk("Kết quả phần việc đã hoàn thành."), _usage_event(), "[DONE]"),
+        )
+
+    mock_http["configure"](handler)
+    # ~6KB of Vietnamese goal text: under the old shared 8k budget charged by
+    # byte estimate, the Developer's prompt (goal + prior results) exceeded
+    # the budget before any model call. The workflow budget (48k) plus
+    # real-usage accounting lets every task complete.
+    goal = "Hãy xây dựng một trang giới thiệu sản phẩm giày thể thao thật chi tiết, " * 60
+    wf = make_workflow(client, team, goal=goal)
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed", done
+    tasks = client.get(f"{WORKFLOWS}/{wf['id']}/tasks").json()["tasks"]
+    assert len(tasks) == 2 and all(t["status"] == "completed" for t in tasks)
+
+
+async def test_artifact_turn_uses_large_output_cap(owner, mock_http):
+    client, _ = owner
+    lead, dev = make_agent(client, "Lead"), make_agent(client, "Dev")
+    team = make_team(client, [(lead, "coordinator"), (dev, "developer")], coordinator=lead["id"])
+    seen = []
+
+    def handler(request, n):
+        body = request.content.decode("utf-8", "ignore")
+        seen.append((json.loads(request.content).get("max_tokens"), "WEBSITE_FILE_BLOCKS" in body))
+        if "WEBSITE_FILE_BLOCKS" in body:
+            return httpx.Response(200, text=sse(chunk(SITE_BLOCKS), "[DONE]"))
+        return httpx.Response(200, text=sse(chunk("Done."), "[DONE]"))
+
+    mock_http["configure"](handler)
+    wf = make_workflow(client, team, output_type="website_zip")
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed" and done["artifact_status"] == "ready", done
+    artifact_caps = [cap for cap, is_artifact in seen if is_artifact]
+    other_caps = [cap for cap, is_artifact in seen if not is_artifact]
+    # The artifact turn asks for a whole project in one answer: cap 16384.
+    assert artifact_caps == [16384]
+    # Member + synthesis turns keep the stored/default cap.
+    assert other_caps and all(cap == 2048 for cap in other_caps)
+
+
+async def test_rate_limited_turn_retries_with_long_backoff(owner, db, settings, monkeypatch):
+    client, user_id = owner
+    lead, planner = make_agent(client, "AI Leader"), make_agent(client, "AI Planner")
+    team = make_team(
+        client, [(lead, "coordinator"), (planner, "planner")], coordinator=lead["id"]
+    )
+    wf = make_workflow(client, team)
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] <= 2:  # Planner turn: rate limited twice, then succeeds
+            return httpx.Response(429, json={"error": {"message": "slow down"}})
+        return httpx.Response(200, text=sse(chunk("Done."), "[DONE]"))
+
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+    service = WorkflowService(db, settings, ChatHTTP(transport=httpx.MockTransport(handler)))
+    claimed, lease = await service.prepare_start(user_id, UUID(wf["id"]))
+    assert claimed.status == "running"
+    await service.run_workflow(user_id, UUID(wf["id"]), lease)
+    done = client.get(f"{WORKFLOWS}/{wf['id']}").json()
+    assert done["status"] == "completed", done
+    # 2 rate-limited attempts + the successful Planner turn + synthesis.
+    assert calls["n"] == 4
+    assert sleeps == [30.0, 30.0]
+    tasks = client.get(f"{WORKFLOWS}/{wf['id']}/tasks").json()["tasks"]
+    assert len(tasks) == 1 and tasks[0]["status"] == "completed"
+
+
+async def test_synthesis_failure_falls_back_to_longest_team_result(owner, mock_http):
+    client, _ = owner
+    lead, planner, dev = (
+        make_agent(client, n) for n in ("AI Leader", "AI Planner", "AI Developer")
+    )
+    team = make_team(
+        client,
+        [(lead, "coordinator"), (planner, "planner"), (dev, "developer")],
+        coordinator=lead["id"],
+    )
+    long_result = "Bản kế hoạch chi tiết " + "x" * 300
+
+    def handler(request, n):
+        body = request.content.decode("utf-8", "ignore")
+        if "Synthesize the final result" in body:
+            return httpx.Response(400, json={"error": {"message": "bad generation"}})
+        if "Planner:" in body:
+            return httpx.Response(200, text=sse(chunk(long_result), "[DONE]"))
+        return httpx.Response(200, text=sse(chunk("Ngắn."), "[DONE]"))
+
+    mock_http["configure"](handler)
+    wf = make_workflow(client, team)
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed", done
+    # The LAST prior is the Developer's short note; the fallback must pick
+    # the LONGEST team result (the Planner's detailed plan), not the last.
+    assert done["final_result"] == long_result
+    events = client.get(f"{WORKFLOWS}/{wf['id']}/events").json()["events"]
+    assert any(e["event_type"] == "workflow_synthesis_fallback" for e in events)
