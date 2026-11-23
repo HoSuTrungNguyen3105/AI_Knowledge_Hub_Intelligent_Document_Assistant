@@ -51,6 +51,14 @@ async def init_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.agent_executions.create_index("agent_id")
     await db.tool_executions.create_index([("user_id", 1), ("execution_id", 1), ("created_at", 1)])
     await db.tool_executions.create_index("agent_id")
+    await db.agent_teams.create_index([("user_id", 1), ("updated_at", -1)])
+    await db.agent_workflows.create_index([("user_id", 1), ("created_at", -1)])
+    await db.agent_workflows.create_index([("team_id", 1), ("status", 1)])
+    await db.agent_tasks.create_index([("workflow_id", 1), ("status", 1)])
+    await db.agent_tasks.create_index([("assigned_agent_id", 1), ("status", 1)])
+    await db.agent_messages.create_index([("workflow_id", 1), ("created_at", 1)])
+    await db.agent_messages.create_index([("to_agent_id", 1), ("status", 1)])
+    await db.agent_workflow_events.create_index([("workflow_id", 1), ("created_at", 1)])
 
 
 @asynccontextmanager
