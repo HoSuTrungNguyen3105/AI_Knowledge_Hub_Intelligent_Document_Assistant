@@ -39,6 +39,17 @@ ERRORS = {
     "agent_step_limit": (409, "The agent reached its maximum number of steps."),
     "agent_budget_exceeded": (409, "The agent reached its token budget."),
     "agent_timeout": (504, "The agent execution timed out."),
+    "team_not_found": (404, "Agent team not found."),
+    "workflow_not_found": (404, "Agent workflow not found."),
+    "task_not_found": (404, "Agent task not found."),
+    "invalid_team_members": (422, "Select only your own existing agents for this team."),
+    "coordinator_not_in_team": (422, "The coordinator must be a member of the team."),
+    "invalid_team_role": (422, "Select a valid team role."),
+    "workflow_not_runnable": (409, "This workflow cannot be started in its current state."),
+    "workflow_already_running": (409, "This workflow is already running."),
+    "workflow_step_limit": (409, "The workflow reached its maximum number of agent turns."),
+    "workflow_revision_limit": (409, "The task reached its maximum number of revisions."),
+    "workflow_timeout": (504, "The workflow timed out."),
 }
 
 

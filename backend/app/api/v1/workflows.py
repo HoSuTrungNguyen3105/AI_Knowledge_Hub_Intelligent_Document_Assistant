@@ -1,0 +1,194 @@
+import asyncio
+import json
+from collections.abc import AsyncIterator
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Response
+from fastapi.responses import StreamingResponse
+
+from app.api.dependencies import AppSettings, CurrentUser, Database
+from app.api.v1.agents import agent_http
+from app.schemas.workflows import (
+    EventList,
+    MessageList,
+    TaskList,
+    TeamCreate,
+    TeamList,
+    TeamOut,
+    TeamPatch,
+    WorkflowCreate,
+    WorkflowList,
+    WorkflowOut,
+)
+from app.services.ai.chat import ChatHTTP
+from app.services.workflows import WorkflowService, launch_workflow
+
+router = APIRouter(tags=["AI multi-agent"])
+
+AgentHTTPDep = Annotated[ChatHTTP, Depends(agent_http)]
+
+
+def _service(db, settings, http) -> WorkflowService:
+    return WorkflowService(db, settings, http)
+
+
+# --- Teams -------------------------------------------------------------------
+@router.get("/ai/agent-teams", response_model=TeamList)
+async def list_teams(user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep):
+    return await _service(db, settings, http).list_teams(user.id)
+
+
+@router.post("/ai/agent-teams", response_model=TeamOut, status_code=201)
+async def create_team(
+    payload: TeamCreate, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    return await _service(db, settings, http).create_team(user.id, payload)
+
+
+@router.get("/ai/agent-teams/{team_id}", response_model=TeamOut)
+async def get_team(
+    team_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    return await _service(db, settings, http).get_team(user.id, team_id)
+
+
+@router.patch("/ai/agent-teams/{team_id}", response_model=TeamOut)
+async def patch_team(
+    team_id: UUID,
+    payload: TeamPatch,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: AgentHTTPDep,
+):
+    return await _service(db, settings, http).patch_team(user.id, team_id, payload)
+
+
+@router.delete("/ai/agent-teams/{team_id}", status_code=204)
+async def delete_team(
+    team_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    await _service(db, settings, http).delete_team(user.id, team_id)
+    return Response(status_code=204)
+
+
+# --- Workflows -----------------------------------------------------------------
+@router.get("/ai/agent-workflows", response_model=WorkflowList)
+async def list_workflows(
+    user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    return await _service(db, settings, http).list_workflows(user.id)
+
+
+@router.post("/ai/agent-workflows", response_model=WorkflowOut, status_code=201)
+async def create_workflow(
+    payload: WorkflowCreate,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: AgentHTTPDep,
+):
+    return await _service(db, settings, http).create_workflow(user.id, payload)
+
+
+@router.get("/ai/agent-workflows/{workflow_id}", response_model=WorkflowOut)
+async def get_workflow(
+    workflow_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    return await _service(db, settings, http).get_workflow(user.id, workflow_id)
+
+
+@router.delete("/ai/agent-workflows/{workflow_id}", status_code=204)
+async def delete_workflow(
+    workflow_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    await _service(db, settings, http).delete_workflow(user.id, workflow_id)
+    return Response(status_code=204)
+
+
+async def _start(user, db, settings, http, workflow_id) -> WorkflowOut:
+    service = _service(db, settings, http)
+    claimed, owner = await service.prepare_start(user.id, workflow_id)
+    launch_workflow(service, user.id, workflow_id, owner)
+    return WorkflowService._workflow_out(claimed)
+
+
+@router.post("/ai/agent-workflows/{workflow_id}/start", response_model=WorkflowOut)
+async def start_workflow(
+    workflow_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    return await _start(user, db, settings, http, workflow_id)
+
+
+@router.post("/ai/agent-workflows/{workflow_id}/resume", response_model=WorkflowOut)
+async def resume_workflow(
+    workflow_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    return await _start(user, db, settings, http, workflow_id)
+
+
+@router.post("/ai/agent-workflows/{workflow_id}/pause", response_model=WorkflowOut)
+async def pause_workflow(
+    workflow_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    return await _service(db, settings, http).pause_workflow(user.id, workflow_id)
+
+
+@router.post("/ai/agent-workflows/{workflow_id}/cancel", response_model=WorkflowOut)
+async def cancel_workflow(
+    workflow_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    return await _service(db, settings, http).cancel_workflow(user.id, workflow_id)
+
+
+@router.get("/ai/agent-workflows/{workflow_id}/messages", response_model=MessageList)
+async def list_messages(
+    workflow_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    return await _service(db, settings, http).list_messages(user.id, workflow_id)
+
+
+@router.get("/ai/agent-workflows/{workflow_id}/tasks", response_model=TaskList)
+async def list_tasks(
+    workflow_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    return await _service(db, settings, http).list_tasks(user.id, workflow_id)
+
+
+@router.get("/ai/agent-workflows/{workflow_id}/events", response_model=EventList)
+async def list_events(
+    workflow_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    return await _service(db, settings, http).list_events(user.id, workflow_id)
+
+
+@router.get("/ai/agent-workflows/{workflow_id}/stream")
+async def stream_workflow(
+    workflow_id: UUID, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    """Observe a workflow over SSE. Disconnecting never cancels the run."""
+    service = _service(db, settings, http)
+    await service.get_workflow(user.id, workflow_id)  # ownership check before stream opens
+
+    async def generate() -> AsyncIterator[str]:
+        seen: set[str] = set()
+        while True:
+            events = await service.list_events(user.id, workflow_id)
+            for event in events.events:
+                key = str(event.id)
+                if key not in seen:
+                    seen.add(key)
+                    data = json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
+                    yield f"event: {event.event_type}\ndata: {data}\n\n"
+            workflow = await service.get_workflow(user.id, workflow_id)
+            if workflow.status in ("completed", "failed", "cancelled"):
+                yield f"event: done\ndata: {json.dumps({'status': workflow.status})}\n\n"
+                return
+            await asyncio.sleep(0.25)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )

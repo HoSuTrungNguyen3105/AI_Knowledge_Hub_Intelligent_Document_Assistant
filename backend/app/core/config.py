@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     api_rate_limit: int = Field(default=120, ge=1)
     auth_rate_limit: int = Field(default=10, ge=1)
     rate_limit_window_seconds: int = Field(default=60, ge=1)
+    # Phase 6 workflow budgets (per-agent Phase 5 limits stay in AgentLimits:
+    # 6 steps, 120s, 8000 estimated tokens, 4 tools/step, 10s tool timeout).
+    workflow_max_agent_turns: int = Field(default=12, ge=1, le=100)
+    workflow_timeout_seconds: int = Field(default=600, ge=10)
+    workflow_max_revisions_per_task: int = Field(default=2, ge=0, le=10)
+    workflow_lease_seconds: int = Field(default=900, ge=30)
+    workflow_context_chars_per_result: int = Field(default=2000, ge=100)
 
     @field_validator("credential_encryption_key")
     @classmethod

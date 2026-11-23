@@ -286,3 +286,97 @@ class ToolExecution(BaseDocument, BaseModel):
     error_code: str | None = None
     latency_ms: int | None = None
     created_at: datetime
+
+
+# --- Phase 6: Multi-Agent Collaboration -------------------------------------
+
+
+class AgentTeamMember(BaseModel):
+    agent_id: UUID
+    role: str = "member"
+    enabled: bool = True
+
+
+class AgentTeam(BaseDocument, BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID = Field(alias="_id")
+    user_id: UUID
+    name: str
+    description: str | None = None
+    coordinator_agent_id: UUID
+    members: list[AgentTeamMember] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentWorkflow(BaseDocument, BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID = Field(alias="_id")
+    user_id: UUID
+    team_id: UUID
+    title: str
+    goal: str
+    status: str = "queued"  # queued|running|waiting(paused)|completed|failed|cancelled
+    current_step: int = 0
+    max_steps: int = 12
+    budget: dict = Field(default_factory=dict)
+    usage: dict = Field(default_factory=dict)
+    final_result: str | None = None
+    error_code: str | None = None
+    lease_owner: str | None = None
+    lease_expires_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+
+
+class AgentTask(BaseDocument, BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID = Field(alias="_id")
+    user_id: UUID
+    workflow_id: UUID
+    parent_task_id: UUID | None = None
+    title: str
+    description: str = ""
+    assigned_agent_id: UUID | None = None
+    created_by_agent_id: UUID | None = None
+    depends_on: list[UUID] = Field(default_factory=list)
+    status: str = "pending"  # pending|in_progress|review|completed|failed|cancelled
+    priority: str = "normal"
+    result: str | None = None
+    revision_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentMessage(BaseDocument, BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID = Field(alias="_id")
+    user_id: UUID
+    workflow_id: UUID
+    task_id: UUID | None = None
+    from_agent_id: str = "user"
+    to_agent_id: str = "coordinator"
+    message_type: str = "MESSAGE"
+    content: str = ""
+    context_refs: list[str] = Field(default_factory=list)
+    status: str = "PENDING"  # PENDING|PROCESSING|DELIVERED|COMPLETED|FAILED
+    created_at: datetime
+    processed_at: datetime | None = None
+    error_code: str | None = None
+
+
+class AgentWorkflowEvent(BaseDocument, BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID = Field(alias="_id")
+    user_id: UUID
+    workflow_id: UUID
+    event_type: str
+    actor_id: str | None = None
+    payload: dict = Field(default_factory=dict)
+    created_at: datetime
