@@ -39,6 +39,8 @@ describe("AgentOffice simulation view", () => {
     expect(screen.getByText("55%")).toBeTruthy();
     // Team chat rail shows the real message.
     expect(screen.getByText(/Đã giao việc cho Developer/)).toBeTruthy();
+    // Agents render as SVG chibi robots (one per team member).
+    expect(document.querySelectorAll(".wf-office-avatar svg.wf-bot").length).toBe(2);
   });
 
   it("asks the parent to rename when a nameplate is clicked", () => {

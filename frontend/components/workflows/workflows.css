@@ -111,13 +111,32 @@
 .wf-office-board { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); text-align: center; color: #e0e7ff; }
 .wf-office-board span { display: block; font-weight: 800; letter-spacing: 2.5px; font-size: 13px; text-transform: uppercase; }
 .wf-office-board small { font-size: 10.5px; color: #a5b4fc; }
-.wf-desk { position: absolute; transform: translate(-50%, -38%); width: 128px; height: 62px; pointer-events: none; }
+.wf-desk { position: absolute; transform: translate(-50%, -38%); width: 128px; height: 62px; pointer-events: none; z-index: 2; }
+.wf-desk-front { position: absolute; transform: translate(-50%, 14px); width: 132px; height: 30px; border-radius: 10px; background: linear-gradient(180deg, #e2e8f0, #94a3b8); box-shadow: 0 12px 20px rgb(2 6 23 / 45%); z-index: 6; pointer-events: none; }
 .wf-desk-table { position: absolute; inset: auto 0 0; height: 40px; border-radius: 12px; background: linear-gradient(180deg, #f8fafc, #cbd5e1); box-shadow: 0 10px 18px rgb(2 6 23 / 45%); }
 .wf-desk-screen { position: absolute; left: 50%; bottom: 30px; transform: translateX(-50%); width: 52px; height: 34px; border-radius: 6px; border: 3px solid #64748b; background: linear-gradient(160deg, #0ea5e9, #1d4ed8); box-shadow: 0 0 14px rgb(56 189 248 / 55%); }
 .wf-office-agent { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 3px; width: 132px; transition: left 2.6s ease-in-out, top 2.6s ease-in-out; z-index: 3; }
 .wf-office-agent.away { z-index: 4; }
-.wf-office-agent.away .wf-office-avatar { animation: wf-bob 0.55s ease-in-out infinite alternate; }
-.wf-office-avatar { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; color: #fff; border: 3px solid rgb(255 255 255 / 85%); box-shadow: 0 6px 14px rgb(2 6 23 / 45%); }
+.wf-office-avatar { display: block; width: 96px; line-height: 0; }
+.wf-office-shadow { position: absolute; left: 50%; bottom: 36px; transform: translateX(-50%); width: 72px; height: 13px; border-radius: 50%; background: rgb(2 6 23 / 38%); filter: blur(2px); z-index: -1; }
+/* Chibi robot (agent-avatar.jsx): poses are CSS classes on the SVG root. */
+.wf-bot { width: 96px; height: auto; display: block; overflow: visible; }
+.wf-bot-leg, .wf-bot-arm, .wf-bot-eyes { transform-box: fill-box; }
+.wf-bot-leg { transform-origin: 50% 6%; }
+.wf-bot-arm { transform-origin: 50% 8%; }
+.wf-bot-eyes { transform-origin: center; animation: wf-eyes 4.6s ease-in-out infinite; }
+.wf-bot-heart { animation: wf-blink 1.6s ease-in-out infinite; }
+.wf-bot-idle { animation: wf-bob 2.8s ease-in-out infinite alternate; }
+.wf-bot-walking { animation: wf-bob 0.26s ease-in-out infinite alternate; }
+.wf-bot-walking .wf-bot-leg.left { animation: wf-step 0.52s ease-in-out infinite alternate; }
+.wf-bot-walking .wf-bot-leg.right { animation: wf-step 0.52s ease-in-out infinite alternate-reverse; }
+.wf-bot-walking .wf-bot-arm.left { animation: wf-step 0.52s ease-in-out infinite alternate-reverse; }
+.wf-bot-walking .wf-bot-arm.right { animation: wf-step 0.52s ease-in-out infinite alternate; }
+.wf-bot-working .wf-bot-arm.left { animation: wf-type 0.3s ease-in-out infinite alternate; }
+.wf-bot-working .wf-bot-arm.right { animation: wf-type 0.3s ease-in-out infinite alternate-reverse; }
+@keyframes wf-step { from { transform: rotate(14deg); } to { transform: rotate(-14deg); } }
+@keyframes wf-type { from { transform: rotate(7deg); } to { transform: rotate(-11deg); } }
+@keyframes wf-eyes { 0%, 91%, 100% { transform: scaleY(1); } 94.5% { transform: scaleY(0.1); } }
 .wf-office-bubble { position: absolute; bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); width: max-content; max-width: 190px; background: #fff; color: #1e293b; border-radius: 12px; padding: 6px 10px; font-size: 11px; line-height: 1.35; box-shadow: 0 8px 18px rgb(2 6 23 / 35%); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .wf-office-bubble.working { outline: 2px solid #22c55e; }
 .wf-typing { display: inline-flex; gap: 2.5px; margin-left: 5px; vertical-align: middle; }
@@ -159,5 +178,5 @@
 @media (max-width: 1180px) { .wf-office-wrap { grid-template-columns: minmax(0, 1fr); } .wf-office-room { height: 480px; } }
 @media (prefers-reduced-motion: reduce) {
   .wf-office-agent { transition: none; }
-  .wf-office-agent.away .wf-office-avatar, .wf-typing i { animation: none; }
+  .wf-bot, .wf-bot-leg, .wf-bot-arm, .wf-bot-eyes, .wf-bot-heart, .wf-typing i { animation: none; }
 }
