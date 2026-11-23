@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { GitBranch, Play, Plus, RotateCcw, Sparkles } from "lucide-react";
 import { teamsService, workflowsService } from "../../services/workflows";
-import { OUTPUT_TYPES, WORKFLOW_STATUS, getWorkflowError } from "../../utils/workflows";
+import { OUTPUT_TYPES, WORKFLOW_STATUS, WORKFLOW_TITLE_MAX, getWorkflowError, validateWorkflowForm } from "../../utils/workflows";
 
 export function WorkflowsList() {
   const router = useRouter();
@@ -50,7 +50,8 @@ export function WorkflowsList() {
 
   async function create(event) {
     event.preventDefault();
-    if (!form.team_id || !form.title.trim() || !form.goal.trim()) { setError("Chọn nhóm, nhập tiêu đề và mục tiêu."); return; }
+    const validationError = validateWorkflowForm(form);
+    if (validationError) { setError(validationError); return; }
     setBusy(true); setError("");
     try {
       const created = await workflowsService.create({ team_id: form.team_id, title: form.title.trim(), goal: form.goal.trim(), output_type: form.output_type });
@@ -74,8 +75,10 @@ export function WorkflowsList() {
         <form className="wf-form" onSubmit={create} style={{ marginTop: 14 }}>
           <label>Nhóm Agent<select value={form.team_id} onChange={(e) => setForm({ ...form, team_id: e.target.value })}>
             {teams.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.members.length} Agent)</option>)}</select></label>
-          <label>Tiêu đề<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Ví dụ: Phân tích chức năng Knowledge Base" /></label>
-          <label>Mục tiêu chung<textarea rows={3} value={form.goal} onChange={(e) => setForm({ ...form, goal: e.target.value })} placeholder="Mô tả mục tiêu cả nhóm cần hoàn thành…" /></label>
+          <label>Tiêu đề<input value={form.title} maxLength={WORKFLOW_TITLE_MAX} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Ví dụ: Landing Page bán giày sneaker" />
+            <small className="muted">Tiêu đề ngắn gọn ({form.title.length}/{WORKFLOW_TITLE_MAX} ký tự) — toàn bộ yêu cầu chi tiết hãy nhập ở ô Mục tiêu chung bên dưới.</small></label>
+          <label>Mục tiêu chung<textarea rows={5} value={form.goal} onChange={(e) => setForm({ ...form, goal: e.target.value })} placeholder={"Nhập TOÀN BỘ yêu cầu chi tiết ở đây. Ví dụ:\nHãy xây dựng một Landing Page bán giày sneaker bằng React và Tailwind CSS. Yêu cầu: header có logo/menu/giỏ hàng, banner nổi bật, 4 sản phẩm có hình/tên/giá, nút Mua ngay + Thêm vào giỏ, footer thông tin cửa hàng. Đầu ra: source code đầy đủ chạy được, có README hướng dẫn cài đặt, đóng gói ZIP."} />
+            <small className="muted">Mọi yêu cầu dài, danh sách chức năng và yêu cầu đầu ra đều thuộc ô này — đừng dán vào ô Tiêu đề.</small></label>
           <label>Sản phẩm đầu ra<select value={form.output_type} onChange={(e) => setForm({ ...form, output_type: e.target.value })}>
             {OUTPUT_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
           <div><button className="wf-btn primary" type="submit" disabled={busy}><Play size={16} /> Tạo workflow</button></div>

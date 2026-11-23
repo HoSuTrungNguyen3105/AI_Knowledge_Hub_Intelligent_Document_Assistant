@@ -48,7 +48,54 @@ def test_no_blocks_is_artifact_no_files():
 def test_missing_index_html_is_reported():
     result = extract_files(block("styles.css", "body {}"), LIMITS)
     assert len(result.files) == 1
-    assert result.error_code == "artifact_missing_index"
+    assert result.error_code == "artifact_missing_entry"
+    assert result.mode == "static"
+
+
+def test_jsx_tsx_and_project_config_files_are_accepted():
+    text = (
+        block("src/App.jsx", "export default function App() { return <h1>Hi</h1>; }")
+        + block("src/main.tsx", "import App from './App';")
+        + block("vite.config.ts", "export default {};")
+        + block("tailwind.config.js", "module.exports = {};")
+        + block("postcss.config.js", "module.exports = {};")
+        + block("tsconfig.json", "{}")
+        + block("index.html", "<html></html>")
+    )
+    result = extract_files(text, LIMITS)
+    assert result.rejected == []
+    assert {f.path for f in result.files} >= {"src/App.jsx", "src/main.tsx", "vite.config.ts"}
+
+
+def test_project_mode_needs_no_root_index_html():
+    # React/Vite project: package.json + src sources, index.html present is
+    # typical but the entry requirement is package.json + a real source.
+    text = (
+        block("package.json", '{"scripts": {"dev": "vite", "build": "vite build"}}')
+        + block("src/App.jsx", "export default function App() { return null; }")
+        + block("src/index.css", "@tailwind base;")
+    )
+    result = extract_files(text, LIMITS)
+    assert result.mode == "project"
+    assert result.error_code is None
+
+
+def test_project_mode_bare_package_json_is_not_runnable():
+    result = extract_files(block("package.json", "{}"), LIMITS)
+    assert result.mode == "project"
+    assert result.error_code == "artifact_missing_entry"
+
+
+def test_project_zip_guide_has_npm_commands_and_honest_build_note():
+    files = [
+        ParsedFile("package.json", '{"scripts": {"dev": "vite", "build": "vite build"}}'),
+        ParsedFile("src/App.jsx", "export default function App() { return null; }"),
+    ]
+    with zipfile.ZipFile(io.BytesIO(build_zip(files, "Shop", "React landing"))) as archive:
+        assert "package.json" in archive.namelist()
+        guide = archive.read("HUONG-DAN.md").decode("utf-8")
+        assert "npm install" in guide and "npm run dev" in guide and "npm run build" in guide
+        assert "chưa được build thử trên server" in guide
 
 
 def test_path_traversal_and_absolute_paths_are_blocked():

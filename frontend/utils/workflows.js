@@ -94,8 +94,49 @@ export function timeLabel(value) {
 
 export const OUTPUT_TYPES = [
   { value: "text", label: "Văn bản (kết quả chữ như hiện tại)" },
-  { value: "website_zip", label: "Website — xuất ZIP (website tĩnh tải về được)" },
+  { value: "website_zip", label: "Website — xuất ZIP (website tĩnh hoặc source project React/Vite/Tailwind)" },
 ];
+
+export const WORKFLOW_TITLE_MAX = 200;
+
+const FIELD_LABELS = {
+  title: "Tiêu đề",
+  goal: "Mục tiêu chung",
+  team_id: "Nhóm Agent",
+  name: "Tên",
+  description: "Mô tả",
+  members: "Thành viên",
+  coordinator_agent_id: "Coordinator",
+  output_type: "Sản phẩm đầu ra",
+  max_steps: "Số bước tối đa",
+};
+
+// Client-side mirror of the backend WorkflowCreate limits so a too-long
+// title (the classic mistake: pasting the whole request into Tiêu đề) is
+// explained here in Vietnamese instead of surfacing as a cryptic API code.
+export function validateWorkflowForm({ team_id, title, goal }) {
+  if (!team_id) return "Hãy chọn nhóm Agent trước.";
+  const cleanTitle = String(title || "").trim();
+  if (!cleanTitle) return "Hãy nhập tiêu đề workflow.";
+  if (cleanTitle.length > WORKFLOW_TITLE_MAX) {
+    return `Tiêu đề tối đa ${WORKFLOW_TITLE_MAX} ký tự (hiện ${cleanTitle.length}). Hãy đặt tiêu đề ngắn gọn — toàn bộ yêu cầu chi tiết hãy nhập ở ô Mục tiêu chung.`;
+  }
+  if (!String(goal || "").trim()) return "Hãy nhập mục tiêu chung — toàn bộ yêu cầu chi tiết cho nhóm Agent thuộc ô này.";
+  return "";
+}
+
+// Artifact kind derived from the real file list: a package.json means the
+// Agent shipped a runnable project source; otherwise it is a static site.
+export function artifactKind(files) {
+  const names = (files || []).map((f) => String(f.path || "").split("/").pop().toLowerCase());
+  return names.includes("package.json") ? "project" : "static";
+}
+
+export function artifactKindLabel(files) {
+  return artifactKind(files) === "project"
+    ? "Source project (React/Vite/Tailwind…) — giải nén, chạy npm install rồi npm run dev; source chưa được build thử trên server."
+    : "Website tĩnh — giải nén và mở index.html là chạy.";
+}
 
 export function formatBytes(bytes) {
   const value = Number(bytes) || 0;
@@ -107,6 +148,7 @@ export function formatBytes(bytes) {
 const ARTIFACT_ERROR_MESSAGES = {
   artifact_no_files: "Agent không trả về file website hợp lệ nào (đúng định dạng file blocks), nên không có ZIP. Hãy chạy lại workflow hoặc diễn đạt mục tiêu rõ hơn.",
   artifact_missing_index: "Website do Agent tạo thiếu file index.html nên không đóng gói được. Hãy chạy lại workflow.",
+  artifact_missing_entry: "Sản phẩm do Agent tạo thiếu điểm vào (index.html cho website tĩnh, hoặc package.json kèm source trong src/ cho project) nên không đóng gói được. Hãy chạy lại workflow.",
   artifact_limit_exceeded: "Website vượt giới hạn dung lượng artifact cho phép nên không được đóng gói.",
   artifact_not_ready: "Sản phẩm ZIP chưa sẵn sàng để tải.",
   workflow_step_limit: "Workflow đã chạm giới hạn số lượt Agent trước khi kịp tạo file ZIP.",
@@ -129,6 +171,27 @@ const ERROR_MESSAGES = {
 export function getWorkflowError(error, fallback = "Đã xảy ra lỗi. Vui lòng thử lại.") {
   const status = error?.response?.status;
   const code = error?.response?.data?.detail?.code;
+  const fields = error?.response?.data?.detail?.fields;
+  // Server-side validation on the team/workflow routes now returns the
+  // sanitised field list; translate it into a concrete Vietnamese message.
+  if (code === "validation_error" && Array.isArray(fields) && fields.length) {
+    const parts = fields.map((f) => {
+      const name = [...(f.loc || [])].reverse().find((p) => typeof p === "string" && FIELD_LABELS[p]);
+      const label = name ? FIELD_LABELS[name] : "Dữ liệu";
+      if (f.type === "string_too_long") {
+        const max = name === "title" ? ` (tối đa ${WORKFLOW_TITLE_MAX} ký tự — yêu cầu chi tiết hãy để ở ô Mục tiêu chung)` : "";
+        return `${label} quá dài${max}`;
+      }
+      if (f.type === "missing") return `Thiếu ${label.toLowerCase()}`;
+      return `${label} không hợp lệ`;
+    });
+    return `Dữ liệu chưa hợp lệ: ${[...new Set(parts)].join("; ")}.`;
+  }
+  if (code === "invalid_provider_configuration") {
+    // Legacy masked code: on the workflow/team flow this almost always means
+    // a field failed validation (e.g. title over 200 characters).
+    return `Dữ liệu chưa hợp lệ (422). Kiểm tra lại: Tiêu đề tối đa ${WORKFLOW_TITLE_MAX} ký tự (đặt tiêu đề ngắn, yêu cầu chi tiết để ở ô Mục tiêu chung), Mục tiêu không được để trống.`;
+  }
   // Status-specific guidance first: a 404 on the Phase 6 routes almost always
   // means the locally running backend predates Phase 6 and was not restarted.
   if (status === 404) {

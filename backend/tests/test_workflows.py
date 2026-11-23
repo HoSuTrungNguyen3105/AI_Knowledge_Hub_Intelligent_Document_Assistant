@@ -423,3 +423,86 @@ async def test_step_limit_enforced(owner, db, settings):
     wf = client.get(f"{WORKFLOWS}/{r.json()['id']}").json()
     # 1 turn for planner, synthesis falls back to last result without extra call
     assert wf["status"] == "completed" and wf["final_result"] == "Done."
+
+
+PROJECT_BLOCKS = (
+    "Here is the complete project:\n"
+    "```file:package.json\n"
+    '{"name": "sneaker-landing", "scripts": {"dev": "vite", "build": "vite build"}, '
+    '"dependencies": {"react": "^19.0.0"}}\n```\n'
+    "```file:index.html\n<html><body><div id=\"root\"></div></body></html>\n```\n"
+    "```file:src/App.jsx\nexport default function App() { return <h1>Sneakers</h1>; }\n```\n"
+    "```file:src/index.css\n@tailwind base;\n```\n"
+    "```file:README.md\n# Sneaker Landing\n\nnpm install\nnpm run dev\n```\n"
+)
+
+
+def project_handler(request, n):
+    body = request.content.decode("utf-8", "ignore")
+    if "WEBSITE_FILE_BLOCKS" in body:
+        return httpx.Response(200, text=sse(chunk(PROJECT_BLOCKS), "[DONE]"))
+    return httpx.Response(200, text=sse(chunk("Done."), "[DONE]"))
+
+
+async def test_project_zip_workflow_creates_project_artifact(owner, mock_http):
+    import io
+    import zipfile
+
+    client, _ = owner
+    lead, dev = make_agent(client, "Lead"), make_agent(client, "Dev")
+    team = make_team(client, [(lead, "coordinator"), (dev, "developer")], coordinator=lead["id"])
+    mock_http["configure"](project_handler)
+    wf = make_workflow(
+        client, team, goal="Build a React + Tailwind sneaker landing page",
+        output_type="website_zip",
+    )
+    client.post(f"{WORKFLOWS}/{wf['id']}/start")
+    done = await wait_done(client, wf["id"])
+    assert done["status"] == "completed", done
+    assert done["artifact_status"] == "ready", done
+    paths = [f["path"] for f in client.get(f"{WORKFLOWS}/{wf['id']}/files").json()["files"]]
+    assert "package.json" in paths and "src/App.jsx" in paths
+    download = client.get(f"{WORKFLOWS}/{wf['id']}/download.zip")
+    assert download.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(download.content)) as archive:
+        names = archive.namelist()
+        assert "package.json" in names and "src/App.jsx" in names
+        # The agent shipped its own README, so no system guide is injected.
+        assert "README.md" in names and "HUONG-DAN.md" not in names
+    events = client.get(f"{WORKFLOWS}/{wf['id']}/events").json()["events"]
+    created = [e for e in events if e["event_type"] == "artifact_created"]
+    assert created and created[0]["payload"]["mode"] == "project"
+
+
+def test_workflow_create_validation_error_is_sanitised_and_specific(owner):
+    client, _ = owner
+    lead = make_agent(client, "Lead")
+    team = make_team(client, [(lead, "coordinator")])
+    marker = "SNEAKER-TITLE-MARKER-" + "x" * 300
+    r = client.post(WORKFLOWS, json={"team_id": team["id"], "title": marker, "goal": "g"})
+    assert r.status_code == 422, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "validation_error"
+    fields = detail["fields"]
+    assert any("title" in f["loc"] for f in fields)
+    # Sanitised: the submitted title value itself is never echoed back.
+    assert marker not in r.text
+
+
+def test_team_create_validation_error_is_sanitised_and_specific(owner):
+    client, _ = owner
+    lead = make_agent(client, "Lead")
+    marker = "TEAM-NAME-MARKER-" + "y" * 200
+    r = client.post(
+        TEAMS,
+        json={
+            "name": marker,
+            "coordinator_agent_id": lead["id"],
+            "members": [{"agent_id": lead["id"], "role": "coordinator"}],
+        },
+    )
+    assert r.status_code == 422, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == "validation_error"
+    assert any("name" in f["loc"] for f in detail["fields"])
+    assert marker not in r.text

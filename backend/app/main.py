@@ -49,7 +49,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.exception_handler(RequestValidationError)
     async def validation_error(_request: Request, exc: RequestValidationError):
-        if _request.url.path.startswith("/api/v1/ai"):
+        path = _request.url.path
+        if "/ai/agent-teams" in path or "/ai/agent-workflows" in path:
+            # These payloads carry no secrets (team/workflow metadata only), so
+            # the caller gets a *sanitised* field list — loc/msg/type only,
+            # never input/ctx/url — instead of the generic masked code that
+            # made a too-long title surface as "invalid_provider_configuration".
+            fields = [
+                {"type": e["type"], "loc": list(e["loc"]), "msg": e["msg"]}
+                for e in exc.errors()
+            ]
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "detail": {
+                        "code": "validation_error",
+                        "message": "The submitted data is invalid.",
+                        "fields": fields,
+                    }
+                },
+            )
+        if path.startswith("/api/v1/ai"):
             # Never echo submitted keys, passwords, extra field names or parser context.
             error = ProviderError("invalid_provider_configuration")
             return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
