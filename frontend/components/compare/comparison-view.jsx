@@ -7,7 +7,7 @@ import { ConfirmDialog } from "../confirm-dialog";
 
 export function ComparisonView({ controller, providers }) {
   const {
-    comparison, detailLoading, detailError, runText, synthesisText, phase, isStreaming,
+    comparison, detailLoading, detailError, runText, activeRuns = {}, synthesisText, phase, isStreaming,
     streamError, busy, confirmDelete, setConfirmDelete, canExecute, canSynthesize,
     execute, synthesize, stop, deleteComparison, reloadDetail,
   } = controller;
@@ -46,7 +46,7 @@ export function ComparisonView({ controller, providers }) {
         {streamError && <p className="composer-error" role="alert"><CircleAlert size={15} />{streamError}</p>}
         <div className="run-columns">
           {comparison.runs.map((run) => (
-            <RunColumn key={run.id} run={run} liveText={runText[run.id]} streaming={executing && run.status === "pending"} />
+            <RunColumn key={run.id} run={run} liveText={runText[run.id]} streaming={executing && Boolean(activeRuns[run.id])} />
           ))}
         </div>
         <SynthesisPanel

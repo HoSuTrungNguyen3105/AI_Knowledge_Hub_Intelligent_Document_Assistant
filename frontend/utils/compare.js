@@ -45,7 +45,8 @@ export function formatCost(value) {
 }
 
 export const runStatusLabels = {
-  pending: "Đang chờ",
+  pending: "Chưa chạy",
+  running: "Đang chạy",
   success: "Hoàn tất",
   stopped: "Đã dừng",
   error: "Lỗi",

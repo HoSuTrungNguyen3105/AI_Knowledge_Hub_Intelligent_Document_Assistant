@@ -21,8 +21,15 @@ export function useCompare() {
   const [streamError, setStreamError] = useState("");
   const [busy, setBusy] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Run ids that were sent to the backend and have not reported a terminal event yet.
+  const [activeRuns, setActiveRuns] = useState({});
 
   const abortRef = useRef(null);
+  // Each stream gets a token; callbacks of a superseded stream never touch state.
+  const streamToken = useRef(0);
+  // A freshly created comparison is seeded from the POST response, so the detail
+  // effect must not refetch it (a late GET would wipe the live stream text).
+  const seededId = useRef(null);
   const mounted = useRef(true);
   const show = useNotice((state) => state.show);
 
@@ -42,6 +49,7 @@ export function useCompare() {
 
   useEffect(() => {
     if (!activeId) return;
+    if (seededId.current === activeId) { seededId.current = null; return; }
     const controller = new AbortController();
     const id = activeId;
     const revision = detailRevision;
@@ -80,13 +88,15 @@ export function useCompare() {
   function handleExecuteEvent(event) {
     if (event.event === "comparison" || event.event === "done") {
       setDetailState((state) => ({ ...state, data: event.data.comparison }));
-      if (event.event === "done") setRunText({});
+      if (event.event === "done") { setRunText({}); setActiveRuns({}); }
     } else if (event.event === "run_delta") {
       const { run_id: runId, text } = event.data;
       setRunText((prev) => ({ ...prev, [runId]: (prev[runId] || "") + text }));
     } else if (event.event === "run_done" || event.event === "run_error") {
+      const runId = event.data.run.id;
       patchRun(event.data.run);
-      setRunText((prev) => { const next = { ...prev }; delete next[event.data.run.id]; return next; });
+      setRunText((prev) => { const next = { ...prev }; delete next[runId]; return next; });
+      setActiveRuns((prev) => { const next = { ...prev }; delete next[runId]; return next; });
       if (event.event === "run_error") setStreamError(compareErrorFromEvent({ code: event.data.run.error_code }));
     }
   }
@@ -105,42 +115,62 @@ export function useCompare() {
     }
   }
 
-  function runStream(start, onEvent, kind) {
-    if (abortRef.current) return;
+  function runStream(start, onEvent, kind, runIds = []) {
+    // An aborted controller may linger until its promise settles; it must not
+    // block a new stream (e.g. auto-run right after creating a comparison).
+    if (abortRef.current && !abortRef.current.signal.aborted) return;
     const controller = new AbortController();
+    const token = streamToken.current + 1;
+    streamToken.current = token;
+    const current = () => mounted.current && streamToken.current === token;
+    const guarded = (event) => { if (current()) onEvent(event); };
     abortRef.current = controller;
     setStreamError("");
     setPhase(kind);
-    if (kind === "execute") setRunText({});
-    else setSynthesisText("");
-    start(controller.signal, onEvent)
+    if (kind === "execute") {
+      setRunText({});
+      setActiveRuns(Object.fromEntries(runIds.map((id) => [id, true])));
+    } else {
+      setSynthesisText("");
+    }
+    start(controller.signal, guarded)
       .catch((error) => {
+        if (!current()) return;
         if (controller.signal.aborted) {
           // The backend persists a "stopped" run; reload to show the saved state.
           setRunText({});
           setSynthesisText("");
-          if (mounted.current) setDetailRevision((value) => value + 1);
+          setDetailRevision((value) => value + 1);
         } else {
           setStreamError(getCompareError(error));
         }
       })
       .finally(() => {
-        abortRef.current = null;
-        if (mounted.current) { setPhase(null); setListRevision((value) => value + 1); }
+        if (abortRef.current === controller) abortRef.current = null;
+        if (!current()) return;
+        setPhase(null);
+        setActiveRuns({});
+        setListRevision((value) => value + 1);
       });
   }
 
-  function execute() {
-    if (!activeId || abortRef.current) return;
+  function executeFor(id, runIds) {
+    if (!id) return;
     runStream(
-      (signal, onEvent) => compareService.execute(activeId, { signal, onEvent }),
+      (signal, onEvent) => compareService.execute(id, { signal, onEvent }),
       handleExecuteEvent,
       "execute",
+      runIds,
     );
   }
 
+  function execute() {
+    if (!activeId || phase !== null) return;
+    executeFor(activeId, comparison?.runs?.map((run) => run.id) ?? []);
+  }
+
   function synthesize(payload) {
-    if (!activeId || abortRef.current) return;
+    if (!activeId || phase !== null) return;
     runStream(
       (signal, onEvent) => compareService.synthesize(activeId, payload, { signal, onEvent }),
       handleSynthesisEvent,
@@ -156,9 +186,15 @@ export function useCompare() {
       if (!mounted.current) return;
       stop();
       setStreamError("");
+      setRunText({});
+      setSynthesisText("");
+      // Show the new comparison straight from the POST response and send the
+      // prompt to every model immediately — no extra click, no refetch race.
+      seededId.current = created.id;
+      setDetailState({ id: created.id, data: created, error: "", revision: detailRevision });
       setActiveId(created.id);
       setListRevision((value) => value + 1);
-      show("Đã tạo phép so sánh mới.");
+      executeFor(created.id, created.runs?.map((run) => run.id) ?? []);
     } catch (error) {
       if (mounted.current) show(getCompareError(error), "error");
     } finally {
@@ -208,6 +244,7 @@ export function useCompare() {
     detailLoading,
     detailError,
     runText,
+    activeRuns,
     synthesisText,
     phase,
     isStreaming: phase !== null,

@@ -122,6 +122,7 @@ describe("compare error copy and cost formatting", () => {
     expect(formatCost(0.02)).toBe("$0.0200");
     expect(formatCost(0)).toBe("$0.000000");
     expect(runStatusLabels.error).toBe("Lỗi");
-    expect(runStatusLabels.pending).toBe("Đang chờ");
+    expect(runStatusLabels.pending).toBe("Chưa chạy");
+    expect(runStatusLabels.running).toBe("Đang chạy");
   });
 });

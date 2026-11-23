@@ -125,7 +125,7 @@ export function CompareSetup({ providers, busy, onCreate }) {
         </div>
       </div>
       <p className="field-hint">Để trống để dùng mặc định của provider. Model chỉ khả dụng khi đã đồng bộ và hỗ trợ chat.</p>
-      <button type="submit" className="button primary setup-submit" disabled={busy || !prompt.trim() || targets.length < MIN_TARGETS}>{busy ? <LoaderCircle size={16} className="spin" /> : <Sparkles size={16} />}Tạo phép so sánh</button>
+      <button type="submit" className="button primary setup-submit" disabled={busy || !prompt.trim() || targets.length < MIN_TARGETS}>{busy ? <LoaderCircle size={16} className="spin" /> : <Sparkles size={16} />}{busy ? "Đang gửi…" : "Gửi và so sánh"}</button>
     </form>
   );
 }

@@ -66,8 +66,22 @@ describe("RunColumn", () => {
     const pending = { ...successRun, status: "pending", content: "", input_tokens: null, output_tokens: null, latency_ms: null, estimated_cost: null };
     const { rerender } = render(<RunColumn run={pending} streaming />);
     expect(screen.getByText(/Đang tạo câu trả lời/)).toBeTruthy();
+    expect(screen.getByText("Đang chạy")).toBeTruthy();
     rerender(<RunColumn run={pending} liveText="Đang trả lời" streaming />);
     expect(screen.getByText("Đang trả lời")).toBeTruthy();
+  });
+  it("never shows a spinner for a run that was not sent yet", () => {
+    const pending = { ...successRun, status: "pending", content: "" };
+    const { container } = render(<RunColumn run={pending} streaming={false} />);
+    expect(screen.getByText("Chưa chạy")).toBeTruthy();
+    expect(screen.getByText(/Bấm “Chạy so sánh”/)).toBeTruthy();
+    expect(container.querySelector(".spin")).toBeNull();
+  });
+  it("hides the previous answer while a re-run is in flight", () => {
+    render(<RunColumn run={successRun} streaming />);
+    expect(screen.queryByText("Answer A")).toBeNull();
+    expect(screen.getByText(/Đang tạo câu trả lời/)).toBeTruthy();
+    expect(screen.queryByText("7 token vào")).toBeNull();
   });
 });
 
@@ -80,7 +94,7 @@ describe("CompareSetup", () => {
   it("requires two distinct targets and submits the exact payload", () => {
     const onCreate = vi.fn();
     render(<CompareSetup providers={baseProviders} busy={false} onCreate={onCreate} />);
-    const submit = screen.getByRole("button", { name: /Tạo phép so sánh/ });
+    const submit = screen.getByRole("button", { name: /Gửi và so sánh/ });
     expect(submit.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText("Câu hỏi chung"), { target: { value: "  So sánh A và B  " } });
     fireEvent.click(screen.getByRole("button", { name: /Thêm model vào so sánh/ }));
@@ -108,7 +122,7 @@ describe("CompareSetup", () => {
     fireEvent.click(screen.getByRole("button", { name: /Thêm model vào so sánh/ }));
     fireEvent.change(screen.getByLabelText("Tên phép so sánh (tùy chọn)"), { target: { value: " Tiêu đề " } });
     fireEvent.change(screen.getByLabelText("Temperature"), { target: { value: "0.7" } });
-    fireEvent.click(screen.getByRole("button", { name: /Tạo phép so sánh/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Gửi và so sánh/ }));
     expect(onCreate).toHaveBeenCalledWith({ prompt: "Q", targets: [{ provider: "groq", model: "a" }, { provider: "groq", model: "b" }], title: "Tiêu đề", temperature: 0.7 });
   });
 });
@@ -219,12 +233,58 @@ describe("useCompare", () => {
     expect(result.current.comparison.synthesis.content).toBe("Gộp");
   });
 
-  it("create selects the new comparison", async () => {
+  it("create shows the new comparison and immediately executes it without refetching", async () => {
     mock.onGet("/ai/compare/comparisons").reply(200, { comparisons: [] });
-    mock.onGet("/ai/compare/comparisons/x1").reply(200, detail);
-    vi.spyOn(compareService, "create").mockResolvedValue({ id: "x1" });
+    const getSpy = vi.spyOn(compareService, "get");
+    vi.spyOn(compareService, "create").mockResolvedValue(detail);
+    let release;
+    const execute = vi.spyOn(compareService, "execute").mockImplementation((id, { onEvent }) => {
+      onEvent({ event: "comparison", data: { comparison: detail } });
+      onEvent({ event: "run_delta", data: { run_id: "r1", text: "Ans" } });
+      return new Promise((resolve) => { release = () => { onEvent({ event: "run_done", data: { run: finalDetail.runs[0] } }); onEvent({ event: "run_error", data: { run: finalDetail.runs[1] } }); onEvent({ event: "done", data: { comparison: finalDetail } }); resolve(); }; });
+    });
     const { result } = renderHook(() => useCompare());
     await act(async () => { await result.current.createComparison({ prompt: "Q", targets: [{ provider: "groq", model: "a" }, { provider: "groq", model: "b" }] }); });
-    await waitFor(() => expect(result.current.activeId).toBe("x1"));
+    expect(result.current.activeId).toBe("x1");
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0][0]).toBe("x1");
+    expect(result.current.isStreaming).toBe(true);
+    expect(result.current.activeRuns).toEqual({ r1: true, r2: true });
+    expect(result.current.runText.r1).toBe("Ans");
+    expect(result.current.detailLoading).toBe(false);
+    expect(getSpy).not.toHaveBeenCalled();
+    await act(async () => { release(); });
+    await waitFor(() => expect(result.current.isStreaming).toBe(false));
+    expect(result.current.activeRuns).toEqual({});
+    expect(result.current.comparison.runs[0].content).toBe("Answer A");
+  });
+
+  it("events from a superseded stream never overwrite the new comparison", async () => {
+    mock.onGet("/ai/compare/comparisons").reply(200, { comparisons: [] });
+    mock.onGet("/ai/compare/comparisons/x1").reply(200, detail);
+    let oldEmit;
+    let rejectOld;
+    vi.spyOn(compareService, "execute")
+      .mockImplementationOnce((id, { onEvent, signal }) => new Promise((_, reject) => {
+        oldEmit = onEvent;
+        rejectOld = reject;
+        signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      }))
+      .mockImplementationOnce(() => new Promise(() => {}));
+    const second = { ...detail, id: "x2", runs: [{ id: "s1", provider: "groq", model: "a", status: "pending", content: "" }, { id: "s2", provider: "groq", model: "b", status: "pending", content: "" }] };
+    vi.spyOn(compareService, "create").mockResolvedValue(second);
+    const { result } = renderHook(() => useCompare());
+    act(() => result.current.selectComparison("x1"));
+    await waitFor(() => expect(result.current.comparison?.id).toBe("x1"));
+    act(() => result.current.execute());
+    expect(result.current.isStreaming).toBe(true);
+    await act(async () => { await result.current.createComparison({ prompt: "Q2", targets: [{ provider: "groq", model: "a" }, { provider: "groq", model: "b" }] }); });
+    expect(result.current.activeId).toBe("x2");
+    expect(compareService.execute).toHaveBeenCalledTimes(2);
+    act(() => { oldEmit({ event: "done", data: { comparison: finalDetail } }); rejectOld?.(new Error("late")); });
+    await act(async () => {});
+    expect(result.current.comparison.id).toBe("x2");
+    expect(result.current.isStreaming).toBe(true);
+    expect(result.current.activeRuns).toEqual({ s1: true, s2: true });
   });
 });
