@@ -5,6 +5,13 @@ from fastapi import APIRouter, Depends, Response
 
 from app.api.dependencies import AppSettings, CurrentUser, Database
 from app.api.v1.agents import agent_http
+from app.schemas.allocations import (
+    AllocationList,
+    AllocationOut,
+    DecideIn,
+    ReassignIn,
+    RecommendIn,
+)
 from app.schemas.projects import (
     AnalysisList,
     AnalysisOut,
@@ -15,6 +22,7 @@ from app.schemas.projects import (
     ProjectPatch,
 )
 from app.services.ai.chat import ChatHTTP
+from app.services.allocations import AllocationService
 from app.services.projects import ProjectService
 
 router = APIRouter(tags=["Workforce Projects"])
@@ -84,3 +92,83 @@ async def analyze_project(
     model's JSON is validated before it is stored; an unreadable answer
     fails with analysis_invalid_response and stores nothing."""
     return await _service(db, settings, http).analyze(user.id, project_id, payload)
+
+
+def _allocations(db, settings) -> AllocationService:
+    return AllocationService(db, settings)
+
+
+@router.post(
+    "/ai/projects/{project_id}/recommend",
+    response_model=AllocationOut,
+    status_code=201,
+)
+async def recommend_team(
+    project_id: UUID,
+    payload: RecommendIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+) -> AllocationOut:
+    """Score every workforce resource against every task of an analysis
+    (latest analysis unless analysis_id is given). Deterministic
+    weighted scoring with hard-constraint exclusions — no LLM involved."""
+    return await _allocations(db, settings).recommend(user.id, project_id, payload)
+
+
+@router.get("/ai/projects/{project_id}/allocations", response_model=AllocationList)
+async def list_allocations(
+    project_id: UUID, user: CurrentUser, db: Database, settings: AppSettings
+) -> AllocationList:
+    return await _allocations(db, settings).list(user.id, project_id)
+
+
+@router.get(
+    "/ai/projects/{project_id}/allocations/{allocation_id}",
+    response_model=AllocationOut,
+)
+async def get_allocation(
+    project_id: UUID,
+    allocation_id: UUID,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+) -> AllocationOut:
+    return await _allocations(db, settings).get(user.id, project_id, allocation_id)
+
+
+@router.patch(
+    "/ai/projects/{project_id}/allocations/{allocation_id}",
+    response_model=AllocationOut,
+)
+async def reassign_allocation(
+    project_id: UUID,
+    allocation_id: UUID,
+    payload: ReassignIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+) -> AllocationOut:
+    """Manager overrides picks before approval. Hard constraints still
+    apply: an AI denied a task's scope cannot be assigned to it."""
+    return await _allocations(db, settings).reassign(
+        user.id, project_id, allocation_id, payload
+    )
+
+
+@router.post(
+    "/ai/projects/{project_id}/allocations/{allocation_id}/decide",
+    response_model=AllocationOut,
+)
+async def decide_allocation(
+    project_id: UUID,
+    allocation_id: UUID,
+    payload: DecideIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+) -> AllocationOut:
+    """Approve (project moves to approved) or reject the proposed team."""
+    return await _allocations(db, settings).decide(
+        user.id, project_id, allocation_id, payload
+    )

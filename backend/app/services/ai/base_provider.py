@@ -70,6 +70,16 @@ ERRORS = {
         502,
         "The AI analysis response could not be understood. Try another model.",
     ),
+    "analysis_not_found": (404, "That project analysis does not exist."),
+    "allocation_not_found": (404, "That allocation does not exist."),
+    "allocation_hard_constraint": (
+        422,
+        "That resource is barred from this task by a hard constraint.",
+    ),
+    "allocation_already_decided": (
+        422,
+        "That allocation has already been decided and can no longer change.",
+    ),
     "invalid_callback_token": (401, "The AI Factory run callback token is invalid."),
     "seed_disabled": (403, "Demo seeding is disabled in the production environment."),
     "seed_provider_required": (
