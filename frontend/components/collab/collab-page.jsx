@@ -147,8 +147,6 @@ export function CollabPage() {
     }
   };
 
-  const agentName = (id) => agents.find((a) => a.id === id)?.name || "Agent";
-
   return <div className="wf-page">
     <div className="wf-header">
       <div>

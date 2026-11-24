@@ -39,7 +39,9 @@ async def create_room(
 
 
 @router.get("/ai/collab/rooms/{room_id}", response_model=RoomOut)
-async def get_room(room_id: UUID, user: CurrentUser, db: Database, settings: AppSettings) -> RoomOut:
+async def get_room(
+    room_id: UUID, user: CurrentUser, db: Database, settings: AppSettings
+) -> RoomOut:
     return await _service(db, settings).get_room(user.id, room_id)
 
 

@@ -38,7 +38,8 @@ async def owner(client, register, db, settings):
 @pytest.fixture
 def mock_agent(app):
     def configure(handler=None):
-        handler = handler or (lambda _: httpx.Response(200, text=sse(chunk("Xin chào từ Agent"), "[DONE]")))
+        default = httpx.Response(200, text=sse(chunk("Xin chào từ Agent"), "[DONE]"))
+        handler = handler or (lambda _: default)
         app.dependency_overrides[agent_http] = lambda: ChatHTTP(
             transport=httpx.MockTransport(handler)
         )
@@ -49,7 +50,13 @@ def mock_agent(app):
 def create_agent(client, name="Agent A"):
     response = client.post(
         AGENTS,
-        json={"name": name, "provider": "openai", "model": MODEL_A, "system_prompt": "Help.", "tools": []},
+        json={
+            "name": name,
+            "provider": "openai",
+            "model": MODEL_A,
+            "system_prompt": "Help.",
+            "tools": [],
+        },
     )
     assert response.status_code == 201, response.text
     return response.json()
@@ -160,6 +167,8 @@ async def test_rooms_are_owner_scoped(owner, client_factory, register):
     assert register(stranger, email="stranger3@example.com").status_code == 201
     assert stranger.get(BASE).json()["rooms"] == []
     assert stranger.get(f"{BASE}/{room['id']}").status_code == 404
-    response = stranger.post(f"{BASE}/{room['id']}/messages", json={"content": "alo"})
+    response = stranger.post(
+        f"{BASE}/{room['id']}/messages", json={"content": "alo"}
+    )
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "collab_room_not_found"
