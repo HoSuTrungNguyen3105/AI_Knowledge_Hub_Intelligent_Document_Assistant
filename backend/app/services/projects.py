@@ -188,6 +188,9 @@ class ProjectService:
         await self.db.project_analyses.delete_many(
             {"project_id": project_id, "user_id": user_id}
         )
+        await self.db.allocations.delete_many(
+            {"project_id": project_id, "user_id": user_id}
+        )
 
     # --- Analysis ----------------------------------------------------------
 
