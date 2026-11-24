@@ -74,6 +74,15 @@ ERRORS = {
     ),
     "project_file_unreadable": (422, "The project file could not be read."),
     "project_not_found": (404, "That project does not exist."),
+    "discussion_message_not_found": (
+        404,
+        "That discussion message does not exist.",
+    ),
+    "decision_not_found": (404, "That project decision does not exist."),
+    "discussion_nothing_to_retry": (
+        422,
+        "There is no failed agent reply to retry.",
+    ),
     "analysis_invalid_response": (
         502,
         "The AI analysis response could not be understood. Try another model.",
