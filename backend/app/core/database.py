@@ -1,10 +1,14 @@
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import Request
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from pymongo.errors import PyMongoError
 
 from app.core.config import Settings
+
+logger = logging.getLogger(__name__)
 
 
 def build_mongo_client(settings: Settings) -> AsyncIOMotorClient:
@@ -83,6 +87,35 @@ async def init_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.project_analyses.create_index([("user_id", 1), ("project_id", 1)])
     await db.allocations.create_index([("project_id", 1), ("created_at", -1)])
     await db.allocations.create_index([("user_id", 1), ("project_id", 1)])
+    await _drop_foreign_projects_index(db)
+
+
+async def _drop_foreign_projects_index(db: AsyncIOMotorDatabase) -> None:
+    """Drop the AI Agent Factory's unique index on ``projects.id``.
+
+    The factory's Code Execution Service creates a unique index on the
+    ``id`` field of its own ``projects`` collection at startup. When the
+    CES is pointed at this database, that index lands on the Workforce
+    ``projects`` collection instead. Workforce documents carry no ``id``
+    field, MongoDB indexes a missing field as null, and a unique index
+    then admits exactly one such document — every later project insert
+    fails with DuplicateKeyError (surfaced as "Database unavailable").
+    The index is foreign to this schema, so it is dropped whenever it
+    is found; failures are logged, never raised.
+    """
+    try:
+        info = await db.projects.index_information()
+    except PyMongoError:
+        logger.warning("Could not inspect projects indexes", exc_info=True)
+        return
+    for name, spec in info.items():
+        keys = [tuple(pair) for pair in spec.get("key", [])]
+        if keys == [("id", 1)] and spec.get("unique"):
+            try:
+                await db.projects.drop_index(name)
+                logger.warning("Dropped foreign unique index %s on projects.id", name)
+            except PyMongoError:
+                logger.warning("Could not drop foreign index %s", name, exc_info=True)
 
 
 @asynccontextmanager
