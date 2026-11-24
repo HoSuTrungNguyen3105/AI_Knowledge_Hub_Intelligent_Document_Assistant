@@ -61,6 +61,19 @@ async def get_factory_run(
     return await N8nFactoryService(db, settings, http).get_run(user.id, run_id)
 
 
+@router.post("/runs/{run_id}/cancel", response_model=FactoryRunOut)
+async def cancel_factory_run(
+    run_id: UUID,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nHTTPDep,
+) -> FactoryRunOut:
+    """Stop tracking a run. The result n8n may still deliver afterwards is
+    discarded; the n8n execution itself is not interrupted."""
+    return await N8nFactoryService(db, settings, http).cancel_run(user.id, run_id)
+
+
 @router.post("/runs/{run_id}/callback", response_model=FactoryRunOut)
 async def factory_run_callback(
     run_id: UUID,

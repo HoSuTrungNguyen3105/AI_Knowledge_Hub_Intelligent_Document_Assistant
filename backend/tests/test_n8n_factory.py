@@ -94,6 +94,7 @@ def test_runs_require_auth(client):
     assert client.post(f"{BASE}/runs", json={"requirement": "X"}).status_code == 401
     assert client.get(f"{BASE}/runs").status_code == 401
     assert client.get(f"{BASE}/runs/{uuid4()}").status_code == 401
+    assert client.post(f"{BASE}/runs/{uuid4()}/cancel").status_code == 401
 
 
 async def test_create_run_fires_webhook_with_agents_and_callback(owner, fake_n8n):
@@ -226,6 +227,63 @@ async def test_callback_unknown_run_is_404(client):
     )
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "factory_run_not_found"
+
+
+async def test_cancel_run_discards_late_callback(owner, fake_n8n, client_factory):
+    client, _ = owner
+    run = create_run(client)
+    token = fake_n8n.calls[0]["payload"]["callback_token"]
+
+    cancelled = client.post(f"{BASE}/runs/{run['id']}/cancel")
+    assert cancelled.status_code == 200
+    body = cancelled.json()
+    assert body["status"] == "cancelled"
+    assert body["finished_at"] is not None
+    assert body["duration_ms"] is not None
+
+    # A callback that still arrives is acknowledged but never applied.
+    anon = client_factory()
+    late = anon.post(
+        f"{BASE}/runs/{run['id']}/callback",
+        json={"package": PACKAGE},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert late.status_code == 200
+    assert late.json()["status"] == "cancelled"
+    assert late.json()["result"] is None
+
+    # Cancelling a terminal run is a no-op.
+    again = client.post(f"{BASE}/runs/{run['id']}/cancel")
+    assert again.status_code == 200
+    assert again.json()["status"] == "cancelled"
+
+
+async def test_cancel_run_after_completion_changes_nothing(owner, fake_n8n, client_factory):
+    client, _ = owner
+    run = create_run(client)
+    token = fake_n8n.calls[0]["payload"]["callback_token"]
+    anon = client_factory()
+    anon.post(
+        f"{BASE}/runs/{run['id']}/callback",
+        json={"package": PACKAGE},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    cancelled = client.post(f"{BASE}/runs/{run['id']}/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "completed"
+    assert cancelled.json()["result"]["status"] == "completed"
+
+
+async def test_cancel_run_owner_scoped(owner, client_factory, register, db, settings, fake_n8n):
+    client, _ = owner
+    run = create_run(client)
+    other = client_factory()
+    assert register(other, email="CancelOther@Example.com").status_code == 201
+    response = other.post(f"{BASE}/runs/{run['id']}/cancel")
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "factory_run_not_found"
+    # The original run is untouched.
+    assert client.get(f"{BASE}/runs/{run['id']}").json()["status"] == "running"
 
 
 async def test_runs_are_owner_scoped(

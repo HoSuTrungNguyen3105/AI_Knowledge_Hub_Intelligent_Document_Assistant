@@ -20,6 +20,10 @@ export const n8nFactoryService = {
     const { data } = await api.get(`${path}/runs/${id}`, { signal });
     return data;
   },
+  async cancelRun(id, signal) {
+    const { data } = await api.post(`${path}/runs/${id}/cancel`, {}, { signal });
+    return data;
+  },
 };
 
 export function getFactoryError(error, fallback) {

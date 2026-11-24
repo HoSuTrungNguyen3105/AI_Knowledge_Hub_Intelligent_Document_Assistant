@@ -19,13 +19,15 @@ FACTORY_ROLES = (
 # Run lifecycle: queued -> running -> a terminal status. Terminal statuses
 # mirror workflow 07's final-package `status` values; "failed" also covers
 # runs that never produced a package (webhook rejected, or no callback
-# arrived before the run timeout).
+# arrived before the run timeout), and "cancelled" is set when the user
+# stops a run from the page.
 RUN_ACTIVE_STATUSES = ("queued", "running")
 RUN_TERMINAL_STATUSES = (
     "completed",
     "completed_with_issues",
     "needs_configuration",
     "failed",
+    "cancelled",
 )
 
 
