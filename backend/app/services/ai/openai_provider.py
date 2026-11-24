@@ -86,6 +86,9 @@ def _finalize_tool_call(entry: dict) -> ToolCall | None:
 class OpenAIProvider(BaseProvider):
     # Endpoint key shared by OpenAI-compatible listings and chat (e.g. Groq).
     provider_id = "openai"
+    # Extra streamed-usage request field. Subclasses whose endpoint rejects
+    # it (Ollama) set this to None and the key is left out of the payload.
+    _stream_options: dict | None = {"include_usage": True}
 
     def __init__(
         self,
@@ -154,8 +157,9 @@ class OpenAIProvider(BaseProvider):
             "model": request.model,
             "messages": self._messages(request),
             "stream": True,
-            "stream_options": {"include_usage": True},
         }
+        if self._stream_options is not None:
+            payload["stream_options"] = self._stream_options
         if request.temperature is not None:
             payload["temperature"] = request.temperature
         if request.max_output_tokens is not None:
