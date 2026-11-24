@@ -475,6 +475,7 @@ class WorkflowService:
             goal=w.goal,
             output_type=getattr(w, "output_type", "text") or "text",
             design_brief=getattr(w, "design_brief", None),
+            plan=getattr(w, "plan", None),
             requires_approval=getattr(w, "requires_approval", False) or False,
             approval_status=getattr(w, "approval_status", "none") or "none",
             artifact_status=getattr(w, "artifact_status", "none") or "none",
@@ -515,7 +516,20 @@ class WorkflowService:
             output_type=payload.output_type,
             design_brief=payload.design_brief,
             requires_approval=payload.requires_approval,
+            plan=payload.plan,
         )
+        if payload.plan:
+            await self.repo.add_event(
+                user_id,
+                workflow_id=workflow.id,
+                event_type="workflow_planned",
+                actor_id="user",
+                payload={
+                    "task_count": len(payload.plan.get("tasks") or []),
+                    "chosen_agent_count": payload.plan.get("chosen_agent_count"),
+                    "complexity": payload.plan.get("complexity"),
+                },
+            )
         await self.repo.add_event(
             user_id,
             workflow_id=workflow.id,
@@ -806,9 +820,32 @@ class WorkflowService:
         turns = int((workflow.usage or {}).get("agent_turns", 0))
         total_in = int((workflow.usage or {}).get("input_tokens") or 0)
         total_out = int((workflow.usage or {}).get("output_tokens") or 0)
+        # Approved plan (Dynamic Planning): when the workflow carries a
+        # plan, runtime tasks are materialized from the plan's tasks for
+        # the member's role — real titles, descriptions, acceptance
+        # criteria and dependency edges — instead of one generic task
+        # per role. Plan tasks are consumed in plan order per role;
+        # dependencies map to already-created runtime tasks (plan deps
+        # point at earlier roles, whose tiers run first).
+        plan_doc = getattr(workflow, "plan", None) or {}
+        plan_tasks = plan_doc.get("tasks") or []
+        plan_queue: dict[str, list[dict]] = {}
+        for ptask in plan_tasks:
+            plan_queue.setdefault(ptask.get("suggested_role") or "member", []).append(ptask)
+        plan_task_ids: dict[str, object] = {}
         prior: list[tuple[str, str]] = []
         existing = await self.repo.list_tasks(user_id, workflow_id)
         done_task_ids = {t.assigned_agent_id for t in existing if t.status == "completed"}
+        for t in existing:
+            # Resume support: plan tasks already materialized in an
+            # earlier run keep their key -> runtime id mapping, and are
+            # not handed out again.
+            for ptask in plan_tasks:
+                if ptask.get("title") == t.title and ptask.get("key") not in plan_task_ids:
+                    plan_task_ids[ptask["key"]] = t.id
+                    queue = plan_queue.get(ptask.get("suggested_role") or "member") or []
+                    if ptask in queue:
+                        queue.remove(ptask)
         completed_count = 0
         failed_codes: list[str] = []
         attempted_count = 0
@@ -871,14 +908,47 @@ class WorkflowService:
                         agent = entry["agent"]
                         role = entry["role"]
                         label = entry["label"]
+                        ptask = None
+                        queue = plan_queue.get(role) or []
+                        if queue:
+                            ptask = queue.pop(0)
+                        if ptask is not None:
+                            task_title = ptask.get("title") or (
+                                f"{role.capitalize()}: {workflow.title}"
+                            )
+                            parts = [ptask.get("description") or ""]
+                            if ptask.get("expected_output"):
+                                parts.append(
+                                    f"Đầu ra mong đợi: {ptask['expected_output']}"
+                                )
+                            if ptask.get("acceptance_criteria"):
+                                parts.append(
+                                    "Tiêu chí nghiệm thu: "
+                                    + "; ".join(ptask["acceptance_criteria"])
+                                )
+                            task_description = (
+                                "\n".join(p for p in parts if p) or workflow.goal
+                            )
+                            task_deps = [
+                                plan_task_ids[key]
+                                for key in ptask.get("depends_on") or []
+                                if key in plan_task_ids
+                            ]
+                        else:
+                            task_title = f"{role.capitalize()}: {workflow.title}"
+                            task_description = workflow.goal
+                            task_deps = []
                         task = await self.repo.create_task(
                             user_id,
                             workflow_id=workflow_id,
-                            title=f"{role.capitalize()}: {workflow.title}",
-                            description=workflow.goal,
+                            title=task_title,
+                            description=task_description,
                             assigned_agent_id=member.agent_id,
                             created_by_agent_id=team.coordinator_agent_id,
+                            depends_on=task_deps,
                         )
+                        if ptask is not None and ptask.get("key"):
+                            plan_task_ids[ptask["key"]] = task.id
                         await self.repo.add_event(
                             user_id,
                             workflow_id=workflow_id,
@@ -897,7 +967,11 @@ class WorkflowService:
                             team.coordinator_agent_id,
                             member.agent_id,
                             "TASK_ASSIGNMENT",
-                            f"Hãy hoàn thành phần việc của {label} cho mục tiêu: {workflow.goal}",
+                            f"Hãy hoàn thành task {task_title} — phần việc của {label} "
+                            f"cho mục tiêu: {workflow.goal}"
+                            if ptask is not None
+                            else f"Hãy hoàn thành phần việc của {label} cho mục tiêu: "
+                            f"{workflow.goal}",
                         )
                         claimed_task = await self.repo.transition_task(
                             user_id, task.id, ["pending"], {"status": "in_progress"}
@@ -905,7 +979,9 @@ class WorkflowService:
                         if claimed_task is None:
                             continue  # already handled elsewhere; never double-process
                         attempted_count += 1
-                        description = EVALUATION_RUBRIC if role == "evaluator" else workflow.goal
+                        description = (
+                            EVALUATION_RUBRIC if role == "evaluator" else task_description
+                        )
                         prompt = build_context(
                             workflow.goal,
                             task.title,
