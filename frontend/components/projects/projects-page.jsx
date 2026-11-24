@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { ConfirmDialog } from "../confirm-dialog";
 import { providerService } from "../../services/providers";
-import { getProjectError, projectsService } from "../../services/projects";
+import { getProjectError, projectErrorByCode, projectsService } from "../../services/projects";
 
 const PROJECT_STATUS = {
   draft: ["Nháp", "medium"],
@@ -52,6 +52,8 @@ export default function ProjectsPage() {
   const [notice, setNotice] = useState("");
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: "", description: "", tech_stack: "", deadline: "" });
+  const [briefFile, setBriefFile] = useState(null);
+  const [fileReset, setFileReset] = useState(0);
   const [providers, setProviders] = useState([]);
   const [providerId, setProviderId] = useState("");
   const [models, setModels] = useState([]);
@@ -157,6 +159,31 @@ export default function ProjectsPage() {
     setNotice("");
     setCreating(true);
     try {
+      if (briefFile) {
+        // One-shot flow: upload the brief and the backend creates the
+        // project, analyzes it and drafts the team recommendation.
+        const result = await projectsService.importFile(briefFile, {
+          name: form.name.trim(),
+          techStack: form.tech_stack.trim(),
+          provider: providerId,
+          model: modelId,
+        });
+        setForm({ name: "", description: "", tech_stack: "", deadline: "" });
+        setBriefFile(null);
+        setFileReset((value) => value + 1);
+        await loadProjects();
+        setSelectedId(result.project.id);
+        if (result.analysis_error) {
+          setError(
+            `Đã tạo dự án từ file nhưng chưa phân tích được: ${projectErrorByCode(result.analysis_error, result.analysis_error)} Bạn có thể bấm "Phân tích dự án" ở phần dưới để thử lại.`,
+          );
+        } else {
+          setNotice(
+            "Đã đọc file, phân tích xong và tạo sẵn đề xuất phân công ở phần dưới — chỉ còn bước duyệt đội.",
+          );
+        }
+        return;
+      }
       const created = await projectsService.create({
         name: form.name.trim(),
         description: form.description.trim(),
@@ -289,7 +316,7 @@ export default function ProjectsPage() {
             value={form.name}
             onChange={(event) => setForm({ ...form, name: event.target.value })}
             placeholder="Website thương mại điện tử"
-            required
+            required={!briefFile}
           />
         </label>
         <label>
@@ -299,9 +326,50 @@ export default function ProjectsPage() {
             onChange={(event) => setForm({ ...form, description: event.target.value })}
             placeholder="Mục tiêu, tính năng chính, ràng buộc kỹ thuật, đối tượng sử dụng..."
             rows={4}
-            required
+            required={!briefFile}
           />
         </label>
+        <label>
+          Hoặc tải lên file mô tả dự án (.md, .txt, .pdf, .docx — tối đa 5 MB)
+          <input
+            key={fileReset}
+            type="file"
+            accept=".md,.markdown,.txt,.pdf,.docx"
+            onChange={(event) => setBriefFile(event.target.files?.[0] || null)}
+          />
+        </label>
+        {briefFile ? (
+          <>
+            <p className="wf-empty">
+              AI sẽ đọc file này, chia task và tạo sẵn đề xuất phân công — bạn chỉ còn bước
+              duyệt đội. Tên dự án để trống thì lấy theo dòng đầu tiên của file; ô mô tả
+              phía trên sẽ không được dùng.
+            </p>
+            <label>
+              Provider phân tích
+              <select
+                value={providerId}
+                onChange={(event) => setProviderId(event.target.value)}
+              >
+                {providers.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Model phân tích
+              <select value={modelId} onChange={(event) => setModelId(event.target.value)}>
+                {models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.display_name || model.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : null}
         <label>
           Công nghệ dự kiến (cách nhau bằng dấu phẩy)
           <input
@@ -322,9 +390,20 @@ export default function ProjectsPage() {
           <button
             type="submit"
             className="wf-btn"
-            disabled={creating || !form.name.trim() || !form.description.trim()}
+            disabled={
+              creating ||
+              (briefFile
+                ? !providerId || !modelId
+                : !form.name.trim() || !form.description.trim())
+            }
           >
-            {creating ? "Đang tạo..." : "Tạo dự án"}
+            {creating
+              ? briefFile
+                ? "Đang đọc file và phân tích..."
+                : "Đang tạo..."
+              : briefFile
+                ? "Tải lên & phân tích ngay"
+                : "Tạo dự án"}
           </button>
         </div>
       </form>
