@@ -64,6 +64,19 @@ ERRORS = {
     "factory_run_not_found": (404, "That AI Factory run does not exist."),
     "invalid_callback_token": (401, "The AI Factory run callback token is invalid."),
     "validation_error": (422, "The submitted data is invalid."),
+    "workspace_not_found": (404, "That workspace does not exist."),
+    "workspace_forbidden": (403, "Your role in this workspace does not allow that."),
+    "workspace_user_not_found": (404, "No MindFlow account uses that email address."),
+    "workspace_member_exists": (409, "That account is already a member of this workspace."),
+    "workspace_member_not_found": (404, "That account is not a member of this workspace."),
+    "workspace_owner_immutable": (
+        422,
+        "The workspace owner's membership cannot be changed or removed.",
+    ),
+    "workspace_personal_undeletable": (
+        422,
+        "The personal workspace cannot be deleted.",
+    ),
     "artifact_no_files": (422, "The agent did not return any valid website files."),
     "artifact_missing_index": (422, "The generated website is missing index.html."),
     "artifact_missing_entry": (

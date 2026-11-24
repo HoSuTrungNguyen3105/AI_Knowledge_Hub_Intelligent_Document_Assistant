@@ -29,6 +29,17 @@ async def init_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.refresh_tokens.create_index("user_id")
     await db.refresh_tokens.create_index("token_hash", unique=True)
     await db.refresh_tokens.create_index("expires_at")
+    await db.workspaces.create_index("owner_id")
+    # Exactly one personal workspace per owner; team workspaces are exempt.
+    await db.workspaces.create_index(
+        [("owner_id", 1), ("kind", 1)],
+        unique=True,
+        partialFilterExpression={"kind": "personal"},
+    )
+    await db.workspace_members.create_index(
+        [("workspace_id", 1), ("user_id", 1)], unique=True
+    )
+    await db.workspace_members.create_index("user_id")
     await db.knowledge_bases.create_index("user_id")
     await db.documents.create_index("user_id")
     await db.documents.create_index("knowledge_base_id")
