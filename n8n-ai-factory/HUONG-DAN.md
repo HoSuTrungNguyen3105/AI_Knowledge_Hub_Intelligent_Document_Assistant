@@ -125,6 +125,51 @@ curl -X POST http://localhost:5678/webhook/ai-factory/start -H "Content-Type: ap
 - **Sửa .env xong** (thêm/đổi key) phải chạy lại `docker compose up -d`
   trong thư mục này để n8n nhận giá trị mới.
 
+
+## Bước 7 — Workflow 7 Agent tự chọn model (Dynamic Model Routing)
+
+Ngoài 6 workflow ở trên, thư mục `workflows\` còn có
+**`07-seven-agent-dynamic-routing.json`**: đội đúng 7 role (Leader,
+Planner, Architect, Developer, Tester, Reviewer, Researcher) xử lý đa
+lĩnh vực — không chỉ code, còn nghiên cứu, marketing, giáo dục, báo cáo…
+Điểm khác biệt: **không khoá cứng một model cho mọi role** — hệ thống tự
+chọn model theo từng task.
+
+Cách dùng:
+
+1. Import thêm file `07-seven-agent-dynamic-routing.json` vào n8n (như
+   Bước 4), bấm **Save** và gạt **Active**. Workflow này không cần
+   credential Postgres — chỉ cần key provider trong file `.env`
+   (`GROQ_API_KEY` / `OLLAMA_API_KEY` đã điền ở Bước 2 là chạy được ngay).
+2. Gửi yêu cầu (PowerShell):
+
+   ```powershell
+   curl -X POST http://localhost:5678/webhook/ai-team/start -H "Content-Type: application/json" -d "{\"requirement\":\"Lập kế hoạch marketing 3 tháng cho ứng dụng học tiếng Anh trẻ em\",\"domain\":[\"marketing\"]}"
+   ```
+
+   Webhook trả lời khi cả đội chạy xong (vài phút). Kết quả JSON gồm:
+   `plan` (từng task có `model_selection` ghi rõ provider/model/**lý do
+   chọn**), `task_results`, `skipped_roles` (role không cần chạy, kèm lý
+   do), `review` của Reviewer, `revision_rounds` (số vòng sửa, tối đa 2)
+   và `final` — bản tổng hợp cuối của Leader.
+3. Muốn xem hệ thống đã chọn model thế nào: mở execution trong n8n →
+   node **Parse Plan + Model Router** để xem từng task được gán model
+   nào; node **Model Capability Registry** cho thấy model nào đang
+   `available` (chỉ model của provider có key trong `.env` mới available).
+
+Provider/model **chạy ngay** với `.env` hiện tại của bạn: Groq
+(`openai/gpt-oss-120b`, `openai/gpt-oss-20b`) và Ollama Cloud
+(`gpt-oss:120b`, `gpt-oss:20b`, `qwen3-coder:480b`, `deepseek-v3.1:671b`).
+**Cần cấu hình thêm** nếu muốn dùng: Claude / GPT-5 / DeepSeek-R1 qua
+OpenRouter — thêm `OPENROUTER_API_KEY` vào `.env` rồi
+`docker compose up -d` lại; trước đó các model này hiện `unavailable`
+trong registry và router sẽ không bao giờ chọn chúng. Không có key nào
+nằm trong file JSON workflow.
+
+Lưu ý: chạy **một lượt tại một thời điểm** cho workflow này (trạng thái
+lượt chạy lưu trong static data của workflow); task chạy tuần tự theo
+thứ tự phụ thuộc.
+
 ## Lỗi thường gặp
 
 | Hiện tượng | Nguyên nhân & cách xử lý |

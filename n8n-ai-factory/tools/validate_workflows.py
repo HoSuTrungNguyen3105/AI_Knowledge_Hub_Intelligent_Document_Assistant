@@ -16,7 +16,7 @@ ALLOWED_TYPES = {
     "n8n-nodes-base.webhook", "n8n-nodes-base.respondToWebhook",
     "n8n-nodes-base.code", "n8n-nodes-base.httpRequest",
     "n8n-nodes-base.postgres", "n8n-nodes-base.if",
-    "n8n-nodes-base.stickyNote",
+    "n8n-nodes-base.stickyNote", "n8n-nodes-base.splitInBatches",
 }
 
 failures = []
