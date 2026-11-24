@@ -62,6 +62,7 @@ ERRORS = {
     ),
     "invalid_factory_roles": (422, "Assign agents only to the seven team roles."),
     "factory_run_not_found": (404, "That AI Factory run does not exist."),
+    "notification_not_found": (404, "That notification does not exist."),
     "invalid_callback_token": (401, "The AI Factory run callback token is invalid."),
     "seed_disabled": (403, "Demo seeding is disabled in the production environment."),
     "seed_provider_required": (
