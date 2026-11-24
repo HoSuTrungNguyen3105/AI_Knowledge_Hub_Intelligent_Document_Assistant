@@ -108,6 +108,53 @@ def test_groq_marks_audio_and_classifier_models_non_chat():
         assert models[mid].capabilities.chat is False
         assert models[mid].capability_source == "provider_metadata"
 
+# Ollama Cloud is OpenAI-compatible; ids use the "name:tag" form.
+OLLAMA_MODEL = {
+    "id": "gpt-oss:20b",
+    "object": "model",
+    "created": 1700000000,
+    "owned_by": "ollama",
+}
+
+
+def test_ollama_contract_openai_compatible_unknown_capabilities():
+    def handle(request):
+        assert str(request.url) == "https://ollama.com/v1/models"
+        assert request.method == "GET"
+        assert request.headers["authorization"] == f"Bearer {KEY.get_secret_value()}"
+        assert not request.content
+        return httpx.Response(200, json={"object": "list", "data": [OLLAMA_MODEL]})
+
+    model = adapter("ollama", handle).list_models(KEY)[0]
+    assert model.id == "gpt-oss:20b"
+    assert model.display_name == "gpt-oss:20b"
+    assert model.capabilities.model_dump() == dict.fromkeys(
+        ["chat", "streaming", "tools", "embeddings"]
+    )
+    assert model.capability_source == "unknown"
+    assert model.input_token_limit is model.output_token_limit is None
+
+
+def test_ollama_marks_embedding_models_non_chat():
+    rows = [
+        {"id": "gpt-oss:120b", "object": "model", "created": 1700000000,
+         "owned_by": "ollama"},
+        {"id": "nomic-embed-text", "object": "model", "created": 1700000000,
+         "owned_by": "ollama"},
+        {"id": "mxbai-embed-large", "object": "model", "created": 1700000000,
+         "owned_by": "ollama"},
+    ]
+
+    def handle(request):
+        return httpx.Response(200, json={"object": "list", "data": rows})
+
+    models = {m.id: m for m in adapter("ollama", handle).list_models(KEY)}
+    assert models["gpt-oss:120b"].capabilities.chat is None
+    assert models["gpt-oss:120b"].capability_source == "unknown"
+    for mid in ("nomic-embed-text", "mxbai-embed-large"):
+        assert models[mid].capabilities.chat is False
+        assert models[mid].capability_source == "provider_metadata"
+
 
 def test_gemini_contract_pagination_header_and_explicit_capabilities():
     requests = []

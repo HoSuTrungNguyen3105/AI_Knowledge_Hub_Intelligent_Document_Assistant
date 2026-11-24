@@ -84,7 +84,7 @@ def test_registry_and_unsaved_catalog(owner):
         ("groq", "Groq", True),
         ("anthropic", "Anthropic Claude", False),
         ("deepseek", "DeepSeek", False),
-        ("ollama", "Ollama", False),
+        ("ollama", "Ollama", True),
     ]
     assert all(
         not p["configured"] and not p["enabled"] and p["model_count"] == 0 for p in providers
@@ -98,7 +98,7 @@ def test_registry_and_unsaved_catalog(owner):
     assert_error(owner.patch(f"{BASE}/openai", json={"enabled": True}), 409, "credentials_missing")
 
 
-@pytest.mark.parametrize("slug", ["anthropic", "deepseek", "ollama", "unknown"])
+@pytest.mark.parametrize("slug", ["anthropic", "deepseek", "unknown"])
 def test_future_and_unknown_providers(owner, slug):
     status, code = (
         (404, "provider_not_found") if slug == "unknown" else (409, "provider_not_implemented")

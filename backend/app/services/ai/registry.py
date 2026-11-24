@@ -20,7 +20,7 @@ PROVIDERS = MappingProxyType(
             ProviderDefinition("groq", "Groq", True),
             ProviderDefinition("anthropic", "Anthropic Claude", False),
             ProviderDefinition("deepseek", "DeepSeek", False),
-            ProviderDefinition("ollama", "Ollama", False),
+            ProviderDefinition("ollama", "Ollama", True),
         )
     }
 )
