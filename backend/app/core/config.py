@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     # A run with no callback after this long is reported as failed
     # (run_timed_out) instead of spinning forever.
     n8n_factory_run_timeout_seconds: int = Field(default=1800, ge=120, le=86400)
+    # Workforce -> n8n agent.created webhook (mindflow-workforce-feature
+    # section 11). When a workforce AI resource is created, the backend
+    # POSTs the agent payload to this URL with the x-mindflow-secret
+    # header and records the outcome on the resource (n8n_sync). Empty
+    # URL disables delivery; resources then stay n8n_sync "pending".
+    n8n_agent_webhook_url: str = ""
+    n8n_agent_webhook_secret: str = ""
 
     @field_validator("credential_encryption_key")
     @classmethod

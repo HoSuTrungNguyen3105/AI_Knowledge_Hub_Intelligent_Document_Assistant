@@ -13,6 +13,9 @@ owner's resource reads as not found, never as forbidden.
 
 from uuid import UUID, uuid4
 
+import httpx
+
+from app.core.config import Settings
 from app.models.base import utcnow
 from app.schemas.resources import (
     AI_AVAILABILITY,
@@ -22,12 +25,20 @@ from app.schemas.resources import (
     ResourceOut,
     ResourcePatch,
 )
+from app.services.agent_sync import sync_resource
 from app.services.ai.base_provider import ProviderError
 
 
 class ResourceService:
-    def __init__(self, db):
+    def __init__(
+        self,
+        db,
+        settings: Settings,
+        sync_transport: httpx.BaseTransport | None = None,
+    ):
         self.db = db
+        self.settings = settings
+        self.sync_transport = sync_transport
 
     # --- helpers ---------------------------------------------------------
 
@@ -44,6 +55,7 @@ class ResourceService:
             notes=doc.get("notes"),
             human=doc.get("human"),
             ai=doc.get("ai"),
+            n8n_sync=doc.get("n8n_sync"),
             created_at=doc["created_at"],
             updated_at=doc["updated_at"],
         )
@@ -103,6 +115,24 @@ class ResourceService:
             "updated_at": now,
         }
         await self.db.resources.insert_one(doc)
+        if payload.type == "ai":
+            # Notify the user's n8n (agent.created, spec section 11).
+            # Best-effort: the outcome lands on doc["n8n_sync"] and never
+            # fails the creation.
+            doc["n8n_sync"] = await sync_resource(
+                self.db, self.settings, doc, self.sync_transport
+            )
+        return self._out(doc)
+
+    async def sync_now(self, user_id: UUID, resource_id: UUID) -> ResourceOut:
+        """Re-send the agent.created webhook for an AI resource (e.g.
+        after n8n was down or the webhook was configured later)."""
+        doc = await self._get_owned(user_id, resource_id)
+        if doc["type"] != "ai":
+            raise ProviderError("resource_not_ai")
+        doc["n8n_sync"] = await sync_resource(
+            self.db, self.settings, doc, self.sync_transport
+        )
         return self._out(doc)
 
     async def get(self, user_id: UUID, resource_id: UUID) -> ResourceOut:

@@ -65,6 +65,7 @@ ERRORS = {
     "collab_room_not_found": (404, "That collaboration room does not exist."),
     "collab_agent_not_member": (422, "A mentioned agent is not a member of this room."),
     "resource_not_found": (404, "That workforce resource does not exist."),
+    "resource_not_ai": (422, "Only AI resources sync to n8n."),
     "project_not_found": (404, "That project does not exist."),
     "analysis_invalid_response": (
         502,

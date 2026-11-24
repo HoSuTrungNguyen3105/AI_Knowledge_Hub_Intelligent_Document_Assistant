@@ -1,0 +1,191 @@
+{
+  "name": "MindFlow — Agent Created Webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mindflow-agent-created",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "bae75a7b-ffa8-457b-b8f3-876c4aa3e8a4",
+      "name": "Agent Created Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "MindFlow Webhook Secret"
+        }
+      },
+      "notes": "Before activating: create/select a Header Auth credential whose header name is x-mindflow-secret and whose value matches N8N_AGENT_WEBHOOK_SECRET in the MindFlow backend .env. Production URL: https://<n8n-host>/webhook/mindflow-agent-created"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Validate the agent.created contract (spec section 11) and build the\n// receipt document stored in MongoDB via the Code Execution Service.\nconst item = $input.first().json;\nconst body = item.body || {};\nconst agent = body.agent || {};\nconst problems = [];\nif (body.event !== 'agent.created') problems.push('event must be agent.created');\nfor (const field of ['id', 'name', 'provider', 'model']) {\n  if (!agent[field]) problems.push('agent.' + field + ' is required');\n}\nconst receivedAt = new Date().toISOString();\nif (problems.length) {\n  return [{ json: { valid: false, error: problems.join('; '), receivedAt } }];\n}\nconst doc = {\n  agent_id: String(agent.id),\n  event: body.event,\n  source: 'mindflow',\n  received_at: receivedAt,\n  agent: {\n    name: agent.name,\n    type: agent.type || 'ai',\n    provider: agent.provider,\n    model: agent.model,\n    role: agent.role || '',\n    skills: agent.skills || [],\n    allowed_tools: agent.allowedTools || [],\n    denied_scopes: agent.deniedScopes || [],\n    token_limit_per_task: agent.tokenLimitPerTask ?? null,\n    status: agent.status || ''\n  }\n};\nreturn [{ json: { valid: true, receivedAt, agentId: doc.agent_id, event: body.event, doc } }];"
+      },
+      "id": "a197054a-af9d-4762-9027-2270d389edfc",
+      "name": "Validate & Normalize",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "591f7300-2401-440e-922d-74111e210139",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.CODE_EXEC_URL || 'http://code-exec-service:8080') + '/db/agent-events' }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.doc) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "23071310-b932-4ff6-94a2-ba55257cc281",
+      "name": "Record Receipt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ received: true, agentId: $('Validate & Normalize').first().json.agentId, event: $('Validate & Normalize').first().json.event, executionId: $execution.id, receivedAt: $('Validate & Normalize').first().json.receivedAt }) }}",
+        "options": {}
+      },
+      "id": "825ef407-875a-4219-8a18-d7be6ac29475",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ received: false, error: $('Validate & Normalize').first().json.error || 'invalid payload' }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "fd1f4b83-efb8-46ec-b64a-1e72a52d321c",
+      "name": "Respond Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        960,
+        440
+      ]
+    }
+  ],
+  "connections": {
+    "Agent Created Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate & Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate & Normalize": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Record Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Receipt": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {}
+}
