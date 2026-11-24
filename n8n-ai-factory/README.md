@@ -287,6 +287,34 @@ Giới hạn của workflow này: các task chạy **tuần tự** theo thứ t�
 chạy **một execution tại một thời điểm**. Sinh lại JSON sau khi sửa:
 `python3 tools/build_workflow_07.py` rồi import lại.
 
+### 11.1 Chạy workflow 07 bằng Agent có sẵn trong MindFlow (trang AI Factory)
+
+Trang **AI Factory** trong MindFlow (mục Agents, đường dẫn `/agents/factory`)
+gửi kèm trường `agents` trong body webhook: mỗi vai trò
+(`AI Leader` … `AI Researcher`) được gán một Agent mà người dùng **đã tạo
+trong MindFlow**, gồm `name`, `provider`, `model` và `system_prompt`.
+Workflow xử lý như sau:
+
+- Assignment chỉ được áp dụng khi provider thuộc {groq, ollama, openrouter}
+  **và** key của provider đó có trong env của n8n; nếu không, assignment bị
+  bỏ qua và được ghi rõ lý do trong `agent_assignments_ignored` của gói kết
+  quả (router quay về registry như cũ — không lỗi cứng).
+- Khi được áp dụng, router dùng đúng provider/model của Agent đó cho vai
+  trò (lý do ghi `mindflow_agent_assignment:<tên Agent>`), fallback vẫn là
+  các model registry như trước; `system_prompt` của Agent thay phần persona
+  của vai trò (phần contract JSON của workflow luôn được giữ nguyên để
+  parse kết quả không vỡ). Leader và Reviewer cũng tôn trọng assignment
+  của chúng, kể cả ở vòng revision và bản tổng hợp cuối.
+- Gói kết quả cuối có thêm `agent_assignments` (các Agent MindFlow đã thật
+  sự chạy, kèm provider/model) để trang AI Factory hiển thị.
+
+Phía MindFlow: backend gọi webhook qua endpoint
+`POST /api/v1/ai/n8n-factory/run` (địa chỉ n8n lấy từ biến môi trường
+`N8N_WEBHOOK_BASE_URL` của backend, mặc định `http://localhost:5678`;
+thời gian chờ tối đa `N8N_FACTORY_TIMEOUT_SECONDS`, mặc định 900 giây).
+Không có key nào đi qua cầu nối này — key vẫn chỉ nằm ở env của n8n và ở
+kho credential đã mã hoá của MindFlow như trước.
+
 ## 9. Xử lý sự cố
 
 - **`missing_env_key`**: file `.env` cạnh docker-compose chưa có khoá của provider đang chọn, hoặc đã sửa `.env` mà chưa `docker compose up -d` lại để n8n nhận biến mới.

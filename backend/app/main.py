@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pymongo.errors import PyMongoError
 
-from app.api.v1 import agents, auth, chat, compare, dashboard, health, providers, workflows
+from app.api.v1 import agents, auth, chat, compare, dashboard, health, n8n_factory, providers, workflows
 from app.core.config import Settings, get_settings
 from app.core.database import lifespan_mongo
 from app.core.middleware import RateLimiter, SecurityMiddleware
@@ -50,7 +50,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.exception_handler(RequestValidationError)
     async def validation_error(_request: Request, exc: RequestValidationError):
         path = _request.url.path
-        if "/ai/agent-teams" in path or "/ai/agent-workflows" in path:
+        if "/ai/agent-teams" in path or "/ai/agent-workflows" in path or "/ai/n8n-factory" in path:
             # These payloads carry no secrets (team/workflow metadata only), so
             # the caller gets a *sanitised* field list — loc/msg/type only,
             # never input/ctx/url — instead of the generic masked code that
@@ -107,6 +107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         compare.router,
         agents.router,
         workflows.router,
+        n8n_factory.router,
     ):
         application.include_router(router, prefix="/api/v1")
     return application

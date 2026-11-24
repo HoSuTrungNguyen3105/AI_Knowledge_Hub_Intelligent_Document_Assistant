@@ -1,0 +1,44 @@
+/* AI Factory — MindFlow -> n8n bridge page. Same visual language as the
+   Phase 6 workflows workspace: navy shell, violet primary, white cards. */
+.fx-page { display: flex; flex-direction: column; gap: 18px; }
+.fx-header h1 { display: flex; align-items: center; gap: 10px; color: var(--ink); }
+.fx-header h1 svg { color: var(--accent); }
+.fx-header .muted { margin-top: 4px; }
+.fx-card { background: #fff; border: 1px solid var(--line); border-radius: 18px; padding: 18px; box-shadow: 0 8px 24px rgb(76 29 149 / 5%); min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.fx-card h2 { display: flex; align-items: center; gap: 8px; font-size: 15px; flex-wrap: wrap; }
+.fx-card h2 svg { color: var(--accent); }
+.fx-card h3 { font-size: 13px; margin-top: 6px; }
+.fx-error { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; border-radius: 12px; padding: 11px 14px; font-size: 13px; }
+.fx-roles { display: flex; flex-direction: column; gap: 9px; }
+.fx-role-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) minmax(0, 220px); gap: 12px; align-items: center; }
+.fx-role-name { font-size: 13px; font-weight: 650; }
+.fx-role-meta { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-select, .fx-input, .fx-textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; font-size: 13px; color: var(--ink); background: #fff; font-family: inherit; }
+.fx-textarea { resize: vertical; line-height: 1.55; }
+.fx-field { display: flex; flex-direction: column; gap: 7px; font-size: 13px; font-weight: 600; }
+.fx-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.fx-btn { min-height: 40px; padding: 8px 16px; border-radius: 10px; border: 1px solid var(--line); background: #fff; color: var(--ink); display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.fx-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.fx-btn.primary:hover { background: var(--accent-dark); }
+.fx-btn:disabled { opacity: .55; cursor: wait; }
+.fx-status { display: inline-flex; padding: 3px 11px; border-radius: 999px; font-size: 11.5px; font-weight: 650; background: #f1f5f9; color: #334155; }
+.fx-status.completed { background: #dcfce7; color: #166534; }
+.fx-status.completed_with_issues { background: #fef3c7; color: #92400e; }
+.fx-status.needs_configuration { background: #fee2e2; color: #b91c1c; }
+.fx-status.failed { background: #fee2e2; color: #b91c1c; }
+.fx-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.fx-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: #f6f7fc; font-size: 12.5px; }
+.fx-final { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.65; }
+.fx-list { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.fx-tasks { display: flex; flex-direction: column; gap: 10px; }
+.fx-task { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.fx-task-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.fx-task p { font-size: 13px; line-height: 1.6; margin-top: 7px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fx-badge { display: inline-flex; padding: 2px 9px; border-radius: 999px; font-size: 10.5px; font-weight: 650; background: #f1f5f9; color: #334155; margin-left: auto; }
+.fx-badge.completed { background: #dcfce7; color: #166534; }
+.fx-badge.failed { background: #fee2e2; color: #b91c1c; }
+.fx-badge.needs_configuration, .fx-badge.needs_human_input { background: #fef3c7; color: #92400e; }
+@media (max-width: 760px) {
+  .fx-role-row { grid-template-columns: 1fr; gap: 5px; }
+  .fx-role-meta { white-space: normal; }
+}

@@ -190,6 +190,38 @@ sd.domain_hint = body.domain || [];
 sd.expected_outputs = body.expected_outputs || [];
 sd.constraints = body.constraints || [];
 sd.documents = body.documents || [];
+// Optional per-role agent assignments sent by MindFlow (AI Factory page):
+// body.agents = { "AI Leader": {name, provider, model, system_prompt}, ... }.
+// An assignment applies only when its provider is known AND that provider's
+// key exists in the n8n environment; otherwise it is reported as ignored so
+// the caller sees why their agent did not run. Only the PRESENCE of the
+// provider env key is checked here — key values never enter the workflow.
+const ROLE_NAMES = ['AI Leader', 'AI Planner', 'AI Architect', 'AI Developer', 'AI Tester', 'AI Reviewer', 'AI Researcher'];
+const PROVIDER_ENV = { groq: 'GROQ_API_KEY', ollama: 'OLLAMA_API_KEY', openrouter: 'OPENROUTER_API_KEY' };
+const rawAgents = (body.agents && typeof body.agents === 'object' && !Array.isArray(body.agents)) ? body.agents : {};
+const overrides = {};
+const overridesIgnored = [];
+for (const role of ROLE_NAMES) {
+  const a = rawAgents[role];
+  if (!a || typeof a !== 'object') continue;
+  const provider = String(a.provider || '').toLowerCase();
+  const model = String(a.model || '').trim();
+  const agentName = String(a.name || role).slice(0, 120);
+  if (!PROVIDER_ENV[provider] || !model) {
+    overridesIgnored.push({ role, agent_name: agentName, reason: 'invalid_provider_or_model' });
+    continue;
+  }
+  if (!has(PROVIDER_ENV[provider])) {
+    overridesIgnored.push({ role, agent_name: agentName, reason: 'provider_not_configured_in_n8n_env:' + PROVIDER_ENV[provider] });
+    continue;
+  }
+  overrides[role] = {
+    agent_name: agentName, provider, model,
+    system_prompt: typeof a.system_prompt === 'string' ? a.system_prompt.slice(0, 8000) : ''
+  };
+}
+sd.agent_overrides = overrides;
+sd.agent_overrides_ignored = overridesIgnored;
 sd.registry = registry;
 sd.results = [];
 sd.review = null;
@@ -221,7 +253,12 @@ let pick = rankModels(available, 'planning', 'high')[0]
   || rankModels(available, 'general', 'high')[0]
   || available[0];
 if (!pick) return [{ json: { has_available_model: false, project_id: input.project_id } }];
-const systemPrompt = [
+const sdPre = $getWorkflowStaticData('global');
+const leaderOverride = (sdPre.agent_overrides || {})['AI Leader'] || null;
+if (leaderOverride) {
+  pick = { provider: leaderOverride.provider, model_id: leaderOverride.model, capabilities: [], strength: 3, cost_rank: 1 };
+}
+const promptParts = [
   'You are the AI Leader and AI Planner of a 7-role AI team. Roles: AI Leader, AI Planner, AI Architect, AI Developer, AI Tester, AI Reviewer, AI Researcher.',
   'Analyse the user requirement, decide its domain(s) (software, research, business, marketing, education, office, creative, mixed — do NOT force everything into a software project), and produce a task plan.',
   'Rules:',
@@ -232,7 +269,16 @@ const systemPrompt = [
   'Respond with ONLY this JSON (no markdown, no commentary):',
   '{"project_id":"' + input.project_id + '","project_summary":"...","domain":["..."],"expected_outputs":["..."],"assumptions":[],"tasks":[{"task_id":"task-1","role":"AI Researcher","objective":"...","instructions":"...","task_type":"research|planning|architecture|coding|testing|review|writing|extraction|general","domain":["..."],"input_from":[],"depends_on":[],"model_selection":{"provider":"groq","model_id":"...","reason":"...","fallback":[]},"complexity":"low|medium|high","priority":"low|medium|high","acceptance_criteria":["..."],"output_format":"json","status":"planned"}]}',
   'AVAILABLE MODELS (registry): ' + JSON.stringify(available)
-].join('\n');
+];
+if (leaderOverride && leaderOverride.system_prompt) {
+  promptParts.unshift('The user assigned their own MindFlow agent "' + leaderOverride.agent_name + '" to lead this team. Its instructions:\n' + leaderOverride.system_prompt);
+}
+const assignments = sdPre.agent_overrides || {};
+const assignedRoles = Object.keys(assignments);
+if (assignedRoles.length) {
+  promptParts.push('FIXED AGENT ASSIGNMENTS from MindFlow (the router will honor these provider/model choices per role; plan tasks for these roles normally): ' + JSON.stringify(assignedRoles.map(r => ({ role: r, agent: assignments[r].agent_name, provider: assignments[r].provider, model: assignments[r].model }))));
+}
+const systemPrompt = promptParts.join('\n');
 const userContent = [
   'REQUIREMENT: ' + (input.requirement || ''),
   input.domain_hint && input.domain_hint.length ? 'DOMAIN HINT: ' + JSON.stringify(input.domain_hint) : '',
@@ -319,7 +365,15 @@ plan.tasks.forEach((raw, i) => {
   const ranked = rankedFor(available, cap, task.complexity);
   const leaderSel = raw.model_selection || null;
   const leaderEntry = leaderSel ? byKey[leaderSel.provider + '::' + leaderSel.model_id] : null;
-  if (!ranked.length && !leaderEntry) {
+  const override = (sd.agent_overrides || {})[role] || null;
+  if (override) {
+    task.model_selection = {
+      provider: override.provider, model_id: override.model,
+      reason: 'mindflow_agent_assignment:' + override.agent_name,
+      fallback: ranked.filter(m => !(m.provider === override.provider && m.model_id === override.model)).slice(0, 2)
+        .map(m => ({ provider: m.provider, model_id: m.model_id }))
+    };
+  } else if (!ranked.length && !leaderEntry) {
     task.status = 'needs_configuration';
     task.model_selection = null;
     task.router_note = 'no_available_model_for_capability:' + cap;
@@ -377,7 +431,11 @@ if (!task.model_selection || task.status === 'needs_configuration' || task.statu
 }
 const results = sd.results || [];
 const depResults = results.filter(r => (task.depends_on || []).includes(r.task_id));
-const systemPrompt = (ROLE_PROMPTS[task.role] || ROLE_PROMPTS['AI Developer']) + '\n' + RESULT_CONTRACT;
+const taskOverride = (sd.agent_overrides || {})[task.role] || null;
+const persona = taskOverride && taskOverride.system_prompt
+  ? taskOverride.system_prompt
+  : (ROLE_PROMPTS[task.role] || ROLE_PROMPTS['AI Developer']);
+const systemPrompt = persona + '\n' + RESULT_CONTRACT;
 const userContent = [
   'PROJECT: ' + (sd.plan ? sd.plan.project_summary || '' : '') + ' (requirement: ' + (sd.requirement || '') + ')',
   'TASK ' + task.task_id + ' — ' + task.role,
@@ -507,8 +565,13 @@ const different = ranked.filter(m => (m.provider + '::' + m.model_id) !== domina
 if (different.length) ranked = different;
 const pick = ranked[0] || rankModels(available, 'reasoning')[0] || available[0];
 if (!pick) { sd.review = null; return [{ json: { skip_review: true } }]; }
-sd.reviewer_selection = { provider: pick.provider, model_id: pick.model_id };
-const systemPrompt = [
+const reviewerOverride = (sd.agent_overrides || {})['AI Reviewer'] || null;
+const reviewerPick = reviewerOverride
+  ? { provider: reviewerOverride.provider, model_id: reviewerOverride.model }
+  : pick;
+sd.reviewer_selection = { provider: reviewerPick.provider, model_id: reviewerPick.model_id };
+const reviewerPersona = reviewerOverride && reviewerOverride.system_prompt ? reviewerOverride.system_prompt + '\n' : '';
+const systemPrompt = reviewerPersona + [
   'You are the AI Reviewer performing the final independent review of an AI team project.',
   'Check every task result against the plan and its acceptance criteria. Be strict but fair.',
   'Respond with ONLY this JSON (no markdown): {"status":"approved|changes_requested","score":0,"issues":[],"missing_requirements":[],"contradictions":[],"unsupported_claims":[],"required_revisions":[],"final_notes":[]}',
@@ -520,7 +583,7 @@ const userContent = [
   'TASK RESULTS: ' + JSON.stringify(results).slice(0, 14000),
   'Revision round so far: ' + (sd.revision_rounds || 0) + ' of max 2.'
 ].join('\n');
-const call = providerCall(pick.provider, pick.model_id, systemPrompt, userContent, 4096);
+const call = providerCall(reviewerPick.provider, reviewerPick.model_id, systemPrompt, userContent, 4096);
 return [{ json: Object.assign({ skip_review: false }, call) }];
 """
 
@@ -553,7 +616,9 @@ const task = (sd.plan.tasks || []).find(t => t.task_id === taskId);
 const previous = (sd.results || []).find(r => r.task_id === taskId) || {};
 const review = sd.review || {};
 if (!task || !task.model_selection) return [{ json: { task_id: taskId, skip_call: true } }];
-const systemPrompt = 'You are the ' + task.role + ' revising your earlier work after an independent review. Fix every listed issue; keep what was already correct. Respond with ONLY this JSON (no markdown): {"project_id":"...","task_id":"...","role":"...","provider":"...","model_id":"...","status":"completed|failed|needs_human_input","summary":"...","deliverables":[],"evidence":[],"assumptions":[],"risks":[],"handoff":{"to_role":"AI Reviewer","notes":"..."},"needs_human_input":false}';
+const revisionOverride = (sd.agent_overrides || {})[task.role] || null;
+const revisionPersona = revisionOverride && revisionOverride.system_prompt ? revisionOverride.system_prompt + '\n' : '';
+const systemPrompt = revisionPersona + 'You are the ' + task.role + ' revising your earlier work after an independent review. Fix every listed issue; keep what was already correct. Respond with ONLY this JSON (no markdown): {"project_id":"...","task_id":"...","role":"...","provider":"...","model_id":"...","status":"completed|failed|needs_human_input","summary":"...","deliverables":[],"evidence":[],"assumptions":[],"risks":[],"handoff":{"to_role":"AI Reviewer","notes":"..."},"needs_human_input":false}';
 const userContent = [
   'TASK ' + task.task_id + ' — ' + task.role,
   'OBJECTIVE: ' + task.objective,
@@ -602,9 +667,12 @@ function rankModels(models, cap) {
 }
 const sd = $getWorkflowStaticData('global');
 const available = (sd.registry || []).filter(m => m.status === 'available');
-const pick = rankModels(available, 'reasoning')[0] || available[0];
+let pick = rankModels(available, 'reasoning')[0] || available[0];
+const leaderOverride = (sd.agent_overrides || {})['AI Leader'] || null;
+if (leaderOverride) pick = { provider: leaderOverride.provider, model_id: leaderOverride.model };
 if (!pick) return [{ json: { skip_call: true } }];
 const systemPrompt = [
+  ...(leaderOverride && leaderOverride.system_prompt ? [leaderOverride.system_prompt] : []),
   'You are the AI Leader delivering the final synthesis of an AI team project.',
   'Write in the same language as the requirement.',
   'Respond with ONLY this JSON (no markdown): {"summary":"...","deliverables":[],"open_questions":[],"notes":[]}'
@@ -642,6 +710,8 @@ return [{ json: {
   plan_error: sd.plan_error || null,
   model_registry: (sd.registry || []).filter(m => m.status === 'available'),
   leader_selection: sd.leader_selection || null,
+  agent_assignments: Object.entries(sd.agent_overrides || {}).map(([role, o]) => ({ role, agent_name: o.agent_name, provider: o.provider, model: o.model })),
+  agent_assignments_ignored: sd.agent_overrides_ignored || [],
   reviewer_selection: sd.reviewer_selection || null,
   task_results: results,
   skipped_roles: sd.skipped_roles || [],
@@ -668,6 +738,10 @@ def workflow_seven_agent_routing():
                ".env file next to docker-compose.yml). Keys never appear in this JSON. Claude/GPT/DeepSeek "
                "are reachable only through OpenRouter and only when its key is set.\n\n"
                "POST `/webhook/ai-team/start` with `{requirement, domain?, expected_outputs?, constraints?, documents?}`. "
+               "Optional `agents` maps a role name to a MindFlow agent `{name, provider, model, system_prompt}` "
+               "(sent by the MindFlow AI Factory page): the router honors that agent's provider/model and system "
+               "prompt for the role when the provider is configured in the n8n env, and reports the assignment "
+               "(or why it was ignored) in the final package. "
                "Tasks run sequentially in dependency order; the review gate allows at most 2 revision rounds. "
                "Run one execution at a time (run state uses workflow static data).", -80, 640, 900, 300))
     add(node("Team Webhook", "n8n-nodes-base.webhook", 2,

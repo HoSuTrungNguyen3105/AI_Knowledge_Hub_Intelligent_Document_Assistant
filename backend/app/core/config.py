@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     artifact_max_files: int = Field(default=50, ge=1, le=500)
     artifact_max_file_bytes: int = Field(default=262_144, ge=1024)
     artifact_max_total_bytes: int = Field(default=2_097_152, ge=1024)
+    # MindFlow -> self-hosted n8n bridge (AI Factory page). The backend calls
+    # the webhook of the user's own n8n instance; the default matches the
+    # docker-compose setup in n8n-ai-factory/ (n8n published on port 5678).
+    n8n_webhook_base_url: str = "http://localhost:5678"
+    # A full 7-agent run takes minutes; the call is synchronous by design so
+    # the page can show the finished package in one round trip.
+    n8n_factory_timeout_seconds: int = Field(default=900, ge=30, le=3600)
 
     @field_validator("credential_encryption_key")
     @classmethod
@@ -67,6 +74,23 @@ class Settings(BaseSettings):
         if not value.startswith(("mongodb://", "mongodb+srv://")):
             raise ValueError("MONGODB_URI must start with mongodb:// or mongodb+srv://")
         return value
+
+    @field_validator("n8n_webhook_base_url")
+    @classmethod
+    def validate_n8n_webhook_base_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "N8N_WEBHOOK_BASE_URL must be an HTTP(S) origin without credentials"
+            )
+        return value.rstrip("/")
 
     @field_validator("cors_origins")
     @classmethod
