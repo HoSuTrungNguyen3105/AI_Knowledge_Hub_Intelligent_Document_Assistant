@@ -20,7 +20,9 @@ from app.api.v1 import (
     n8n_factory,
     notifications,
     providers,
+    seed,
     workflows,
+    workspaces,
 )
 from app.core.config import Settings, get_settings
 from app.core.database import lifespan_mongo
