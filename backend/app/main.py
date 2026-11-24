@@ -10,6 +10,7 @@ from pymongo.errors import PyMongoError
 from app.api.v1 import (
     agents,
     analytics,
+    approvals,
     auth,
     chat,
     compare,
@@ -124,6 +125,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         seed.router,
         workspaces.router,
         analytics.router,
+        approvals.router,
     ):
         application.include_router(router, prefix="/api/v1")
     return application

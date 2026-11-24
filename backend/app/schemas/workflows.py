@@ -113,6 +113,7 @@ class WorkflowCreate(BaseModel):
     max_steps: int | None = Field(default=None, ge=1, le=100)
     output_type: str = "text"
     design_brief: str | None = Field(default=None, max_length=1200)
+    requires_approval: bool = False
 
     @field_validator("title", "goal")
     @classmethod
@@ -135,6 +136,8 @@ class WorkflowOut(BaseModel):
     goal: str
     output_type: str = "text"
     design_brief: str | None = None
+    requires_approval: bool = False
+    approval_status: str = "none"
     artifact_status: str = "none"
     artifact_file_count: int = 0
     artifact_total_bytes: int = 0
