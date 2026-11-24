@@ -239,6 +239,12 @@ const ERROR_MESSAGES = {
   coordinator_not_in_team: "Coordinator phải là thành viên của nhóm.",
   workflow_not_runnable: "Workflow không ở trạng thái có thể thực hiện thao tác này.",
   workflow_already_running: "Workflow đang chạy.",
+  agent_not_found: "Không tìm thấy Agent này trong tài khoản của bạn.",
+  analysis_invalid_response: "AI Leader trả về kế hoạch không đọc được. Hãy thử lại hoặc đổi Agent Leader/model khác.",
+  credentials_missing: "Provider của Agent Leader chưa được cấu hình key. Hãy mở trang Providers trước.",
+  provider_disabled: "Provider của Agent Leader đang tắt. Hãy bật lại ở trang Providers.",
+  model_not_synced: "Model của Agent Leader chưa được đồng bộ cho provider này.",
+  model_not_chat_capable: "Model của Agent Leader không hỗ trợ chat.",
 };
 
 export function getWorkflowError(error, fallback = "Đã xảy ra lỗi. Vui lòng thử lại.") {
