@@ -62,6 +62,8 @@ ERRORS = {
     ),
     "invalid_factory_roles": (422, "Assign agents only to the seven team roles."),
     "factory_run_not_found": (404, "That AI Factory run does not exist."),
+    "collab_room_not_found": (404, "That collaboration room does not exist."),
+    "collab_agent_not_member": (422, "A mentioned agent is not a member of this room."),
     "invalid_callback_token": (401, "The AI Factory run callback token is invalid."),
     "seed_disabled": (403, "Demo seeding is disabled in the production environment."),
     "seed_provider_required": (

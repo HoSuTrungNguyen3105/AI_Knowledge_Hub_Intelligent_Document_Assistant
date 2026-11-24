@@ -12,14 +12,13 @@ from app.api.v1 import (
     analytics,
     auth,
     chat,
+    collab,
     compare,
     dashboard,
     health,
     n8n_factory,
     providers,
-    seed,
     workflows,
-    workspaces,
 )
 from app.core.config import Settings, get_settings
 from app.core.database import lifespan_mongo
@@ -117,6 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dashboard.router,
         providers.router,
         chat.router,
+        collab.router,
         compare.router,
         agents.router,
         workflows.router,
