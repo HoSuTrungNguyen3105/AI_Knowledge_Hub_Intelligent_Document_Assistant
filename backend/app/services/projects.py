@@ -11,6 +11,8 @@ status "analyzed"; scoring and allocation live in the next wave.
 """
 
 import json
+import logging
+import re
 from datetime import datetime, time, timezone
 from uuid import UUID, uuid4
 
@@ -35,6 +37,8 @@ from app.services.ai.base_provider import ProviderError
 from app.services.ai.chat import ChatHTTP
 from app.services.ai.chat_types import ChatRequest, ChatTurn
 from app.services.ai.registry import get_provider
+
+logger = logging.getLogger(__name__)
 
 ANALYST_SYSTEM_PROMPT = """Bạn là chuyên gia phân tích dự án phần mềm.
 Nhiệm vụ: đọc yêu cầu dự án và chia thành các task có thể phân công
@@ -81,11 +85,18 @@ def parse_analysis(text: str) -> AnalysisDraft:
             cleaned = cleaned[4:].lstrip()
     start, end = cleaned.find("{"), cleaned.rfind("}")
     if start == -1 or end <= start:
+        logger.warning("Analysis parse failed (no JSON object): %.800s", text)
         raise ProviderError("analysis_invalid_response")
+    candidate = cleaned[start : end + 1]
+    # Models frequently leave trailing commas behind; JSON forbids them.
+    candidate = re.sub(r",\s*([}\]])", r"\1", candidate)
     try:
-        raw = json.loads(cleaned[start : end + 1])
+        raw = json.loads(candidate)
         return AnalysisDraft.model_validate(raw)
     except (json.JSONDecodeError, ValidationError):
+        # Keep a sample of the raw answer in the server log so a bad
+        # model output can be diagnosed instead of guessed at.
+        logger.warning("Analysis parse failed (invalid draft): %.800s", text)
         raise ProviderError("analysis_invalid_response") from None
 
 
@@ -234,7 +245,7 @@ class ProjectService:
             turns=(ChatTurn("user", user_prompt),),
             system_prompt=ANALYST_SYSTEM_PROMPT,
             temperature=0.2,
-            max_output_tokens=4096,
+            max_output_tokens=8192,
         )
         adapter = create_provider(payload.provider, chat_http=self.chat_http)
         parts: list[str] = []

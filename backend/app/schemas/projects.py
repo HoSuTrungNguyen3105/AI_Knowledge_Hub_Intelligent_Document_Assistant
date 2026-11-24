@@ -1,4 +1,5 @@
 from datetime import date, datetime
+import re
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -120,6 +121,38 @@ class AnalysisTask(BaseModel):
     estimated_hours: float | None = Field(default=None, ge=0)
     suggested_type: str = "either"
 
+    @field_validator("title", mode="before")
+    @classmethod
+    def clamp_title(cls, value):
+        # Models happily emit over-long titles; clamp instead of
+        # rejecting the whole analysis over a cosmetic field.
+        return str(value).strip()[:200] if value is not None else value
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def clamp_description(cls, value):
+        return str(value)[:2000] if value is not None else value
+
+    @field_validator("skills_required", "scopes", mode="before")
+    @classmethod
+    def coerce_name_list(cls, value):
+        # Models sometimes return "React, Node.js" instead of a list.
+        if isinstance(value, str):
+            return [part for part in (p.strip() for p in value.split(",")) if part]
+        if isinstance(value, list):
+            return [str(item)[:60] for item in value]
+        return value
+
+    @field_validator("estimated_hours", mode="before")
+    @classmethod
+    def coerce_hours(cls, value):
+        # "8", "8 giờ", "khoảng 8-10 giờ" -> first number wins; no
+        # number at all -> None (unknown) instead of a failed analysis.
+        if isinstance(value, str):
+            match = re.search(r"\d+(?:[.,]\d+)?", value)
+            return float(match.group(0).replace(",", ".")) if match else None
+        return value
+
     @field_validator("skills_required", "scopes")
     @classmethod
     def clean_names(cls, values: list[str]) -> list[str]:
@@ -138,6 +171,31 @@ class AnalysisDraft(BaseModel):
     summary: str = Field(min_length=1, max_length=4000)
     tasks: list[AnalysisTask] = Field(min_length=1, max_length=30)
     risks: list[str] = Field(default_factory=list, max_length=15)
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def clamp_summary(cls, value):
+        return str(value).strip()[:4000] if value is not None else value
+
+    @field_validator("tasks", mode="before")
+    @classmethod
+    def coerce_tasks(cls, value):
+        # A dict of tasks or an over-long list should not sink the
+        # whole analysis; take the tasks in order, capped at 30.
+        if isinstance(value, dict):
+            return list(value.values())[:30]
+        if isinstance(value, list):
+            return value[:30]
+        return value
+
+    @field_validator("risks", mode="before")
+    @classmethod
+    def coerce_risks(cls, value):
+        if isinstance(value, str):
+            return [value]
+        if isinstance(value, list):
+            return [str(item)[:300] for item in value][:15]
+        return value
 
 
 class AnalysisOut(BaseModel):
