@@ -13,6 +13,7 @@ from app.services.ai.base_provider import ProviderError, classify_provider_error
 CHAT_ENDPOINTS = {
     "openai": "https://api.openai.com/v1/chat/completions",
     "groq": "https://api.groq.com/openai/v1/chat/completions",
+    "ollama": "https://ollama.com/v1/chat/completions",
     "gemini": "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent",
 }
 
