@@ -138,7 +138,10 @@ async def test_mention_runs_agent_and_stores_reply(owner, mock_agent, db):
     agent = create_agent(client)
     room = create_room(client, [agent["id"]])
 
-    client.post(f"{BASE}/{room['id']}/messages", json={"content": "Bối cảnh ban đầu", "mention_agent_ids": []})
+    client.post(
+        f"{BASE}/{room['id']}/messages",
+        json={"content": "Bối cảnh ban đầu", "mention_agent_ids": []},
+    )
     posted = client.post(
         f"{BASE}/{room['id']}/messages",
         json={"content": "Hãy bắt đầu việc A", "mention_agent_ids": [agent["id"]]},
