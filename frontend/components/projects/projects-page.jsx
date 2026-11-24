@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ConfirmDialog } from "../confirm-dialog";
+import ProjectDiscussion from "./project-discussion";
 import { providerService } from "../../services/providers";
 import { getProjectError, projectErrorByCode, projectsService } from "../../services/projects";
 
@@ -527,6 +528,9 @@ export default function ProjectsPage() {
                       ) : null}
                     </div>
                     {task.description ? <p>{task.description}</p> : null}
+                    {task.acceptance_criteria ? (
+                      <p>Tiêu chí nghiệm thu: {task.acceptance_criteria}</p>
+                    ) : null}
                     {task.skills_required.length > 0 ? (
                       <div className="wf-chip-row">
                         {task.skills_required.map((skill) => (
@@ -635,6 +639,11 @@ export default function ProjectsPage() {
               </article>
             ))
           )}
+
+          <ProjectDiscussion
+            projectId={selected.id}
+            onTasksChanged={() => loadDetail(selected.id)}
+          />
         </section>
       ) : null}
 
