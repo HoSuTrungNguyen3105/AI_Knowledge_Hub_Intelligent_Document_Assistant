@@ -11,6 +11,7 @@ ROLES = {
     "tester",
     "reviewer",
     "researcher",
+    "evaluator",
     "member",
 }
 MESSAGE_TYPES = {
