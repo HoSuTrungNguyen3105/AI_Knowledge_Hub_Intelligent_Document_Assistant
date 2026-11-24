@@ -97,6 +97,7 @@ webhook, không qua ID):
 | `04-code-generation.json` | Dev Agent sinh code → Integration → lưu file vào CES | `POST /webhook/ai-factory/codegen` |
 | `05-qa-and-review.json` | Build/test trong sandbox + QA + Reviewer | `POST /webhook/ai-factory/qa-review` |
 | `06-zip-packaging.json` | Đóng gói ZIP + cập nhật link tải | `POST /webhook/ai-factory/package` |
+| `07-seven-agent-dynamic-routing.json` | Đội 7 role tự chọn model theo task (mục 11) | `POST /webhook/ai-team/start` |
 
 Sau đó **Activate cả 6 workflow** (webhook production chỉ hoạt động khi
 workflow đang active).
@@ -231,6 +232,59 @@ mục riêng — service không cho truy cập chéo project khác.
 > quyền Docker daemon trên host. Chỉ chạy hệ thống này trên máy bạn kiểm
 > soát. Chế độ `SANDBOX_MODE=local` chạy code AI **không có cô lập** — chỉ
 > dùng khi phát triển và hiểu rõ rủi ro.
+
+
+## 11. Workflow 07 — 7 Agent tự chọn model theo task (Dynamic Model Routing)
+
+Theo đặc tả `ai-7-agent-dynamic-model-routing.md`: một workflow độc lập
+(không cần Postgres/Dashboard) với đúng **7 role logic** — AI Leader,
+AI Planner, AI Architect, AI Developer/Executor, AI Tester/Validator,
+AI Reviewer, AI Researcher — xử lý **đa lĩnh vực** (phần mềm, nghiên cứu,
+kinh doanh, marketing, giáo dục, văn phòng, sáng tạo), không ép mọi yêu
+cầu thành dự án code.
+
+Cách hoạt động:
+
+1. **Model Capability Registry**: danh sách model kèm năng lực
+   (reasoning/planning/architecture/coding/testing/review/research/
+   writing/fast), độ mạnh, mức chi phí. Một model chỉ `available` khi key
+   của provider tương ứng có trong môi trường n8n (`GROQ_API_KEY` /
+   `OLLAMA_API_KEY` / `OPENROUTER_API_KEY` trong `.env`). Claude/GPT/
+   DeepSeek bản quyền riêng **không được giả định đã có** — chúng chỉ vào
+   registry qua OpenRouter và chỉ available khi `OPENROUTER_API_KEY` đã đặt.
+2. **Leader lập kế hoạch** theo contract của đặc tả (task có role,
+   depends_on, acceptance_criteria, model_selection...).
+3. **Model Router** kiểm chứng lựa chọn của Leader với registry: model
+   không tồn tại/không available/sai năng lực thì router gán lại theo
+   capability + độ phức tạp, kèm lý do và danh sách fallback. Không có
+   model nào phù hợp → task mang trạng thái `needs_configuration`, không
+   giả vờ hoàn thành.
+4. **Thực thi** từng task theo thứ tự dependency (kết quả task trước được
+   truyền cho task phụ thuộc), lỗi provider thì thử 1 lần + chuyển
+   fallback. Role nào kế hoạch không cần sẽ xuất hiện trong kết quả với
+   trạng thái `skipped` kèm lý do.
+5. **Review gate**: Reviewer độc lập chấm theo contract review của đặc
+   tả, ưu tiên model khác model đã thực thi nhiều nhất; chưa đạt thì các
+   task bị nêu tên chạy lại (tối đa **2 vòng sửa**), sau đó Leader tổng
+   hợp kết quả cuối.
+
+Gọi thử:
+
+```bash
+curl -X POST http://localhost:5678/webhook/ai-team/start \
+  -H "Content-Type: application/json" \
+  -d '{"requirement":"Lập kế hoạch marketing 3 tháng cho ứng dụng học tiếng Anh trẻ em","domain":["marketing"]}'
+```
+
+Kết quả trả về gồm `plan` (kèm model_selection + lý do cho từng task),
+`task_results` (contract kết quả từng role, có provider/model/thời gian
+chạy), `skipped_roles`, `review`, `revision_rounds` và `final` của Leader.
+
+Giới hạn của workflow này: các task chạy **tuần tự** theo thứ tự dependency
+(chưa chạy song song trong cùng một workflow để giữ việc import/đọc hiểu
+đơn giản); trạng thái vòng chạy lưu ở static data của workflow nên chỉ
+chạy **một execution tại một thời điểm**. Sinh lại JSON sau khi sửa:
+`python3 tools/build_workflow_07.py` rồi import lại.
 
 ## 9. Xử lý sự cố
 
