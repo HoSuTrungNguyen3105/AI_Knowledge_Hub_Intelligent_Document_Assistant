@@ -1,0 +1,1636 @@
+[
+  {
+    "type": "human",
+    "name": "Nguyễn Văn An",
+    "role": "Frontend Developer",
+    "skills": [
+      {
+        "name": "React",
+        "level": 5
+      },
+      {
+        "name": "TypeScript",
+        "level": 5
+      },
+      {
+        "name": "JavaScript",
+        "level": 5
+      },
+      {
+        "name": "CSS",
+        "level": 5
+      },
+      {
+        "name": "Next.js",
+        "level": 5
+      }
+    ],
+    "availability_status": "busy",
+    "cost_per_hour": 24,
+    "human": {
+      "experience_years": 4,
+      "hours_per_week": 40,
+      "current_project_count": 4
+    }
+  },
+  {
+    "type": "human",
+    "name": "Trần Thị Bích",
+    "role": "Frontend Developer",
+    "skills": [
+      {
+        "name": "React",
+        "level": 5
+      },
+      {
+        "name": "TypeScript",
+        "level": 3
+      },
+      {
+        "name": "JavaScript",
+        "level": 5
+      },
+      {
+        "name": "CSS",
+        "level": 4
+      },
+      {
+        "name": "Next.js",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 17,
+    "human": {
+      "experience_years": 3,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Lê Hoàng Nam",
+    "role": "Frontend Developer",
+    "skills": [
+      {
+        "name": "React",
+        "level": 5
+      },
+      {
+        "name": "TypeScript",
+        "level": 3
+      },
+      {
+        "name": "JavaScript",
+        "level": 5
+      },
+      {
+        "name": "CSS",
+        "level": 3
+      },
+      {
+        "name": "Next.js",
+        "level": 4
+      }
+    ],
+    "availability_status": "busy",
+    "cost_per_hour": 33,
+    "human": {
+      "experience_years": 8,
+      "hours_per_week": 32,
+      "current_project_count": 2
+    },
+    "notes": "Mạnh về tối ưu hiệu năng giao diện."
+  },
+  {
+    "type": "human",
+    "name": "Phạm Thu Hằng",
+    "role": "Frontend Developer",
+    "skills": [
+      {
+        "name": "React",
+        "level": 4
+      },
+      {
+        "name": "TypeScript",
+        "level": 3
+      },
+      {
+        "name": "JavaScript",
+        "level": 4
+      },
+      {
+        "name": "CSS",
+        "level": 3
+      },
+      {
+        "name": "Next.js",
+        "level": 3
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 14,
+    "human": {
+      "experience_years": 1,
+      "hours_per_week": 40,
+      "current_project_count": 0
+    }
+  },
+  {
+    "type": "human",
+    "name": "Hoàng Văn Đức",
+    "role": "Frontend Developer",
+    "skills": [
+      {
+        "name": "React",
+        "level": 5
+      },
+      {
+        "name": "TypeScript",
+        "level": 4
+      },
+      {
+        "name": "JavaScript",
+        "level": 4
+      },
+      {
+        "name": "CSS",
+        "level": 4
+      },
+      {
+        "name": "Next.js",
+        "level": 3
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 18,
+    "human": {
+      "experience_years": 2,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Huỳnh Thị Mai",
+    "role": "Frontend Developer",
+    "skills": [
+      {
+        "name": "React",
+        "level": 5
+      },
+      {
+        "name": "TypeScript",
+        "level": 5
+      },
+      {
+        "name": "JavaScript",
+        "level": 5
+      },
+      {
+        "name": "CSS",
+        "level": 5
+      },
+      {
+        "name": "Next.js",
+        "level": 5
+      }
+    ],
+    "availability_status": "busy",
+    "cost_per_hour": 20,
+    "human": {
+      "experience_years": 3,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Vũ Đình Khoa",
+    "role": "Backend Developer",
+    "skills": [
+      {
+        "name": "Node.js",
+        "level": 4
+      },
+      {
+        "name": "PostgreSQL",
+        "level": 4
+      },
+      {
+        "name": "REST API",
+        "level": 5
+      },
+      {
+        "name": "Redis",
+        "level": 3
+      },
+      {
+        "name": "Docker",
+        "level": 3
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 22,
+    "human": {
+      "experience_years": 3,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Đặng Thị Lan",
+    "role": "Backend Developer",
+    "skills": [
+      {
+        "name": "Node.js",
+        "level": 5
+      },
+      {
+        "name": "PostgreSQL",
+        "level": 4
+      },
+      {
+        "name": "REST API",
+        "level": 5
+      },
+      {
+        "name": "Redis",
+        "level": 2
+      },
+      {
+        "name": "Docker",
+        "level": 2
+      }
+    ],
+    "availability_status": "unavailable",
+    "cost_per_hour": 24,
+    "human": {
+      "experience_years": 4,
+      "hours_per_week": 40,
+      "current_project_count": 0
+    },
+    "notes": "Đang onsite khách hàng tại Hà Nội."
+  },
+  {
+    "type": "human",
+    "name": "Bùi Văn Hùng",
+    "role": "Backend Developer",
+    "skills": [
+      {
+        "name": "Node.js",
+        "level": 4
+      },
+      {
+        "name": "PostgreSQL",
+        "level": 3
+      },
+      {
+        "name": "REST API",
+        "level": 4
+      },
+      {
+        "name": "Redis",
+        "level": 2
+      },
+      {
+        "name": "Docker",
+        "level": 2
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 22,
+    "human": {
+      "experience_years": 3,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Đỗ Thu Thảo",
+    "role": "Backend Developer",
+    "skills": [
+      {
+        "name": "Node.js",
+        "level": 5
+      },
+      {
+        "name": "PostgreSQL",
+        "level": 3
+      },
+      {
+        "name": "REST API",
+        "level": 4
+      },
+      {
+        "name": "Redis",
+        "level": 2
+      },
+      {
+        "name": "Docker",
+        "level": 3
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 21,
+    "human": {
+      "experience_years": 3,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Hồ Văn Phúc",
+    "role": "Backend Developer",
+    "skills": [
+      {
+        "name": "Node.js",
+        "level": 5
+      },
+      {
+        "name": "PostgreSQL",
+        "level": 4
+      },
+      {
+        "name": "REST API",
+        "level": 5
+      },
+      {
+        "name": "Redis",
+        "level": 4
+      },
+      {
+        "name": "Docker",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 23,
+    "human": {
+      "experience_years": 3,
+      "hours_per_week": 40,
+      "current_project_count": 0
+    }
+  },
+  {
+    "type": "human",
+    "name": "Ngô Thị Quỳnh",
+    "role": "Backend Developer",
+    "skills": [
+      {
+        "name": "Node.js",
+        "level": 5
+      },
+      {
+        "name": "PostgreSQL",
+        "level": 4
+      },
+      {
+        "name": "REST API",
+        "level": 5
+      },
+      {
+        "name": "Redis",
+        "level": 2
+      },
+      {
+        "name": "Docker",
+        "level": 3
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 25,
+    "human": {
+      "experience_years": 5,
+      "hours_per_week": 40,
+      "current_project_count": 1
+    }
+  },
+  {
+    "type": "human",
+    "name": "Dương Văn Sơn",
+    "role": "Fullstack Developer",
+    "skills": [
+      {
+        "name": "React",
+        "level": 4
+      },
+      {
+        "name": "Node.js",
+        "level": 4
+      },
+      {
+        "name": "MongoDB",
+        "level": 4
+      },
+      {
+        "name": "TypeScript",
+        "level": 4
+      },
+      {
+        "name": "Git",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 19,
+    "human": {
+      "experience_years": 4,
+      "hours_per_week": 40,
+      "current_project_count": 1
+    },
+    "notes": "Có kinh nghiệm dẫn dắt nhóm 3-5 người."
+  },
+  {
+    "type": "human",
+    "name": "Lý Thị Ngọc",
+    "role": "Fullstack Developer",
+    "skills": [
+      {
+        "name": "React",
+        "level": 3
+      },
+      {
+        "name": "Node.js",
+        "level": 3
+      },
+      {
+        "name": "MongoDB",
+        "level": 3
+      },
+      {
+        "name": "TypeScript",
+        "level": 3
+      },
+      {
+        "name": "Git",
+        "level": 3
+      }
+    ],
+    "availability_status": "busy",
+    "cost_per_hour": 23,
+    "human": {
+      "experience_years": 3,
+      "hours_per_week": 40,
+      "current_project_count": 4
+    }
+  },
+  {
+    "type": "human",
+    "name": "Nguyễn Thị Hương",
+    "role": "Fullstack Developer",
+    "skills": [
+      {
+        "name": "React",
+        "level": 4
+      },
+      {
+        "name": "Node.js",
+        "level": 4
+      },
+      {
+        "name": "MongoDB",
+        "level": 3
+      },
+      {
+        "name": "TypeScript",
+        "level": 4
+      },
+      {
+        "name": "Git",
+        "level": 4
+      }
+    ],
+    "availability_status": "busy",
+    "cost_per_hour": 20,
+    "human": {
+      "experience_years": 4,
+      "hours_per_week": 40,
+      "current_project_count": 3
+    }
+  },
+  {
+    "type": "human",
+    "name": "Trần Văn Tuấn",
+    "role": "Mobile Developer",
+    "skills": [
+      {
+        "name": "Flutter",
+        "level": 5
+      },
+      {
+        "name": "Dart",
+        "level": 5
+      },
+      {
+        "name": "Android",
+        "level": 4
+      },
+      {
+        "name": "iOS",
+        "level": 3
+      },
+      {
+        "name": "REST API",
+        "level": 5
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 29,
+    "human": {
+      "experience_years": 8,
+      "hours_per_week": 32,
+      "current_project_count": 0
+    }
+  },
+  {
+    "type": "human",
+    "name": "Lê Thị Thanh",
+    "role": "Mobile Developer",
+    "skills": [
+      {
+        "name": "Flutter",
+        "level": 4
+      },
+      {
+        "name": "Dart",
+        "level": 4
+      },
+      {
+        "name": "Android",
+        "level": 2
+      },
+      {
+        "name": "iOS",
+        "level": 3
+      },
+      {
+        "name": "REST API",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 28,
+    "human": {
+      "experience_years": 6,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Phạm Văn Long",
+    "role": "Mobile Developer",
+    "skills": [
+      {
+        "name": "Flutter",
+        "level": 3
+      },
+      {
+        "name": "Dart",
+        "level": 3
+      },
+      {
+        "name": "Android",
+        "level": 3
+      },
+      {
+        "name": "iOS",
+        "level": 3
+      },
+      {
+        "name": "REST API",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 16,
+    "human": {
+      "experience_years": 1,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    },
+    "notes": "Ưu tiên các task cần giao tiếp với khách hàng."
+  },
+  {
+    "type": "human",
+    "name": "Hoàng Thị Yến",
+    "role": "Mobile Developer",
+    "skills": [
+      {
+        "name": "Flutter",
+        "level": 3
+      },
+      {
+        "name": "Dart",
+        "level": 3
+      },
+      {
+        "name": "Android",
+        "level": 2
+      },
+      {
+        "name": "iOS",
+        "level": 2
+      },
+      {
+        "name": "REST API",
+        "level": 3
+      }
+    ],
+    "availability_status": "unavailable",
+    "cost_per_hour": 12,
+    "human": {
+      "experience_years": 1,
+      "hours_per_week": 40,
+      "current_project_count": 1
+    }
+  },
+  {
+    "type": "human",
+    "name": "Vũ Văn Minh",
+    "role": "QA Engineer",
+    "skills": [
+      {
+        "name": "Testing",
+        "level": 5
+      },
+      {
+        "name": "Selenium",
+        "level": 4
+      },
+      {
+        "name": "Playwright",
+        "level": 3
+      },
+      {
+        "name": "API Testing",
+        "level": 4
+      },
+      {
+        "name": "SQL",
+        "level": 3
+      }
+    ],
+    "availability_status": "unavailable",
+    "cost_per_hour": 26,
+    "human": {
+      "experience_years": 7,
+      "hours_per_week": 32,
+      "current_project_count": 1
+    }
+  },
+  {
+    "type": "human",
+    "name": "Đặng Văn Hải",
+    "role": "QA Engineer",
+    "skills": [
+      {
+        "name": "Testing",
+        "level": 5
+      },
+      {
+        "name": "Selenium",
+        "level": 5
+      },
+      {
+        "name": "Playwright",
+        "level": 5
+      },
+      {
+        "name": "API Testing",
+        "level": 5
+      },
+      {
+        "name": "SQL",
+        "level": 3
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 27,
+    "human": {
+      "experience_years": 5,
+      "hours_per_week": 40,
+      "current_project_count": 1
+    }
+  },
+  {
+    "type": "human",
+    "name": "Bùi Thị Linh",
+    "role": "QA Engineer",
+    "skills": [
+      {
+        "name": "Testing",
+        "level": 5
+      },
+      {
+        "name": "Selenium",
+        "level": 4
+      },
+      {
+        "name": "Playwright",
+        "level": 3
+      },
+      {
+        "name": "API Testing",
+        "level": 4
+      },
+      {
+        "name": "SQL",
+        "level": 3
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 20,
+    "human": {
+      "experience_years": 3,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Đỗ Văn Thắng",
+    "role": "QA Engineer",
+    "skills": [
+      {
+        "name": "Testing",
+        "level": 4
+      },
+      {
+        "name": "Selenium",
+        "level": 4
+      },
+      {
+        "name": "Playwright",
+        "level": 4
+      },
+      {
+        "name": "API Testing",
+        "level": 3
+      },
+      {
+        "name": "SQL",
+        "level": 3
+      }
+    ],
+    "availability_status": "unavailable",
+    "cost_per_hour": 34,
+    "human": {
+      "experience_years": 8,
+      "hours_per_week": 40,
+      "current_project_count": 1
+    },
+    "notes": "Đang học thêm Rust vào cuối tuần."
+  },
+  {
+    "type": "human",
+    "name": "Hồ Thị Phương",
+    "role": "QA Engineer",
+    "skills": [
+      {
+        "name": "Testing",
+        "level": 4
+      },
+      {
+        "name": "Selenium",
+        "level": 3
+      },
+      {
+        "name": "Playwright",
+        "level": 3
+      },
+      {
+        "name": "API Testing",
+        "level": 3
+      },
+      {
+        "name": "SQL",
+        "level": 2
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 15,
+    "human": {
+      "experience_years": 2,
+      "hours_per_week": 32,
+      "current_project_count": 1
+    }
+  },
+  {
+    "type": "human",
+    "name": "Ngô Văn Dũng",
+    "role": "DevOps Engineer",
+    "skills": [
+      {
+        "name": "Docker",
+        "level": 5
+      },
+      {
+        "name": "Kubernetes",
+        "level": 4
+      },
+      {
+        "name": "CI/CD",
+        "level": 4
+      },
+      {
+        "name": "AWS",
+        "level": 4
+      },
+      {
+        "name": "Linux",
+        "level": 4
+      }
+    ],
+    "availability_status": "unavailable",
+    "cost_per_hour": 21,
+    "human": {
+      "experience_years": 4,
+      "hours_per_week": 32,
+      "current_project_count": 1
+    }
+  },
+  {
+    "type": "human",
+    "name": "Nguyễn Thị Trang",
+    "role": "DevOps Engineer",
+    "skills": [
+      {
+        "name": "Docker",
+        "level": 5
+      },
+      {
+        "name": "Kubernetes",
+        "level": 5
+      },
+      {
+        "name": "CI/CD",
+        "level": 5
+      },
+      {
+        "name": "AWS",
+        "level": 5
+      },
+      {
+        "name": "Linux",
+        "level": 5
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 17,
+    "human": {
+      "experience_years": 3,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Trần Hoàng Anh",
+    "role": "Data Engineer",
+    "skills": [
+      {
+        "name": "Python",
+        "level": 5
+      },
+      {
+        "name": "SQL",
+        "level": 5
+      },
+      {
+        "name": "Apache Spark",
+        "level": 2
+      },
+      {
+        "name": "ETL",
+        "level": 4
+      },
+      {
+        "name": "PostgreSQL",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 23,
+    "human": {
+      "experience_years": 6,
+      "hours_per_week": 40,
+      "current_project_count": 0
+    }
+  },
+  {
+    "type": "human",
+    "name": "Lê Văn Cường",
+    "role": "Data Engineer",
+    "skills": [
+      {
+        "name": "Python",
+        "level": 5
+      },
+      {
+        "name": "SQL",
+        "level": 5
+      },
+      {
+        "name": "Apache Spark",
+        "level": 2
+      },
+      {
+        "name": "ETL",
+        "level": 4
+      },
+      {
+        "name": "PostgreSQL",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 23,
+    "human": {
+      "experience_years": 6,
+      "hours_per_week": 32,
+      "current_project_count": 2
+    },
+    "notes": "Mạnh về kiểm thử tự động end-to-end."
+  },
+  {
+    "type": "human",
+    "name": "Phạm Thị Nga",
+    "role": "Data Analyst",
+    "skills": [
+      {
+        "name": "SQL",
+        "level": 4
+      },
+      {
+        "name": "Data Analysis",
+        "level": 4
+      },
+      {
+        "name": "Excel",
+        "level": 4
+      },
+      {
+        "name": "Power BI",
+        "level": 3
+      },
+      {
+        "name": "Python",
+        "level": 2
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 22,
+    "human": {
+      "experience_years": 3,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Hoàng Văn Tú",
+    "role": "Data Analyst",
+    "skills": [
+      {
+        "name": "SQL",
+        "level": 4
+      },
+      {
+        "name": "Data Analysis",
+        "level": 5
+      },
+      {
+        "name": "Excel",
+        "level": 5
+      },
+      {
+        "name": "Power BI",
+        "level": 4
+      },
+      {
+        "name": "Python",
+        "level": 2
+      }
+    ],
+    "availability_status": "unavailable",
+    "cost_per_hour": 23,
+    "human": {
+      "experience_years": 6,
+      "hours_per_week": 40,
+      "current_project_count": 0
+    }
+  },
+  {
+    "type": "human",
+    "name": "Huỳnh Văn Phát",
+    "role": "AI/ML Engineer",
+    "skills": [
+      {
+        "name": "Python",
+        "level": 5
+      },
+      {
+        "name": "Machine Learning",
+        "level": 5
+      },
+      {
+        "name": "TensorFlow",
+        "level": 4
+      },
+      {
+        "name": "LLM",
+        "level": 5
+      },
+      {
+        "name": "Data Analysis",
+        "level": 5
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 22,
+    "human": {
+      "experience_years": 4,
+      "hours_per_week": 40,
+      "current_project_count": 0
+    }
+  },
+  {
+    "type": "human",
+    "name": "Vũ Thị Hoa",
+    "role": "AI/ML Engineer",
+    "skills": [
+      {
+        "name": "Python",
+        "level": 5
+      },
+      {
+        "name": "Machine Learning",
+        "level": 4
+      },
+      {
+        "name": "TensorFlow",
+        "level": 3
+      },
+      {
+        "name": "LLM",
+        "level": 4
+      },
+      {
+        "name": "Data Analysis",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 24,
+    "human": {
+      "experience_years": 4,
+      "hours_per_week": 40,
+      "current_project_count": 0
+    }
+  },
+  {
+    "type": "human",
+    "name": "Đặng Thị Kim",
+    "role": "UI/UX Designer",
+    "skills": [
+      {
+        "name": "Figma",
+        "level": 5
+      },
+      {
+        "name": "UI Design",
+        "level": 5
+      },
+      {
+        "name": "UX Research",
+        "level": 4
+      },
+      {
+        "name": "Prototyping",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 30,
+    "human": {
+      "experience_years": 7,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    },
+    "notes": "Có chứng chỉ AWS Solutions Architect."
+  },
+  {
+    "type": "human",
+    "name": "Bùi Hoàng Long",
+    "role": "UI/UX Designer",
+    "skills": [
+      {
+        "name": "Figma",
+        "level": 3
+      },
+      {
+        "name": "UI Design",
+        "level": 4
+      },
+      {
+        "name": "UX Research",
+        "level": 3
+      },
+      {
+        "name": "Prototyping",
+        "level": 3
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 23,
+    "human": {
+      "experience_years": 6,
+      "hours_per_week": 40,
+      "current_project_count": 1
+    }
+  },
+  {
+    "type": "human",
+    "name": "Đỗ Thị Hạnh",
+    "role": "UI/UX Designer",
+    "skills": [
+      {
+        "name": "Figma",
+        "level": 5
+      },
+      {
+        "name": "UI Design",
+        "level": 5
+      },
+      {
+        "name": "UX Research",
+        "level": 4
+      },
+      {
+        "name": "Prototyping",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 28,
+    "human": {
+      "experience_years": 7,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Hồ Văn Trung",
+    "role": "Graphic Designer",
+    "skills": [
+      {
+        "name": "Photoshop",
+        "level": 5
+      },
+      {
+        "name": "Illustrator",
+        "level": 5
+      },
+      {
+        "name": "Branding",
+        "level": 5
+      },
+      {
+        "name": "UI Design",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 29,
+    "human": {
+      "experience_years": 7,
+      "hours_per_week": 40,
+      "current_project_count": 1
+    }
+  },
+  {
+    "type": "human",
+    "name": "Ngô Thị Tuyết",
+    "role": "Technical Lead",
+    "skills": [
+      {
+        "name": "System Design",
+        "level": 5
+      },
+      {
+        "name": "Code Review",
+        "level": 4
+      },
+      {
+        "name": "Agile",
+        "level": 4
+      },
+      {
+        "name": "Mentoring",
+        "level": 4
+      },
+      {
+        "name": "Git",
+        "level": 5
+      }
+    ],
+    "availability_status": "busy",
+    "cost_per_hour": 21,
+    "human": {
+      "experience_years": 4,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Dương Văn Bình",
+    "role": "Technical Lead",
+    "skills": [
+      {
+        "name": "System Design",
+        "level": 5
+      },
+      {
+        "name": "Code Review",
+        "level": 5
+      },
+      {
+        "name": "Agile",
+        "level": 4
+      },
+      {
+        "name": "Mentoring",
+        "level": 3
+      },
+      {
+        "name": "Git",
+        "level": 5
+      }
+    ],
+    "availability_status": "busy",
+    "cost_per_hour": 20,
+    "human": {
+      "experience_years": 3,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    },
+    "notes": "Từng làm sản phẩm thương mại điện tử quy mô lớn."
+  },
+  {
+    "type": "human",
+    "name": "Lý Văn Khánh",
+    "role": "Solution Architect",
+    "skills": [
+      {
+        "name": "System Design",
+        "level": 4
+      },
+      {
+        "name": "AWS",
+        "level": 4
+      },
+      {
+        "name": "Microservices",
+        "level": 3
+      },
+      {
+        "name": "PostgreSQL",
+        "level": 3
+      },
+      {
+        "name": "Security",
+        "level": 3
+      }
+    ],
+    "availability_status": "busy",
+    "cost_per_hour": 17,
+    "human": {
+      "experience_years": 2,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Nguyễn Thị Dung",
+    "role": "Product Manager",
+    "skills": [
+      {
+        "name": "Product Management",
+        "level": 4
+      },
+      {
+        "name": "Agile",
+        "level": 5
+      },
+      {
+        "name": "Business Analysis",
+        "level": 4
+      },
+      {
+        "name": "Communication",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 20,
+    "human": {
+      "experience_years": 4,
+      "hours_per_week": 40,
+      "current_project_count": 0
+    }
+  },
+  {
+    "type": "human",
+    "name": "Trần Văn Phong",
+    "role": "Product Manager",
+    "skills": [
+      {
+        "name": "Product Management",
+        "level": 5
+      },
+      {
+        "name": "Agile",
+        "level": 5
+      },
+      {
+        "name": "Business Analysis",
+        "level": 5
+      },
+      {
+        "name": "Communication",
+        "level": 5
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 32,
+    "human": {
+      "experience_years": 9,
+      "hours_per_week": 40,
+      "current_project_count": 1
+    }
+  },
+  {
+    "type": "human",
+    "name": "Lê Thị Ánh",
+    "role": "Business Analyst",
+    "skills": [
+      {
+        "name": "Business Analysis",
+        "level": 4
+      },
+      {
+        "name": "SQL",
+        "level": 3
+      },
+      {
+        "name": "Documentation",
+        "level": 5
+      },
+      {
+        "name": "Communication",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 19,
+    "human": {
+      "experience_years": 4,
+      "hours_per_week": 40,
+      "current_project_count": 1
+    }
+  },
+  {
+    "type": "human",
+    "name": "Phạm Hoàng Quân",
+    "role": "Business Analyst",
+    "skills": [
+      {
+        "name": "Business Analysis",
+        "level": 4
+      },
+      {
+        "name": "SQL",
+        "level": 3
+      },
+      {
+        "name": "Documentation",
+        "level": 5
+      },
+      {
+        "name": "Communication",
+        "level": 3
+      }
+    ],
+    "availability_status": "unavailable",
+    "cost_per_hour": 26,
+    "human": {
+      "experience_years": 6,
+      "hours_per_week": 40,
+      "current_project_count": 0
+    },
+    "notes": "Nghỉ phép tới hết tuần này."
+  },
+  {
+    "type": "human",
+    "name": "Hoàng Thị Nhung",
+    "role": "Content Writer",
+    "skills": [
+      {
+        "name": "Content Writing",
+        "level": 4
+      },
+      {
+        "name": "SEO",
+        "level": 3
+      },
+      {
+        "name": "Technical Writing",
+        "level": 2
+      },
+      {
+        "name": "Communication",
+        "level": 2
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 17,
+    "human": {
+      "experience_years": 1,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Vũ Văn Đạt",
+    "role": "Content Writer",
+    "skills": [
+      {
+        "name": "Content Writing",
+        "level": 5
+      },
+      {
+        "name": "SEO",
+        "level": 3
+      },
+      {
+        "name": "Technical Writing",
+        "level": 3
+      },
+      {
+        "name": "Communication",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 28,
+    "human": {
+      "experience_years": 6,
+      "hours_per_week": 40,
+      "current_project_count": 0
+    }
+  },
+  {
+    "type": "human",
+    "name": "Đặng Văn Lộc",
+    "role": "Marketing Specialist",
+    "skills": [
+      {
+        "name": "Digital Marketing",
+        "level": 5
+      },
+      {
+        "name": "SEO",
+        "level": 4
+      },
+      {
+        "name": "Content Writing",
+        "level": 5
+      },
+      {
+        "name": "Analytics",
+        "level": 3
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 26,
+    "human": {
+      "experience_years": 7,
+      "hours_per_week": 32,
+      "current_project_count": 0
+    }
+  },
+  {
+    "type": "human",
+    "name": "Bùi Thị Vân",
+    "role": "Customer Support",
+    "skills": [
+      {
+        "name": "Communication",
+        "level": 4
+      },
+      {
+        "name": "CRM",
+        "level": 4
+      },
+      {
+        "name": "Problem Solving",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 23,
+    "human": {
+      "experience_years": 5,
+      "hours_per_week": 40,
+      "current_project_count": 0
+    }
+  },
+  {
+    "type": "human",
+    "name": "Đỗ Hoàng Nam",
+    "role": "Customer Support",
+    "skills": [
+      {
+        "name": "Communication",
+        "level": 5
+      },
+      {
+        "name": "CRM",
+        "level": 3
+      },
+      {
+        "name": "Problem Solving",
+        "level": 4
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 22,
+    "human": {
+      "experience_years": 5,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    },
+    "notes": "Đang bảo trì hệ thống cũ, khó nhận thêm việc gấp."
+  },
+  {
+    "type": "human",
+    "name": "Hồ Thị Sen",
+    "role": "HR Specialist",
+    "skills": [
+      {
+        "name": "Recruitment",
+        "level": 3
+      },
+      {
+        "name": "Communication",
+        "level": 4
+      },
+      {
+        "name": "HR Management",
+        "level": 3
+      }
+    ],
+    "availability_status": "available",
+    "cost_per_hour": 21,
+    "human": {
+      "experience_years": 3,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  },
+  {
+    "type": "human",
+    "name": "Ngô Văn Thành",
+    "role": "Accountant",
+    "skills": [
+      {
+        "name": "Accounting",
+        "level": 5
+      },
+      {
+        "name": "Excel",
+        "level": 5
+      },
+      {
+        "name": "Tax",
+        "level": 4
+      }
+    ],
+    "availability_status": "busy",
+    "cost_per_hour": 19,
+    "human": {
+      "experience_years": 4,
+      "hours_per_week": 40,
+      "current_project_count": 2
+    }
+  }
+]

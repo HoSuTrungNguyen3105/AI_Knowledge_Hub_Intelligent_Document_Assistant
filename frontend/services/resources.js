@@ -21,12 +21,21 @@ export const resourcesService = {
   async remove(id, signal) {
     await api.delete(`${base}/${id}`, { signal });
   },
+  async seedEmployees(signal) {
+    const { data } = await api.post("/ai/seed/workforce", {}, { signal });
+    return data;
+  },
+  async clearSeededEmployees(signal) {
+    const { data } = await api.delete("/ai/seed/workforce", { signal });
+    return data;
+  },
 };
 
 const MESSAGES = {
   resource_not_found: "Nguồn lực không tồn tại hoặc không thuộc về bạn.",
   agent_not_found: "Agent được liên kết không tồn tại hoặc không thuộc về bạn.",
   invalid_provider_configuration: "Dữ liệu chưa hợp lệ — kiểm tra trạng thái sẵn sàng và khối hồ sơ khớp loại nguồn lực.",
+  seed_disabled: "Môi trường production không cho phép nạp dữ liệu mẫu.",
 };
 
 export function getResourceError(error, fallback) {

@@ -30,3 +30,13 @@ class SeedRemoveOut(BaseModel):
     removed_agents: int
     removed_teams: int
     kept_agents: list[str]
+
+
+class WorkforceSeedOut(BaseModel):
+    created: int
+    skipped: int
+    total: int
+
+
+class WorkforceSeedRemoveOut(BaseModel):
+    removed: int

@@ -119,6 +119,7 @@ export function WorkforcePage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [seedBusy, setSeedBusy] = useState(false);
 
   const load = async (signal) => {
     try {
@@ -212,6 +213,38 @@ export function WorkforcePage() {
     }
   };
 
+  const runSeed = async () => {
+    setError("");
+    setNotice("");
+    setSeedBusy(true);
+    try {
+      const result = await resourcesService.seedEmployees();
+      setNotice(result.created > 0
+        ? `Đã nạp ${result.created} nhân viên mẫu vào Workforce (bỏ qua ${result.skipped} người đã có).`
+        : "Dữ liệu mẫu đã có đủ — không nạp thêm.");
+      await load();
+    } catch (err) {
+      setError(getResourceError(err, "Không nạp được dữ liệu mẫu."));
+    } finally {
+      setSeedBusy(false);
+    }
+  };
+
+  const runClearSeed = async () => {
+    setError("");
+    setNotice("");
+    setSeedBusy(true);
+    try {
+      const result = await resourcesService.clearSeededEmployees();
+      setNotice(`Đã xoá ${result.removed} nhân viên mẫu. Nhân viên thật không bị ảnh hưởng.`);
+      await load();
+    } catch (err) {
+      setError(getResourceError(err, "Không xoá được dữ liệu mẫu."));
+    } finally {
+      setSeedBusy(false);
+    }
+  };
+
   const visible = resources.filter((item) => item.type === tab);
   const statusOptions = tab === "ai" ? AI_STATUS : HUMAN_STATUS;
 
@@ -222,6 +255,19 @@ export function WorkforcePage() {
         <p>Nguồn lực thực hiện dự án: nhân viên và AI dùng chung một danh sách. AI phân tích dự án và đề xuất phân công sẽ dựa trên hồ sơ năng lực ở đây.</p>
       </div>
     </div>
+
+    <section className="wf-card" aria-label="Dữ liệu mẫu">
+      <h2>Dữ liệu mẫu để test</h2>
+      <p>Nạp sẵn 50 nhân viên mẫu (đủ vai trò: dev, QA, DevOps, thiết kế, PM...) với kỹ năng, kinh nghiệm, chi phí và trạng thái sẵn sàng khác nhau để thử phân tích dự án và đề xuất phân công. Nạp lại không tạo trùng; xoá dữ liệu mẫu chỉ xoá đúng 50 người này.</p>
+      <div className="wf-actions">
+        <button type="button" className="wf-btn" onClick={runSeed} disabled={seedBusy}>
+          {seedBusy ? "Đang xử lý..." : "Nạp 50 nhân viên mẫu"}
+        </button>
+        <button type="button" className="wf-btn" onClick={runClearSeed} disabled={seedBusy}>
+          Xoá dữ liệu mẫu
+        </button>
+      </div>
+    </section>
 
     <div className="wf-hub-tabs" role="tablist" aria-label="Loại nguồn lực">
       <button type="button" role="tab" aria-selected={tab === "human"} className={`wf-hub-tab${tab === "human" ? " active" : ""}`} onClick={() => switchTab("human")}>
