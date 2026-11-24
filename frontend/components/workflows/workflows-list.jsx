@@ -18,7 +18,7 @@ export function WorkflowsList() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [rowBusy, setRowBusy] = useState("");
-  const [form, setForm] = useState({ team_id: "", title: "", goal: "", output_type: "text" });
+  const [form, setForm] = useState({ team_id: "", title: "", goal: "", output_type: "text", requires_approval: false });
   const [design, setDesign] = useState({ palette: "auto", style: "auto", notes: "" });
   // Teams and workflows load independently so one failing request cannot
   // blank out (or misreport) the other section.
@@ -67,7 +67,7 @@ export function WorkflowsList() {
     setBusy(true); setError("");
     try {
       const designBrief = form.output_type === "website_zip" ? buildDesignBrief(design) : "";
-      const created = await workflowsService.create({ team_id: form.team_id, title: form.title.trim(), goal: form.goal.trim(), output_type: form.output_type, ...(designBrief ? { design_brief: designBrief } : {}) });
+      const created = await workflowsService.create({ team_id: form.team_id, title: form.title.trim(), goal: form.goal.trim(), output_type: form.output_type, requires_approval: form.requires_approval, ...(designBrief ? { design_brief: designBrief } : {}) });
       setForm({ ...form, title: "", goal: "" });
       setDesign({ palette: "auto", style: "auto", notes: "" });
       await load();
@@ -95,6 +95,10 @@ export function WorkflowsList() {
             <small className="muted">Mọi yêu cầu dài, danh sách chức năng và yêu cầu đầu ra đều thuộc ô này — đừng dán vào ô Tiêu đề.</small></label>
           <label>Sản phẩm đầu ra<select value={form.output_type} onChange={(e) => setForm({ ...form, output_type: e.target.value })}>
             {OUTPUT_TYPES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
+          <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 500 }}>
+            <input type="checkbox" checked={form.requires_approval} onChange={(e) => setForm({ ...form, requires_approval: e.target.checked })} />
+            Cần duyệt trước khi hoàn thành — workflow sẽ dừng ở cổng duyệt kèm kết quả, bạn quyết định ở trang Phê duyệt
+          </label>
           {form.output_type === "website_zip" && (
             <fieldset className="wf-design">
               <legend>Thiết kế giao diện — chọn nhanh để AI làm theo</legend>

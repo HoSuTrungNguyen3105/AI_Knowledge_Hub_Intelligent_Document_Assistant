@@ -321,6 +321,8 @@ class AgentWorkflow(BaseDocument, BaseModel):
     status: str = "queued"  # queued|running|waiting(paused)|completed|failed|cancelled
     output_type: str = "text"  # text|website_zip
     design_brief: str | None = None  # user design options for website artifacts
+    requires_approval: bool = False  # human gate before completion (Module 10)
+    approval_status: str = "none"  # none|pending|approved|rejected|changes_requested
     artifact_status: str = "none"  # none|ready|failed (website_zip workflows only)
     artifact_file_count: int = 0
     artifact_total_bytes: int = 0

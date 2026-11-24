@@ -44,6 +44,7 @@ from app.schemas.workflows import (
 from app.services.agents import AgentLimits, AgentService
 from app.services.ai.base_provider import ProviderError
 from app.services.ai.chat import ChatHTTP
+from app.services.approvals import ApprovalsService
 from app.services.workflow_files import (
     ArtifactLimits,
     ParsedFile,
@@ -414,6 +415,8 @@ class WorkflowService:
             goal=w.goal,
             output_type=getattr(w, "output_type", "text") or "text",
             design_brief=getattr(w, "design_brief", None),
+            requires_approval=getattr(w, "requires_approval", False) or False,
+            approval_status=getattr(w, "approval_status", "none") or "none",
             artifact_status=getattr(w, "artifact_status", "none") or "none",
             artifact_file_count=getattr(w, "artifact_file_count", 0) or 0,
             artifact_total_bytes=getattr(w, "artifact_total_bytes", 0) or 0,
@@ -451,6 +454,7 @@ class WorkflowService:
             budget=budget,
             output_type=payload.output_type,
             design_brief=payload.design_brief,
+            requires_approval=payload.requires_approval,
         )
         await self.repo.add_event(
             user_id,
@@ -999,6 +1003,46 @@ class WorkflowService:
                                 "status": "completed",
                             },
                         )
+                # Human approval gate (NEXORA Module 10): when the
+                # workflow requires approval, park it in `waiting` with
+                # the result stored and let an approval record decide.
+                # A manual resume while an approval is pending lands
+                # here again and simply re-parks — never a bypass.
+                fresh = await self.repo.get_workflow(user_id, workflow_id)
+                if (
+                    fresh is not None
+                    and getattr(fresh, "requires_approval", False)
+                    and getattr(fresh, "approval_status", "none") != "approved"
+                ):
+                    if getattr(fresh, "approval_status", "none") != "pending":
+                        approval = await ApprovalsService(self.db).create_for_workflow(
+                            user_id, fresh, final
+                        )
+                        await self.repo.add_event(
+                            user_id,
+                            workflow_id=workflow_id,
+                            event_type="approval_requested",
+                            actor_id="orchestrator",
+                            payload={"approval_id": str(approval.id)},
+                        )
+                    await self.repo.transition_workflow(
+                        user_id,
+                        workflow_id,
+                        ["running"],
+                        {
+                            "status": "waiting",
+                            "approval_status": "pending",
+                            "final_result": final,
+                            "current_step": turns,
+                            "usage": {
+                                "agent_turns": turns,
+                                "input_tokens": total_in,
+                                "output_tokens": total_out,
+                            },
+                            "lease_owner": None,
+                        },
+                    )
+                    return
                 await self._send(
                     user_id,
                     workflow_id,

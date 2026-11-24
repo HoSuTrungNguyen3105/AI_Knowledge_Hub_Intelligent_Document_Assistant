@@ -10,6 +10,7 @@ from pymongo.errors import PyMongoError
 from app.api.v1 import (
     agents,
     analytics,
+    approvals,
     auth,
     chat,
     compare,
@@ -17,9 +18,7 @@ from app.api.v1 import (
     health,
     n8n_factory,
     providers,
-    seed,
     workflows,
-    workspaces,
 )
 from app.core.config import Settings, get_settings
 from app.core.database import lifespan_mongo
@@ -124,6 +123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         seed.router,
         workspaces.router,
         analytics.router,
+        approvals.router,
     ):
         application.include_router(router, prefix="/api/v1")
     return application
