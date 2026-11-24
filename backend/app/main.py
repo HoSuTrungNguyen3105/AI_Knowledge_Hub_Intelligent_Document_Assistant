@@ -17,7 +17,9 @@ from app.api.v1 import (
     health,
     n8n_factory,
     providers,
+    seed,
     workflows,
+    workspaces,
 )
 from app.core.config import Settings, get_settings
 from app.core.database import lifespan_mongo
