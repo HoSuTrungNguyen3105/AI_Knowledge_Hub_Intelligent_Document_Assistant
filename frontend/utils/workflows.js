@@ -9,6 +9,7 @@ export const ROLE_META = {
   tester: { label: "Tester", short: "Tester", color: "#0d9488", soft: "#ccfbf1" },
   reviewer: { label: "Reviewer", short: "Reviewer", color: "#9333ea", soft: "#f3e8ff" },
   researcher: { label: "Researcher", short: "Researcher", color: "#059669", soft: "#d1fae5" },
+  evaluator: { label: "Evaluator", short: "Evaluator", color: "#db2777", soft: "#fce7f3" },
   member: { label: "Member", short: "Agent", color: "#64748b", soft: "#e2e8f0" },
 };
 
@@ -22,6 +23,7 @@ export function roleMeta(role) {
 // user can still override it manually.
 const ROLE_NAME_HINTS = [
   ["review", "reviewer"],
+  ["evaluat", "evaluator"],
   ["test", "tester"],
   ["qa", "tester"],
   ["plan", "planner"],
