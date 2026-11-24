@@ -394,6 +394,22 @@ app.post("/db/artifacts", async (req, res) => {
   } catch (error) { return dbError(res, error); }
 });
 
+// Receipts for MindFlow -> n8n events (e.g. agent.created). Upserted by
+// (agent_id, event) so webhook retries stay idempotent.
+app.post("/db/agent-events", async (req, res) => {
+  try {
+    const { db: database } = await db();
+    const body = req.body || {};
+    const doc = { ...body, received_at: body.received_at || new Date().toISOString() };
+    const result = await database.collection("agent_events").updateOne(
+      { agent_id: String(body.agent_id || ""), event: String(body.event || "") },
+      { $set: doc },
+      { upsert: true }
+    );
+    return res.json({ ok: true, upserted: result.upsertedCount, matched: result.matchedCount });
+  } catch (error) { return dbError(res, error); }
+});
+
 // --- Read-only status API for the dashboard (MongoDB backed) -------------
 app.get("/api/projects", async (_req, res) => {
   try {

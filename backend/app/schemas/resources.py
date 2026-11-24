@@ -170,6 +170,15 @@ class ResourcePatch(BaseModel):
         return unique
 
 
+class N8nSyncOut(BaseModel):
+    # Delivery state of the agent.created webhook for AI resources
+    # (spec section 11): pending -> synced | failed.
+    status: str
+    last_attempt_at: datetime | None = None
+    execution_id: str | None = None
+    error: str | None = None
+
+
 class ResourceOut(BaseModel):
     id: UUID
     type: str
@@ -181,6 +190,7 @@ class ResourceOut(BaseModel):
     notes: str | None = None
     human: HumanProfile | None = None
     ai: AiProfile | None = None
+    n8n_sync: N8nSyncOut | None = None
     created_at: datetime
     updated_at: datetime
 
