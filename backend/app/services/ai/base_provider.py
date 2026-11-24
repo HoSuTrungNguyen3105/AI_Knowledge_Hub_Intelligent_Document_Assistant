@@ -63,6 +63,11 @@ ERRORS = {
     "invalid_factory_roles": (422, "Assign agents only to the seven team roles."),
     "factory_run_not_found": (404, "That AI Factory run does not exist."),
     "invalid_callback_token": (401, "The AI Factory run callback token is invalid."),
+    "seed_disabled": (403, "Demo seeding is disabled in the production environment."),
+    "seed_provider_required": (
+        422,
+        "Configure a provider with a synced model before seeding demo data.",
+    ),
     "validation_error": (422, "The submitted data is invalid."),
     "artifact_no_files": (422, "The agent did not return any valid website files."),
     "artifact_missing_index": (422, "The generated website is missing index.html."),

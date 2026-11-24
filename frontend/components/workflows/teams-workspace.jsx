@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Plus, RotateCcw, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
+import { Database, Plus, RotateCcw, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
 import { agentsService } from "../../services/agents";
+import { getSeedError, seedService } from "../../services/seed";
 import { teamsService } from "../../services/workflows";
 import { useChatProviders } from "../../hooks/use-chat-providers";
 import {
@@ -24,6 +25,9 @@ export function TeamsWorkspace() {
   const [busy, setBusy] = useState(false);
   const [starterBusy, setStarterBusy] = useState(false);
   const [starterMsg, setStarterMsg] = useState("");
+  const [seedStatus, setSeedStatus] = useState(null);
+  const [seedBusy, setSeedBusy] = useState(false);
+  const [seedMsg, setSeedMsg] = useState("");
   const [deletion, setDeletion] = useState(null);
   const [form, setForm] = useState({ name: "", description: "", coordinator: "", picks: {} });
   const providers = useChatProviders();
@@ -57,11 +61,38 @@ export function TeamsWorkspace() {
     } finally { setTeamsLoading(false); }
   }, []);
 
+  const loadSeedStatus = useCallback(async (signal) => {
+    try { setSeedStatus(await seedService.status(signal)); } catch { /* card hides itself */ }
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
-    (async () => { await Promise.allSettled([loadAgents(controller.signal), loadTeams(controller.signal)]); })();
+    (async () => { await Promise.allSettled([loadAgents(controller.signal), loadTeams(controller.signal), loadSeedStatus(controller.signal)]); })();
     return () => controller.abort();
-  }, [loadAgents, loadTeams]);
+  }, [loadAgents, loadTeams, loadSeedStatus]);
+
+  async function applySeed() {
+    setSeedBusy(true); setSeedMsg(""); setError("");
+    try {
+      const result = await seedService.apply();
+      setSeedMsg(`Đã nạp dữ liệu demo: tạo ${result.created_agents.length} Agent + ${result.created_teams.length} nhóm`
+        + (result.reused_agents.length ? `, dùng lại ${result.reused_agents.length} Agent đã có` : "")
+        + (result.skipped_teams.length ? `, bỏ qua ${result.skipped_teams.length} nhóm đã tồn tại` : "") + ".");
+      await Promise.allSettled([reloadAll(), loadSeedStatus()]);
+    } catch (e) { setSeedMsg(getSeedError(e, "Không nạp được dữ liệu demo.")); }
+    finally { setSeedBusy(false); }
+  }
+
+  async function removeSeed() {
+    setSeedBusy(true); setSeedMsg(""); setError("");
+    try {
+      const result = await seedService.remove();
+      setSeedMsg(`Đã xoá dữ liệu demo: ${result.removed_agents} Agent + ${result.removed_teams} nhóm`
+        + (result.kept_agents.length ? `. Giữ lại ${result.kept_agents.join(", ")} vì nhóm thật của bạn đang dùng.` : "."));
+      await Promise.allSettled([reloadAll(), loadSeedStatus()]);
+    } catch (e) { setSeedMsg(getSeedError(e, "Không xoá được dữ liệu demo.")); }
+    finally { setSeedBusy(false); }
+  }
 
   async function reloadAll() { await Promise.allSettled([loadAgents(), loadTeams()]); }
 
@@ -174,6 +205,26 @@ export function TeamsWorkspace() {
         </>
       )}
     </div>
+    {seedStatus && <div className="wf-card" style={{ marginBottom: 16 }}>
+      <h2><Database size={17} /> Dữ liệu demo NEXORA</h2>
+      {!seedStatus.enabled ? <p className="muted" style={{ fontSize: 12.5 }}>
+        Môi trường hiện tại là <b>{seedStatus.app_env}</b> — nạp dữ liệu demo đã bị khoá (chỉ mở ở development/demo).</p>
+      : <>
+        <p className="muted" style={{ fontSize: 12.5 }}>
+          Nạp sẵn 7 Agent mẫu + 3 nhóm mẫu (Kỹ thuật / Nghiên cứu / Vận hành) vào tài khoản của bạn để thử ngay.
+          Mọi bản ghi demo đều được gắn nhãn <b>Demo</b> trong dữ liệu, không trộn với dữ liệu thật, nạp lại không tạo trùng,
+          và xoá demo không bao giờ chạm vào Agent/nhóm thật của bạn. Agent mẫu dùng provider đang bật + model mặc định của bạn.</p>
+        <p className="muted" style={{ fontSize: 12.5 }}>
+          Hiện có: <b>{seedStatus.demo_agents}</b> Agent demo · <b>{seedStatus.demo_teams}</b> nhóm demo.</p>
+        <div className="row">
+          <button className="wf-btn primary" type="button" disabled={seedBusy} onClick={applySeed}>
+            <Database size={15} /> {seedBusy ? "Đang xử lý…" : "Nạp dữ liệu demo"}</button>
+          {seedStatus.seeded && <button className="wf-btn" type="button" disabled={seedBusy} onClick={removeSeed}>
+            <Trash2 size={15} /> Xoá dữ liệu demo</button>}
+        </div>
+        {seedMsg && <p className="muted" role="status" style={{ marginTop: 8 }}>{seedMsg}</p>}
+      </>}
+    </div>}
     <div className="wf-list">
       {teamsError ? (
         <div className="wf-card">
