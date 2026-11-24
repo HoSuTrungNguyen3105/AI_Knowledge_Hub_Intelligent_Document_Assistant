@@ -800,3 +800,33 @@ def test_gemini_decoded_tool_arguments_reject_credential():
     with pytest.raises(ProviderError) as error:
         asyncio.run(collect("gemini", lambda _: httpx.Response(200, text=body), TOOL_REQ))
     assert error.value.code == "generation_failed"
+
+def test_ollama_chat_omits_stream_options():
+    # Ollama Cloud rejects generation requests carrying stream_options
+    # (HTTP 400 -> provider_request_rejected) while listing models works,
+    # so the Ollama adapter must leave the key out entirely. Usage is
+    # still surfaced when the final chunk carries it.
+    def handle(request):
+        assert str(request.url) == "https://ollama.com/v1/chat/completions"
+        assert request.method == "POST"
+        assert request.headers["authorization"] == f"Bearer {KEY.get_secret_value()}"
+        body = json.loads(request.content)
+        assert body["model"] == "test-model"
+        assert body["stream"] is True
+        assert "stream_options" not in body
+        assert body["messages"] == [{"role": "user", "content": "Hello"}]
+        return httpx.Response(
+            200,
+            text=sse(
+                openai_chunk("Hel"),
+                openai_chunk("lo"),
+                {"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 2}},
+                "[DONE]",
+            ),
+        )
+
+    events = asyncio.run(collect("ollama", handle))
+    deltas = [e.text for e in events if e.kind == "delta"]
+    assert deltas == ["Hel", "lo"]
+    usage = [e for e in events if e.kind == "usage"][-1]
+    assert (usage.input_tokens, usage.output_tokens) == (5, 2)

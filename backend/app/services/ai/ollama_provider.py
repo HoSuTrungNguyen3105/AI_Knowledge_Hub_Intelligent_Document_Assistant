@@ -20,6 +20,14 @@ class OllamaProvider(OpenAIProvider):
 
     provider_id = "ollama"
     _non_chat_family = "embed"
+    # Ollama Cloud's OpenAI-compatible endpoint rejects every generation
+    # request carrying stream_options (HTTP 400, surfaced to users as
+    # provider_request_rejected) while model listing keeps working.
+    # Verified live 2026-11-24: plain chat and Agent runs failed for every
+    # Ollama model while Groq accepted the identical payload. Dropping the
+    # field only loses the streamed usage trailer; token counts are still
+    # read from the final chunk when Ollama includes one.
+    _stream_options = None
 
     def _provider_model(self, model: OpenAIModel) -> ProviderModel:
         if self._non_chat_family in model.id.lower():
