@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { LayoutDashboard, LibraryBig, MessagesSquare, Bot, NotebookPen, Settings2, Menu, X, LogOut, ChevronRight, PanelLeftClose, ShieldCheck, Columns2, Users, GitBranch, Search, Bell, Building2, CheckCircle2 } from "lucide-react";
+import { LayoutDashboard, LibraryBig, MessagesSquare, Bot, NotebookPen, Settings2, Menu, X, LogOut, ChevronRight, PanelLeftClose, ShieldCheck, Columns2, Users, GitBranch, Search, Bell, Building2, Handshake } from "lucide-react";
 import { Brand } from "./brand";
 import { useSession } from "../stores/session";
 import { useLogout } from "../hooks/use-logout";
@@ -28,6 +28,7 @@ const navigationGroups = [
       { href: "/agents", label: "Agent Studio", icon: Bot },
       { href: "/agents/teams", label: "Agent Teams", icon: Users },
       { href: "/chat", label: "AI Chat", icon: MessagesSquare },
+      { href: "/collab", label: "Phòng hợp tác", icon: Handshake },
       { href: "/compare", label: "Compare AI", icon: Columns2 },
     ],
   },

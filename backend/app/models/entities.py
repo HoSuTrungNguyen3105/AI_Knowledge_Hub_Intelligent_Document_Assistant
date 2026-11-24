@@ -188,6 +188,7 @@ class MultiChat(BaseDocument, BaseModel):
     user_id: UUID
     title: str
     conversation_ids: list[UUID] = Field(default_factory=list)
+    agent_ids: list[UUID] = Field(default_factory=list)  # collaboration room members (Module 03)
     system_prompt: str | None = None
     temperature: float | None = None
     max_output_tokens: int | None = None
