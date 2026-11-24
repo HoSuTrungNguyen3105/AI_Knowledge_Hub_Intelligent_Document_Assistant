@@ -235,6 +235,36 @@ class N8nFactoryService:
             raise ProviderError("factory_run_not_found")
         return self._out(doc)
 
+    async def cancel_run(self, user_id: UUID, run_id: UUID) -> FactoryRunOut:
+        """Stop tracking a run at the user's request.
+
+        The run is marked cancelled (terminal), so a callback that still
+        arrives afterwards is acknowledged but never applied. The n8n
+        execution itself is NOT killed — the webhook offers no stop
+        channel — so it may run to completion in the background; only its
+        result is discarded. Cancelling a finished run changes nothing.
+        """
+        doc = await self.runs.find_one({"_id": run_id, "user_id": user_id})
+        if doc is None:
+            raise ProviderError("factory_run_not_found")
+        if doc["status"] in RUN_TERMINAL_STATUSES:
+            return self._out(doc)
+        finished = _utcnow()
+        created = doc["created_at"]
+        if created.tzinfo is None:  # Mongo reads come back naive (UTC)
+            created = created.replace(tzinfo=timezone.utc)
+        duration = int((finished - created).total_seconds() * 1000)
+        changes = {
+            "status": "cancelled",
+            "error": "cancelled_by_user",
+            "duration_ms": duration,
+            "updated_at": finished,
+            "finished_at": finished,
+        }
+        await self.runs.update_one({"_id": run_id}, {"$set": changes})
+        doc.update(changes)
+        return self._out(doc)
+
     async def complete_run(self, run_id: UUID, token: str, package: dict) -> FactoryRunOut:
         """Store the final package n8n calls back with. Idempotent: a
         duplicate callback for a finished run returns the stored run."""

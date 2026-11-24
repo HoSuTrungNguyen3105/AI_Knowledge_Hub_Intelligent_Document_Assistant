@@ -1,5 +1,7 @@
-import { FactoryWorkspace } from "../../../../components/agents/factory-workspace";
-import "../../../../components/agents/factory.css";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "AI Factory" };
-export default function AIFactoryPage() { return <FactoryWorkspace />; }
+// AI Factory was merged into the Workflows page as its second tab (both
+// run the same agent teams). Old bookmarks land on the right tab.
+export default function AIFactoryPage() {
+  redirect("/agents/workflows?tab=factory");
+}

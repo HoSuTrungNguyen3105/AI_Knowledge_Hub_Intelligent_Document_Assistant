@@ -190,3 +190,9 @@
   .wf-office-agent { transition: none; }
   .wf-bot, .wf-bot-leg, .wf-bot-arm, .wf-bot-eyes, .wf-bot-heart, .wf-typing i { animation: none; }
 }
+
+/* Hub tabs: Workflows (MindFlow) and AI Factory (n8n) on one page. */
+.wf-hub-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+.wf-hub-tab { min-height: 42px; padding: 9px 18px; border-radius: 999px; border: 1px solid var(--line); background: #fff; color: var(--ink); display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 650; cursor: pointer; }
+.wf-hub-tab:hover { border-color: var(--accent); color: var(--accent); }
+.wf-hub-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }

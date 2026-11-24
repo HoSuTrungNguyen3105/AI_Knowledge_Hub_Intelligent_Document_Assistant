@@ -26,6 +26,9 @@
 .fx-status.completed_with_issues { background: #fef3c7; color: #92400e; }
 .fx-status.needs_configuration { background: #fee2e2; color: #b91c1c; }
 .fx-status.failed { background: #fee2e2; color: #b91c1c; }
+.fx-status.cancelled { background: #e2e8f0; color: #475569; }
+.fx-btn.danger { border-color: #fca5a5; color: #b91c1c; background: #fff; }
+.fx-btn.danger:hover { background: #fef2f2; }
 .fx-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .fx-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: #f6f7fc; font-size: 12.5px; }
 .fx-final { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.65; }

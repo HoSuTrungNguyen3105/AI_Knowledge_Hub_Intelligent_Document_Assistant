@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Bot, Factory, History, Play, RotateCcw } from "lucide-react";
+import { Ban, Bot, Factory, History, Play, RotateCcw } from "lucide-react";
 import { agentsService } from "../../services/agents";
 import { getFactoryError, getRunErrorText, n8nFactoryService } from "../../services/n8n-factory";
 
@@ -28,6 +28,7 @@ const STATUS_LABEL = {
   completed_with_issues: "Hoàn thành, còn vấn đề",
   needs_configuration: "Cần cấu hình thêm",
   failed: "Thất bại",
+  cancelled: "Đã dừng",
   needs_human_input: "Cần người xử lý",
 };
 
@@ -165,6 +166,8 @@ export function FactoryWorkspace() {
     return () => controller.abort();
   }, [loadAgents, loadRuns]);
 
+  const [stopping, setStopping] = useState(false);
+  const [confirmStop, setConfirmStop] = useState(false);
   const selected = runs.find((r) => r.id === selectedId) || null;
   const selectedActive = selected ? ACTIVE_STATUSES.includes(selected.status) : false;
 
@@ -181,6 +184,19 @@ export function FactoryWorkspace() {
     const ticker = setInterval(() => setTick((t) => t + 1), 1000);
     return () => { clearInterval(poll); clearInterval(ticker); };
   }, [selectedId, selectedActive]);
+
+  async function stopSelected() {
+    if (!selected || stopping) return;
+    if (!confirmStop) { setConfirmStop(true); return; }
+    setStopping(true); setError("");
+    try {
+      const updated = await n8nFactoryService.cancelRun(selected.id);
+      setRuns((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+      setConfirmStop(false);
+    } catch (e) {
+      setError(getFactoryError(e, "Không dừng được lượt chạy."));
+    } finally { setStopping(false); }
+  }
 
   async function submit(event) {
     event.preventDefault();
@@ -279,7 +295,7 @@ export function FactoryWorkspace() {
             key={run.id}
             type="button"
             className={`fx-run-row${run.id === selectedId ? " active" : ""}`}
-            onClick={() => setSelectedId(run.id)}
+            onClick={() => { setSelectedId(run.id); setConfirmStop(false); }}
           >
             <span className="fx-run-req">{run.requirement}</span>
             <span className="fx-run-meta">{formatTime(run.created_at)}</span>
@@ -304,6 +320,13 @@ export function FactoryWorkspace() {
       </>}
 
       {selectedActive && <p className="muted">Đang chạy nền trên n8n. Trang này tự cập nhật mỗi vài giây; bạn cứ rời đi và quay lại sau — kết quả vẫn ở đây.</p>}
+      {selectedActive && <div className="fx-actions">
+        <button type="button" className="fx-btn danger" disabled={stopping} onClick={stopSelected}>
+          <Ban size={16} /> {stopping ? "Đang dừng…" : confirmStop ? "Bấm lần nữa để dừng hẳn" : "Dừng lượt chạy"}
+        </button>
+        {confirmStop && <span className="muted">MindFlow sẽ ngừng theo dõi lượt này và bỏ qua kết quả n8n gửi về sau.</span>}
+      </div>}
+      {selected.status === "cancelled" && <p className="muted">Bạn đã dừng lượt chạy này — kết quả n8n gửi về sau (nếu có) sẽ bị bỏ qua. Lưu ý: execution bên n8n có thể vẫn chạy nốt ở nền; muốn tắt hẳn ngay, mở mục Executions trong n8n và dừng execution tương ứng.</p>}
       {selected.status === "failed" && <p className="fx-error" role="alert">{getRunErrorText(selected)}</p>}
       {selected.status === "needs_configuration" && selected.result?.error && (
         <p className="fx-error" role="alert">{selected.result.error}</p>

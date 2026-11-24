@@ -1,5 +1,13 @@
-import { WorkflowsList } from "../../../../components/workflows/workflows-list";
+import { WorkflowsHub } from "../../../../components/workflows/workflows-hub";
 import "../../../../components/workflows/workflows.css";
 
 export const metadata = { title: "Agent Workflows" };
-export default function AgentWorkflowsPage() { return <WorkflowsList />; }
+
+// One page, two tabs: Workflows (runs inside MindFlow) and AI Factory
+// (runs through n8n). ?tab=factory opens the n8n tab — the old
+// /agents/factory route redirects here.
+export default async function AgentWorkflowsPage({ searchParams }) {
+  const params = await searchParams;
+  const initialTab = params?.tab === "factory" ? "factory" : "workflows";
+  return <WorkflowsHub initialTab={initialTab} />;
+}

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { GitBranch, Play, Plus, RotateCcw, Sparkles } from "lucide-react";
+import { Ban, GitBranch, Pause, Play, Plus, RotateCcw, Sparkles } from "lucide-react";
 import { teamsService, workflowsService } from "../../services/workflows";
 import { DESIGN_PALETTES, DESIGN_STYLES, OUTPUT_TYPES, WORKFLOW_STATUS, WORKFLOW_TITLE_MAX, buildDesignBrief, getWorkflowError, validateWorkflowForm } from "../../utils/workflows";
 
@@ -17,6 +17,7 @@ export function WorkflowsList() {
   const [workflowsError, setWorkflowsError] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [rowBusy, setRowBusy] = useState("");
   const [form, setForm] = useState({ team_id: "", title: "", goal: "", output_type: "text" });
   const [design, setDesign] = useState({ palette: "auto", style: "auto", notes: "" });
   // Teams and workflows load independently so one failing request cannot
@@ -48,6 +49,16 @@ export function WorkflowsList() {
     (async () => { await load(controller.signal); })();
     return () => controller.abort();
   }, [load]);
+
+  // Quick run controls on each card — the same start/resume/pause/cancel
+  // actions the workspace detail page offers, without opening it first.
+  async function act(id, action) {
+    setRowBusy(id); setError("");
+    try {
+      await workflowsService[action](id);
+      await loadWorkflows();
+    } catch (e) { setError(getWorkflowError(e, "Thao tác thất bại.")); } finally { setRowBusy(""); }
+  }
 
   async function create(event) {
     event.preventDefault();
@@ -129,7 +140,12 @@ export function WorkflowsList() {
             <span>· Bước {wf.current_step}/{wf.max_steps}</span>
             <span>· {new Date(wf.created_at).toLocaleString()}</span>
             {wf.output_type === "website_zip" && <span className="wf-badge zip">Website · ZIP{wf.artifact_status === "ready" ? " sẵn sàng" : wf.artifact_status === "failed" ? " lỗi" : ""}</span>}</div>
-          <div className="row"><Link className="wf-btn" href={`/agents/workflows/${wf.id}`}><GitBranch size={15} /> Mở workspace</Link></div>
+          <div className="row"><Link className="wf-btn" href={`/agents/workflows/${wf.id}`}><GitBranch size={15} /> Mở workspace</Link>
+            {wf.status === "queued" && <button className="wf-btn" type="button" disabled={rowBusy === wf.id} onClick={() => act(wf.id, "start")}><Play size={15} /> Run Workflow</button>}
+            {wf.status === "waiting" && <button className="wf-btn" type="button" disabled={rowBusy === wf.id} onClick={() => act(wf.id, "resume")}><Play size={15} /> Resume</button>}
+            {wf.status === "running" && <button className="wf-btn" type="button" disabled={rowBusy === wf.id} onClick={() => act(wf.id, "pause")}><Pause size={15} /> Pause</button>}
+            {!["completed", "failed", "cancelled"].includes(wf.status) && <button className="wf-btn" type="button" disabled={rowBusy === wf.id} onClick={() => act(wf.id, "cancel")}><Ban size={15} /> Cancel</button>}
+          </div>
         </article>); })}
       {!workflowsLoading && !workflowsError && !workflows.length && <p className="wf-empty">Chưa có workflow nào.</p>}
     </div>
