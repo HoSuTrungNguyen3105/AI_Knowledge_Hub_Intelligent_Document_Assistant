@@ -1,38 +1,24 @@
 # AI Agent Factory — development environment
-# Services: n8n (orchestration) + PostgreSQL (state) + Code Execution Service
-# (sandboxed file/build/ZIP). Copy .env.example to .env and adjust first.
+# Services: n8n (orchestration) + MongoDB (factory data) + Code Execution
+# Service (sandboxed file/build/ZIP). Copy .env.example to .env first.
+# n8n keeps its own internal data in SQLite (the n8n_data volume); the
+# factory's projects/tasks/runs/reviews live in MongoDB, written by the
+# Code Execution Service — the workflows never touch a database directly.
 
 services:
-  postgres:
-    image: postgres:16-alpine
+  mongo:
+    image: mongo:7
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-aifactory}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aifactory_dev_password}
-      POSTGRES_DB: ${POSTGRES_DB:-ai_factory}
+      MONGO_INITDB_DATABASE: ai_factory
     volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - mongodata:/data/db
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aifactory}"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
+      - "${MONGO_PORT:-27017}:27017"
 
   n8n:
     # Pin an exact version in production, e.g. docker.n8n.io/n8nio/n8n:1.68.0
     image: docker.n8n.io/n8nio/n8n:latest
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-ai_factory}
-      DB_POSTGRESDB_USER: ${POSTGRES_USER:-aifactory}
-      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-aifactory_dev_password}
       N8N_PORT: 5678
       GENERIC_TIMEZONE: ${TIMEZONE:-Asia/Ho_Chi_Minh}
       # Workflows read these through $env expressions:
@@ -53,8 +39,7 @@ services:
   code-exec-service:
     build: ./code-execution-service
     depends_on:
-      postgres:
-        condition: service_healthy
+      - mongo
     environment:
       PORT: 8080
       DATA_DIR: /data
@@ -67,7 +52,8 @@ services:
       HOST_WORKSPACES_DIR: ${HOST_WORKSPACES_DIR:-}
       # URL the *user's browser* uses to download ZIPs:
       PUBLIC_BASE_URL: ${PUBLIC_CES_URL:-http://localhost:8080}
-      DATABASE_URL: postgres://${POSTGRES_USER:-aifactory}:${POSTGRES_PASSWORD:-aifactory_dev_password}@postgres:5432/${POSTGRES_DB:-ai_factory}
+      # Factory data store (MongoDB — same stack as MindFlow):
+      MONGO_URL: ${MONGO_URL:-mongodb://mongo:27017/ai_factory}
     ports:
       - "${CES_PORT:-8080}:8080"
     volumes:
@@ -77,5 +63,5 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
-  pgdata:
+  mongodata:
   n8n_data:

@@ -8,7 +8,7 @@
         "width": 560,
         "color": 4
       },
-      "id": "0da5eda6-6417-4e0b-9b87-6f732c03f34c",
+      "id": "9b420c1c-eb2e-4245-adc8-d85eaabf152e",
       "name": "Sticky Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -24,7 +24,7 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "cd670217-e04f-4524-b0e0-44c18a9920a8",
+      "id": "de8fa2c3-cebe-4a94-9229-94303d470801",
       "name": "Webhook — Codegen",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -32,13 +32,13 @@
         240,
         320
       ],
-      "webhookId": "2a38f5d4-eabd-482e-bda9-26c7808aa8fc"
+      "webhookId": "deba4549-4a3a-4b76-bbb4-20aba3595ab1"
     },
     {
       "parameters": {
         "jsCode": "\nconst input = $input.first().json;\nconst body = input.body ?? input;\nconst spec = body.spec || {};\nconst isFix = body.mode === 'fix';\nconst DESCRIPTIONS = {\n  frontend_developer: 'Build the complete frontend (React + Vite + Tailwind) from the architecture and design system in your context (spec). Return EVERY file with full content in output.files, including package.json and a root index.html.',\n  backend_developer: 'Build the complete backend (Node.js, server/ folder) from the API contract in your context (spec). Return EVERY file with full content in output.files. If no backend is needed, return an empty files array and explain in notes.'\n};\nconst calls = (body.agents || []).map(a => ({\n  project_id: body.project_id,\n  task_id: `${body.project_id}-${a}-${body.attempt ?? 0}`,\n  agent_id: a,\n  task_description: isFix\n    ? 'Fix the issues listed in your context for YOUR area. Return the COMPLETE corrected files (full contents) in output.files — the files you return replace the stored ones.'\n    : (DESCRIPTIONS[a] || 'Produce your part of the project source in output.files.'),\n  input_context: isFix\n    ? { issues: (body.issues || []).filter(i => i.target_agent === a), spec }\n    : { spec },\n  models: body.models || {},\n  providers: body.providers || {},\n  required: true\n}));\nreturn [{ json: {\n  project_id: body.project_id,\n  attempt: body.attempt ?? 0,\n  mode: body.mode || 'full',\n  models: body.models || {},\n  with_integration: Boolean(body.with_integration),\n  providers: body.providers || {},\n  spec,\n  parallel_body: { project_id: body.project_id, phase: 'codegen', calls }\n} }];\n"
       },
-      "id": "35dc370b-5c26-4880-b866-f2a659096e50",
+      "id": "0b44ceec-750a-4403-9121-63b61295f1e1",
       "name": "Prepare Dev Calls",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -59,7 +59,7 @@
           "timeout": 900000
         }
       },
-      "id": "04d7b96e-67ca-4189-aa8b-3803598a971a",
+      "id": "750594c9-d927-4295-a87a-d4d453d93f54",
       "name": "Run Dev Agents (Parallel)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -72,7 +72,7 @@
       "parameters": {
         "jsCode": "\nconst prep = $('Prepare Dev Calls').first().json;\nconst par = $input.first().json;\nconst filesByPath = new Map();\nconst overrides = [];\nfor (const r of par.results || []) {\n  const files = (r.output && Array.isArray(r.output.files)) ? r.output.files : [];\n  for (const f of files) {\n    if (!f || typeof f.path !== 'string' || typeof f.content !== 'string') continue;\n    if (filesByPath.has(f.path)) overrides.push(f.path);\n    filesByPath.set(f.path, f.content);\n  }\n}\nconst files = [...filesByPath.entries()].map(([p, content]) => ({ path: p, content }));\nconst integrationCall = {\n  project_id: prep.project_id,\n  task_id: `${prep.project_id}-integration-${prep.attempt}`,\n  agent_id: 'integration_agent',\n  task_description: 'Verify frontend/backend consistency against the API contract in spec. Return corrected full contents ONLY for files that must change (output.files); verdict \"ok\" when nothing must change.',\n  input_context: {\n    spec: prep.spec,\n    files: files.map(f => ({ path: f.path, content: f.content.slice(0, 4000) }))\n  },\n  models: prep.models,\n  providers: prep.providers || {},\n  required: false\n};\nreturn [{ json: {\n  project_id: prep.project_id,\n  attempt: prep.attempt,\n  mode: prep.mode,\n  with_integration: prep.with_integration && files.length > 0,\n  has_files: files.length > 0,\n  files,\n  overrides,\n  integration_call: integrationCall,\n  dev_results: (par.results || []).map(r => ({ agent_id: r.agent_id, status: r.status, error: r.error }))\n} }];\n"
       },
-      "id": "5b4931e7-fb91-4ee0-a988-2b14c5a88709",
+      "id": "fbfbd724-2351-4922-92d1-cf6f06f5ddab",
       "name": "Collect Files",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -91,7 +91,7 @@
           },
           "conditions": [
             {
-              "id": "f799ae22-f0b9-4845-8d2f-8090446cd2d0",
+              "id": "0664392f-54b0-44cb-8923-fe193812a44b",
               "leftValue": "={{ $json.has_files }}",
               "operator": {
                 "type": "boolean",
@@ -104,7 +104,7 @@
         },
         "options": {}
       },
-      "id": "3c485cce-ad0d-4c02-a172-e4d51914782e",
+      "id": "a1a1a10f-57be-4aba-a9ee-7be2496d8782",
       "name": "Has Files?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -119,7 +119,7 @@
         "responseBody": "={{ JSON.stringify({ project_id: $json.project_id, attempt: $json.attempt, files_stored: 0, error: 'developers_returned_no_files', dev_results: $json.dev_results }) }}",
         "options": {}
       },
-      "id": "2a6da7c7-a821-4777-9c8c-9728a2766df5",
+      "id": "eae5def5-8d85-41f4-b796-f288996402c0",
       "name": "Respond — No Files",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
@@ -138,7 +138,7 @@
           },
           "conditions": [
             {
-              "id": "8e6f64db-c00a-4f29-8fda-3ceb3679375b",
+              "id": "5ffb69bd-a516-4b84-b4c1-23d496b19b32",
               "leftValue": "={{ $json.with_integration }}",
               "operator": {
                 "type": "boolean",
@@ -151,7 +151,7 @@
         },
         "options": {}
       },
-      "id": "6941415f-49ae-4083-b78f-df8306220d54",
+      "id": "10731c4c-8ebc-42c8-aabb-b0db35f87b86",
       "name": "Integration Enabled?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -172,7 +172,7 @@
           "timeout": 900000
         }
       },
-      "id": "a0bb8774-c590-4c30-bd1e-8158417213b1",
+      "id": "acc7cea4-94f0-47e0-b994-5defd2148db3",
       "name": "Call Integration Agent",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -185,7 +185,7 @@
       "parameters": {
         "jsCode": "\nconst collected = $('Collect Files').first().json;\nlet files = collected.files;\nlet integrationSummary = null;\nconst incoming = $input.first().json;\nif (incoming && incoming.agent_id === 'integration_agent' && incoming.output) {\n  integrationSummary = { verdict: incoming.output.verdict || null, conflicts: incoming.output.conflicts || [] };\n  if (Array.isArray(incoming.output.files)) {\n    const map = new Map(files.map(f => [f.path, f.content]));\n    for (const f of incoming.output.files) {\n      if (f && typeof f.path === 'string' && typeof f.content === 'string') map.set(f.path, f.content);\n    }\n    files = [...map.entries()].map(([p, content]) => ({ path: p, content }));\n  }\n}\nreturn [{ json: {\n  project_id: collected.project_id,\n  attempt: collected.attempt,\n  mode: collected.mode,\n  files,\n  dev_results: collected.dev_results,\n  integration_summary: integrationSummary,\n  ces_body: { files }\n} }];\n"
       },
-      "id": "00a0025f-4617-4437-867a-08672d7149e8",
+      "id": "09b9bdc0-43e2-4ca9-9a5a-06eb1dcbed30",
       "name": "Merge Final Files",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -206,7 +206,7 @@
           "timeout": 900000
         }
       },
-      "id": "aee7ce0f-1347-444b-9bf2-b9604d19fa0a",
+      "id": "2761beaf-6a2d-4359-a70c-5da7a6e68096",
       "name": "Store Files in CES",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -217,10 +217,10 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst esc = (v) => (v === null || v === undefined) ? 'NULL' : `'${String(v).replace(/'/g, \"''\")}'`;\nconst escJson = (v) => (v === null || v === undefined) ? 'NULL' : `'${JSON.stringify(v).replace(/'/g, \"''\")}'::jsonb`;\n\nconst merged = $('Merge Final Files').first().json;\nconst stored = $input.first().json;\nlet sql = 'SELECT 1';\nconst written = (stored && stored.written) || [];\nif (written.length) {\n  const values = written.map(w => `(${esc(merged.project_id)}::uuid, 'source_file', ${esc(w.path)}, ${Number(w.size_bytes) || 0}, ${esc(w.sha256 || null)})`).join(',\\n');\n  sql = `INSERT INTO artifacts (project_id, kind, path, size_bytes, sha256) VALUES ${values}`;\n}\nreturn [{ json: { sql, stored } }];\n"
+        "jsCode": "\nconst merged = $('Merge Final Files').first().json;\nconst stored = $input.first().json;\nconst written = (stored && stored.written) || [];\nconst artifact_docs = written.map(w => ({\n  project_id: merged.project_id, kind: 'source_file', path: w.path,\n  size_bytes: Number(w.size_bytes) || 0, sha256: w.sha256 || null,\n  created_at: new Date().toISOString()\n}));\nreturn [{ json: { artifact_docs, stored } }];\n"
       },
-      "id": "05e20cf3-4d20-4b3f-bc19-373175792c15",
-      "name": "Build Artifacts SQL",
+      "id": "30dd7178-1d4e-4ebc-884c-e41429d8c435",
+      "name": "Build Artifacts Docs",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -230,30 +230,30 @@
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "={{ $json.sql }}",
-        "options": {}
+        "method": "POST",
+        "url": "={{ ($env.CODE_EXEC_URL || 'http://code-exec-service:8080') + '/db/artifacts' }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ docs: $json.artifact_docs }) }}",
+        "options": {
+          "timeout": 900000
+        }
       },
-      "id": "88d401b0-2274-49ef-b920-b3480c997319",
-      "name": "Insert Artifacts (Postgres)",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
+      "id": "a664fe43-8980-4e23-83ff-103fb7178538",
+      "name": "Insert Artifacts (CES)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         2840,
         320
-      ],
-      "credentials": {
-        "postgres": {
-          "id": null,
-          "name": "AI Factory Postgres"
-        }
-      }
+      ]
     },
     {
       "parameters": {
-        "jsCode": "\nconst merged = $('Merge Final Files').first().json;\nconst stored = $('Build Artifacts SQL').first().json.stored || {};\nreturn [{ json: { response: {\n  project_id: merged.project_id,\n  attempt: merged.attempt,\n  mode: merged.mode,\n  files_stored: (stored.written || []).length,\n  rejected: stored.rejected || [],\n  file_paths: (stored.written || []).map(w => w.path),\n  dev_results: merged.dev_results,\n  integration: merged.integration_summary\n} } }];\n"
+        "jsCode": "\nconst merged = $('Merge Final Files').first().json;\nconst stored = $('Build Artifacts Docs').first().json.stored || {};\nreturn [{ json: { response: {\n  project_id: merged.project_id,\n  attempt: merged.attempt,\n  mode: merged.mode,\n  files_stored: (stored.written || []).length,\n  rejected: stored.rejected || [],\n  file_paths: (stored.written || []).map(w => w.path),\n  dev_results: merged.dev_results,\n  integration: merged.integration_summary\n} } }];\n"
       },
-      "id": "61e566d5-2c84-4cf3-94f9-1b2fc45f7249",
+      "id": "536b738a-7646-4c3c-b0a4-9b7e8b90dd5c",
       "name": "Build Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -268,7 +268,7 @@
         "responseBody": "={{ JSON.stringify($json.response) }}",
         "options": {}
       },
-      "id": "b0f88c18-0a44-4cd5-b1d6-adc799c5906e",
+      "id": "593c8902-5891-4ea9-b9c1-06da55013a94",
       "name": "Respond — Codegen Result",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
@@ -385,25 +385,25 @@
       "main": [
         [
           {
-            "node": "Build Artifacts SQL",
+            "node": "Build Artifacts Docs",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Build Artifacts SQL": {
+    "Build Artifacts Docs": {
       "main": [
         [
           {
-            "node": "Insert Artifacts (Postgres)",
+            "node": "Insert Artifacts (CES)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Insert Artifacts (Postgres)": {
+    "Insert Artifacts (CES)": {
       "main": [
         [
           {

@@ -8,7 +8,7 @@
         "width": 560,
         "color": 4
       },
-      "id": "86d32fa2-b948-4194-a093-fb2b0dc5fbf9",
+      "id": "97b095b8-ceb3-4d2d-9ef7-566bcbd42453",
       "name": "Sticky Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -24,7 +24,7 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "9408c84e-7434-40c0-afb2-cf1ae3c83711",
+      "id": "fdf7d6bf-25a6-4fe7-843e-8a01b7751a13",
       "name": "Webhook — Package",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -32,13 +32,13 @@
         240,
         320
       ],
-      "webhookId": "72699899-5271-46df-9aa2-1c414daf3b59"
+      "webhookId": "beecd0ea-cd40-4a41-a8f8-1063d6da5870"
     },
     {
       "parameters": {
         "jsCode": "\nconst input = $input.first().json;\nconst body = input.body ?? input;\nconst cesBase = ($env.CODE_EXEC_URL || 'http://code-exec-service:8080').replace(/\\/$/, '');\nreturn [{ json: {\n  project_id: body.project_id,\n  ces_url: `${cesBase}/projects/${body.project_id}/package`,\n  ces_body: {}\n} }];\n"
       },
-      "id": "3b08b6fc-7122-456f-afbf-55e4f8f5335e",
+      "id": "fe7c903d-7bc2-4957-889a-16d667b58255",
       "name": "Prepare Package",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -59,7 +59,7 @@
           "timeout": 900000
         }
       },
-      "id": "3c8c8e4c-1eee-4015-981b-1c9fcf2e2c43",
+      "id": "83bbf50a-7c6d-4817-83e3-f47c756b88b8",
       "name": "Package ZIP (CES)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -70,9 +70,9 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst esc = (v) => (v === null || v === undefined) ? 'NULL' : `'${String(v).replace(/'/g, \"''\")}'`;\nconst escJson = (v) => (v === null || v === undefined) ? 'NULL' : `'${JSON.stringify(v).replace(/'/g, \"''\")}'::jsonb`;\n\nconst prep = $('Prepare Package').first().json;\nconst pkg = $input.first().json;\nconst sql = `UPDATE projects SET zip_url=${esc(pkg.download_url || null)}, updated_at=now() WHERE id=${esc(prep.project_id)}::uuid`;\nreturn [{ json: {\n  sql,\n  response: {\n    project_id: prep.project_id,\n    download_url: pkg.download_url || null,\n    file_count: pkg.file_count ?? null,\n    size_bytes: pkg.size_bytes ?? null\n  }\n} }];\n"
+        "jsCode": "\nconst prep = $('Prepare Package').first().json;\nconst pkg = $input.first().json;\nconst project_update = { project_id: prep.project_id, set: { zip_url: pkg.download_url || null } };\nreturn [{ json: {\n  project_update,\n  response: {\n    project_id: prep.project_id,\n    download_url: pkg.download_url || null,\n    file_count: pkg.file_count ?? null,\n    size_bytes: pkg.size_bytes ?? null\n  }\n} }];\n"
       },
-      "id": "6121dfe8-f73b-4aef-ad16-0444261e417d",
+      "id": "097f6007-4389-4ad0-8a9b-dc19ea013498",
       "name": "Build Project Update",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -83,24 +83,24 @@
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "={{ $json.sql }}",
-        "options": {}
+        "method": "POST",
+        "url": "={{ ($env.CODE_EXEC_URL || 'http://code-exec-service:8080') + '/db/projects/update' }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.project_update) }}",
+        "options": {
+          "timeout": 900000
+        }
       },
-      "id": "b82d6071-ac6e-4edf-9259-ddb44fd16c3d",
-      "name": "Update Project (Postgres)",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
+      "id": "5d56c0b6-8ffd-4133-b18c-52cb8d739b0a",
+      "name": "Update Project (CES)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         1280,
         320
-      ],
-      "credentials": {
-        "postgres": {
-          "id": null,
-          "name": "AI Factory Postgres"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -108,7 +108,7 @@
         "responseBody": "={{ JSON.stringify($('Build Project Update').first().json.response) }}",
         "options": {}
       },
-      "id": "e71bad13-835b-4a58-9be0-983e5da9e629",
+      "id": "1735178b-163f-4bae-bf06-6428522e359a",
       "name": "Respond — Package Result",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
@@ -156,14 +156,14 @@
       "main": [
         [
           {
-            "node": "Update Project (Postgres)",
+            "node": "Update Project (CES)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Update Project (Postgres)": {
+    "Update Project (CES)": {
       "main": [
         [
           {
