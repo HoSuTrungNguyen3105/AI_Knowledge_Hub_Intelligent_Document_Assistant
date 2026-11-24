@@ -1,20 +1,12 @@
 # AI Agent Factory — development environment
-# Services: n8n (orchestration) + MongoDB (factory data) + Code Execution
-# Service (sandboxed file/build/ZIP). Copy .env.example to .env first.
+# Services: n8n (orchestration) + Code Execution Service (sandboxed
+# file/build/ZIP); factory data lives in MongoDB Atlas (MONGODB_URI in
+# .env). Copy .env.example to .env first.
 # n8n keeps its own internal data in SQLite (the n8n_data volume); the
 # factory's projects/tasks/runs/reviews live in MongoDB, written by the
 # Code Execution Service — the workflows never touch a database directly.
 
 services:
-  mongo:
-    image: mongo:7
-    environment:
-      MONGO_INITDB_DATABASE: ai_factory
-    volumes:
-      - mongodata:/data/db
-    ports:
-      - "${MONGO_PORT:-27017}:27017"
-
   n8n:
     # Pin an exact version in production, e.g. docker.n8n.io/n8nio/n8n:1.68.0
     image: docker.n8n.io/n8nio/n8n:latest
@@ -38,8 +30,6 @@ services:
 
   code-exec-service:
     build: ./code-execution-service
-    depends_on:
-      - mongo
     environment:
       PORT: 8080
       DATA_DIR: /data
@@ -52,8 +42,11 @@ services:
       HOST_WORKSPACES_DIR: ${HOST_WORKSPACES_DIR:-}
       # URL the *user's browser* uses to download ZIPs:
       PUBLIC_BASE_URL: ${PUBLIC_CES_URL:-http://localhost:8080}
-      # Factory data store (MongoDB — same stack as MindFlow):
-      MONGO_URL: ${MONGO_URL:-mongodb://mongo:27017/ai_factory}
+      # Factory data store: MongoDB Atlas — same cluster as MindFlow.
+      # The URI (with the database password) comes from .env, never from
+      # this file; MONGODB_DATABASE picks the database on that cluster.
+      MONGODB_URI: ${MONGODB_URI:-}
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-mindflow_ai}
     ports:
       - "${CES_PORT:-8080}:8080"
     volumes:
@@ -63,5 +56,4 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
-  mongodata:
   n8n_data:

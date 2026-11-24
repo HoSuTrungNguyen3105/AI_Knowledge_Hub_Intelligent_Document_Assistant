@@ -1,9 +1,9 @@
-// MongoDB indexes for the AI Agent Factory (database: ai_factory).
+// MongoDB indexes for the AI Agent Factory (database: MONGODB_DATABASE).
 // The Code Execution Service creates these automatically on first connect,
 // so running this file is OPTIONAL — it exists for inspection and for
-// setups that point MONGO_URL at an externally managed MongoDB.
+// setups that use an externally managed MongoDB (e.g. Atlas).
 //
-// Run with:  mongosh "mongodb://localhost:27017/ai_factory" db/mongo-indexes.js
+// Run with:  mongosh "<your MONGODB_URI>" db/mongo-indexes.js
 
 db.projects.createIndex({ id: 1 }, { unique: true });
 db.agent_runs.createIndex({ project_id: 1, created_at: 1 });

@@ -31,9 +31,11 @@ notepad .env
 
 Trong file `.env` vừa tạo, điền:
 
-1. MongoDB: không cần đặt gì — compose tự chạy MongoDB không mật khẩu
-   (chỉ truy cập được trên máy bạn). Muốn xem dữ liệu thì mở MongoDB
-   Compass, kết nối `mongodb://localhost:27017`, database `ai_factory`.
+1. `MONGODB_URI` + `MONGODB_DATABASE`: chuỗi kết nối **MongoDB Atlas**
+   của bạn (cùng cluster với MindFlow — lấy trong Atlas: Connect →
+   Drivers) và tên database `mindflow_ai`. **URI chứa mật khẩu database
+   nên file `.env` này tuyệt đối không được commit.** Xem dữ liệu: mở
+   Atlas trên web (Data Explorer) hoặc MongoDB Compass bằng chính URI đó.
 2. `HOST_WORKSPACES_DIR`: đường dẫn tuyệt đối của thư mục workspaces trên
    máy bạn. Nếu repo nằm ở
    `F:\Clone\clone-digotal_3\AI_Application\AI_Knowledge_Hub_Intelligent_Document_Assistant`
@@ -65,7 +67,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Lần đầu build vài phút. Đạt khi `mongo`, `n8n` và
+Lần đầu build vài phút. Đạt khi `n8n` và
 `code-exec-service` đều Up. Kiểm tra nhanh: mở http://localhost:8080/health
 thấy `{"status":"ok"...}` là service thực thi đã sống.
 
@@ -176,7 +178,7 @@ thứ tự phụ thuộc.
 |---|---|
 | Agent báo `missing_env_key` | `.env` chưa có key của provider đang chọn, hoặc chưa `docker compose up -d` lại sau khi sửa `.env` |
 | Webhook 404 | Chưa Active đủ 6 workflow, hoặc gọi sai path |
-| Dashboard báo `database_unavailable` / workflow lỗi ở node `(CES)` | MongoDB chưa lên: `docker compose ps` kiểm tra container `mongo`; xem `docker compose logs code-exec-service` |
+| Dashboard báo `database_unavailable` / workflow lỗi ở node `(CES)` | Chưa điền `MONGODB_URI` trong `.env`, mật khẩu trong URI sai, hoặc Atlas chưa cho IP máy bạn vào (Atlas → Network Access). Xem thêm `docker compose logs code-exec-service` |
 | Bước build báo `HOST_WORKSPACES_DIR is not configured` | Chưa điền biến này ở Bước 2, hoặc đường dẫn sai |
 | Agent báo `model_did_not_return_valid_json` | Model đó không tuân thủ JSON — đổi model cho Agent đó trên Dashboard/node Resolve Agent Config. Lượt lỗi vẫn lưu trong collection `agent_runs` (MongoDB) để xem lại |
 | Chạy lâu bất thường | Xem n8n → Executions để biết đang kẹt ở node nào; xem Dashboard hoặc collection `agent_runs` trong MongoDB để biết Agent nào đang chạy |

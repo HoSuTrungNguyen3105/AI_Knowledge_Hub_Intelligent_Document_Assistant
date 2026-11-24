@@ -31,7 +31,8 @@ const HOST_WORKSPACES_DIR = process.env.HOST_WORKSPACES_DIR || "";
 const SANDBOX_MODE = (process.env.SANDBOX_MODE || "docker").toLowerCase();
 const SANDBOX_IMAGE = process.env.SANDBOX_IMAGE || "node:20-alpine";
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
-const MONGO_URL = process.env.MONGO_URL || "mongodb://localhost:27017/ai_factory";
+const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017";
+const MONGODB_DATABASE = process.env.MONGODB_DATABASE || "ai_factory";
 
 const MAX_FILES_PER_REQUEST = 200;
 const MAX_FILE_BYTES = 1_000_000;
@@ -54,16 +55,16 @@ async function db() {
   if (!mongoConnecting) {
     mongoConnecting = (async () => {
       const { MongoClient, ObjectId } = require("mongodb");
-      const client = new MongoClient(MONGO_URL);
+      const client = new MongoClient(MONGODB_URI);
       await client.connect();
-      const database = client.db();
+      const database = client.db(MONGODB_DATABASE);
       await database.collection("projects").createIndex({ id: 1 }, { unique: true });
       await database.collection("agent_runs").createIndex({ project_id: 1, created_at: 1 });
       await database.collection("tasks").createIndex({ project_id: 1 });
       await database.collection("qa_reviews").createIndex({ project_id: 1 });
       await database.collection("artifacts").createIndex({ project_id: 1 });
       mongo = { db: database, ObjectId };
-      console.log("MongoDB connected:", MONGO_URL.replace(/\/\/[^@]*@/, "//***@"));
+      console.log("MongoDB connected:", MONGODB_URI.replace(/\/\/[^@]*@/, "//***@"), "database:", MONGODB_DATABASE);
       return mongo;
     })().catch((error) => { mongoConnecting = null; throw error; });
   }

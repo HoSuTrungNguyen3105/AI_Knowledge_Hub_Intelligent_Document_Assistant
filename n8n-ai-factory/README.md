@@ -39,9 +39,11 @@ cp .env.example .env
 
 Mở `.env` và đặt:
 
-- MongoDB: compose tự chạy sẵn một container MongoDB không mật khẩu (chỉ
-  truy cập được trên máy bạn) — xem dữ liệu bằng MongoDB Compass tại
-  `mongodb://localhost:27017`, database `ai_factory`. Không cần đặt gì thêm.
+- `MONGODB_URI`: chuỗi kết nối **MongoDB Atlas** của bạn (chứa mật khẩu
+  database — chỉ đặt trong `.env`, **không bao giờ commit**);
+  `MONGODB_DATABASE`: tên database trên cluster đó (mặc định
+  `mindflow_ai`). Xem dữ liệu bằng Atlas Data Explorer hoặc MongoDB
+  Compass với cùng URI đó.
 - `HOST_WORKSPACES_DIR`: **đường dẫn tuyệt đối trên máy host** của thư mục
   `ces-data/workspaces` trong thư mục dự án này. Ví dụ Windows:
   `C:/ai-agent-factory/ces-data/workspaces`; macOS/Linux:
@@ -76,7 +78,7 @@ theo từng lần chạy bằng trường `providers` / `models` của request.
 
 Bản này **không cần tạo credential nào trong n8n**: khoá provider đọc từ
 `.env` như trên, còn dữ liệu (projects, tasks, agent_runs, qa_reviews,
-artifacts) do **Code Execution Service ghi vào MongoDB** qua API `/db/*`
+artifacts) do **Code Execution Service ghi vào MongoDB Atlas** qua API `/db/*`
 nội bộ — các workflow không chạm trực tiếp vào database, nên cũng không
 còn node Postgres nào trong workflow. Hướng dẫn từng bước bằng tiếng
 Việt: xem **HUONG-DAN.md**.
@@ -291,8 +293,9 @@ chạy **một execution tại một thời điểm**. Sinh lại JSON sau khi s
 - **Webhook 404**: workflow chưa Active, hoặc sai path — kiểm tra cả 6
   workflow đã bật.
 - **Dashboard báo `database_unavailable` hoặc workflow lỗi ở node `(CES)`**:
-  MongoDB chưa lên hoặc Code Execution Service chưa nối được — kiểm tra
-  `docker compose ps` (container `mongo` phải Up) và
+  Code Execution Service chưa nối được MongoDB Atlas — kiểm tra
+  `MONGODB_URI` trong `.env` (đã điền chưa, mật khẩu đúng chưa), Atlas →
+  Network Access đã cho IP máy bạn vào chưa, và
   `docker compose logs code-exec-service`.
 - **Lỗi `HOST_WORKSPACES_DIR is not configured`** ở bước build: đặt biến này
   trong `.env` (đường dẫn host tuyệt đối) rồi `docker compose up -d` lại.
