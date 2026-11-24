@@ -1,0 +1,293 @@
+{
+  "name": "AI Factory — Scheduled Research Digest",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Scheduled Research Digest (automation mẫu của n8n)\nChạy **tự động mỗi tuần** (mặc định thứ 2, 07:00 — sửa trong node Schedule Trigger): AI Researcher viết bản tin ngắn về xu hướng EdTech cho học sinh tiểu học rồi gửi qua Telegram. Không cần ai bấm chạy và không phụ thuộc MindFlow có đang mở hay không.\n\n- Chủ đề đứng: sửa hằng số `TOPIC` trong node **Build Research Brief**.\n- Model: ưu tiên Groq `gpt-oss-120b`, thiếu key Groq thì dùng Ollama `gpt-oss:120b` (key đọc từ $env như workflow 07).\n- Telegram chỉ gửi khi có `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` trong .env; chưa cấu hình thì bản tin vẫn nằm trong chi tiết execution (node Format Digest).\n- Workflow chỉ chạy theo lịch khi đang **Active**; bấm Execute Workflow để chạy thử ngay.",
+        "height": 300,
+        "width": 680
+      },
+      "id": "02c8cda5-d485-41ab-b53a-6cc970a0c8b0",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        60
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 7,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "38c5c80c-64c2-47e6-b058-4dcc9154218f",
+      "name": "Weekly Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\n// EDIT ME: the standing research topic for the digest. Change the day/hour\n// in the Schedule Trigger node to change the cadence.\nconst TOPIC = 'xu hướng công nghệ giáo dục (EdTech) cho học sinh tiểu học';\nconst groqKey = $env.GROQ_API_KEY || '';\nconst ollamaKey = $env.OLLAMA_API_KEY || '';\nlet provider = null;\nif (groqKey) {\n  provider = {\n    api_url: 'https://api.groq.com/openai/v1/chat/completions',\n    auth_header: 'Bearer ' + groqKey,\n    model: 'openai/gpt-oss-120b'\n  };\n} else if (ollamaKey) {\n  provider = {\n    api_url: 'https://ollama.com/v1/chat/completions',\n    auth_header: 'Bearer ' + ollamaKey,\n    model: 'gpt-oss:120b'\n  };\n}\nif (!provider) return [{ json: { provider_configured: false } }];\nconst today = new Date().toISOString().slice(0, 10);\nconst systemPrompt = 'Bạn là AI Researcher của một đội ngũ giáo dục. Viết ngắn gọn, cụ thể, bằng tiếng Việt, không nói chung chung.';\nconst userContent = [\n  'Hôm nay là ' + today + '. Hãy viết bản tin nghiên cứu tuần về: ' + TOPIC + '.',\n  'Cấu trúc bắt buộc:',\n  '- Một dòng mở đầu tóm tắt tuần này có gì đáng chú ý.',\n  '- Đúng 5 xu hướng/ý tưởng, mỗi mục gồm: tiêu đề in đậm, 3-4 câu mô tả, một câu \"Vì sao quan trọng\" và một câu \"Áp dụng vào lớp học\" với ví dụ cụ thể cho giáo viên tiểu học.',\n  '- Một mục cuối: \"Một việc nên thử tuần này\" — một hoạt động nhỏ, làm được ngay.',\n  'Chỉ dùng kiến thức chắc chắn, không bịa số liệu hay tên sản phẩm không có thật.'\n].join('\\n');\nreturn [{ json: {\n  provider_configured: true,\n  topic: TOPIC,\n  api_url: provider.api_url,\n  auth_header: provider.auth_header,\n  provider_body: {\n    model: provider.model,\n    messages: [\n      { role: 'system', content: systemPrompt },\n      { role: 'user', content: userContent }\n    ],\n    max_tokens: 4096,\n    temperature: 0.4\n  }\n} }];\n"
+      },
+      "id": "798888ae-d7e7-4a23-a3b9-45da1baac387",
+      "name": "Build Research Brief",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.provider_configured }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f6a00081-46df-4b2c-86c1-fd3cd8acfa5a",
+      "name": "Provider Configured",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.api_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.auth_header }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.provider_body) }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "80c41d37-dbee-46fa-abff-ed0218ba9e85",
+      "name": "Research Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst input = $input.first().json || {};\nlet text = '';\nconst choice = input.choices && input.choices[0];\nif (choice && choice.message && typeof choice.message.content === 'string') {\n  text = choice.message.content;\n} else if (typeof input.response === 'string') {\n  text = input.response;\n}\nconst today = new Date().toISOString().slice(0, 10);\nconst digest = text.trim()\n  || '(Không nhận được nội dung từ model — xem chi tiết ở node Research Call.)';\nconst token = $env.TELEGRAM_BOT_TOKEN || '';\nconst chatId = $env.TELEGRAM_CHAT_ID || '';\nconst configured = Boolean(token && chatId);\nconst full = 'Bản tin nghiên cứu tuần — ' + today + '\\n\\n' + digest;\nreturn [{ json: {\n  digest_text: digest,\n  telegram_configured: configured,\n  api_url: configured ? 'https://api.telegram.org/bot' + token + '/sendMessage' : '',\n  auth_header: '',\n  provider_body: { chat_id: chatId, text: full.slice(0, 3900) }\n} }];\n"
+      },
+      "id": "1c4f199e-ee2f-4e41-8343-3be6673ec560",
+      "name": "Format Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.telegram_configured }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b516d782-6ab5-444a-89eb-31f6997f2f13",
+      "name": "Telegram Configured",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1300,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.api_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.auth_header }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.provider_body) }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "6ec0ea5d-0e5a-4a02-9570-3a61ded74525",
+      "name": "Notify Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Weekly Schedule": {
+      "main": [
+        [
+          {
+            "node": "Build Research Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Research Brief": {
+      "main": [
+        [
+          {
+            "node": "Provider Configured",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Provider Configured": {
+      "main": [
+        [
+          {
+            "node": "Research Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Research Call": {
+      "main": [
+        [
+          {
+            "node": "Format Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Digest": {
+      "main": [
+        [
+          {
+            "node": "Telegram Configured",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Configured": {
+      "main": [
+        [
+          {
+            "node": "Notify Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {}
+}

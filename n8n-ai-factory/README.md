@@ -308,12 +308,38 @@ Workflow xử lý như sau:
 - Gói kết quả cuối có thêm `agent_assignments` (các Agent MindFlow đã thật
   sự chạy, kèm provider/model) để trang AI Factory hiển thị.
 
-Phía MindFlow: backend gọi webhook qua endpoint
-`POST /api/v1/ai/n8n-factory/run` (địa chỉ n8n lấy từ biến môi trường
-`N8N_WEBHOOK_BASE_URL` của backend, mặc định `http://localhost:5678`;
-thời gian chờ tối đa `N8N_FACTORY_TIMEOUT_SECONDS`, mặc định 900 giây).
-Không có key nào đi qua cầu nối này — key vẫn chỉ nằm ở env của n8n và ở
-kho credential đã mã hoá của MindFlow như trước.
+Phía MindFlow: lượt chạy là **bất đồng bộ**. Backend lưu lượt chạy rồi gọi
+webhook qua `POST /api/v1/ai/n8n-factory/runs` (địa chỉ n8n lấy từ biến môi
+trường `N8N_WEBHOOK_BASE_URL` của backend, mặc định `http://localhost:5678`).
+Workflow 07 trả lời webhook **ngay khi nhận** (node Respond Accepted) rồi
+chạy nền; khi xong, nó POST gói kết quả về `callback_url` mà MindFlow gửi
+kèm (kèm token riêng của từng lượt chạy trong header Authorization). Trang
+AI Factory chỉ thăm dò trạng thái lượt chạy của chính backend MindFlow —
+không còn request nào phải treo chờ vài phút. Địa chỉ callback mặc định là
+`http://host.docker.internal:8000` (n8n chạy trong container, backend chạy
+trên máy host), đổi bằng `N8N_FACTORY_CALLBACK_BASE_URL`; backend cần nghe
+ở cổng 8000 theo cách container gọi tới được (chạy uvicorn với
+`--host 0.0.0.0`). Lượt chạy nào không nhận được callback sau
+`N8N_FACTORY_RUN_TIMEOUT_SECONDS` (mặc định 1800) sẽ tự bị đánh dấu
+`failed` với lỗi `run_timed_out` thay vì treo vô hạn. Khi có
+`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` trong env của n8n, workflow gửi
+thêm một thông báo Telegram lúc hoàn tất. Không có key nào đi qua cầu nối
+này — key vẫn chỉ nằm ở env của n8n và ở kho credential đã mã hoá của
+MindFlow như trước.
+
+### 11.2 Workflow 08 — Bản tin nghiên cứu theo lịch (automation)
+
+`08-scheduled-research-digest.json` là workflow automation độc lập, sinh
+bằng `tools/build_workflow_08.py`: Schedule Trigger chạy **mỗi tuần**
+(mặc định thứ 2, 07:00) — AI Researcher viết bản tin ngắn về xu hướng
+EdTech cho học sinh tiểu học (chủ đề sửa ở hằng số `TOPIC` trong node
+Build Research Brief; model ưu tiên Groq `gpt-oss-120b`, thiếu key Groq
+thì Ollama `gpt-oss:120b`) rồi gửi qua Telegram nếu đã cấu hình. Nó cho
+thấy phần việc n8n làm tốt nhất: chạy theo lịch/sự kiện ở nền, không cần
+ai bấm và không phụ thuộc MindFlow có đang mở hay không. Bản tin của từng
+lượt nằm trong chi tiết execution ở n8n (node Format Digest). Workflow
+chỉ chạy theo lịch khi đang Active; bấm Execute Workflow để chạy thử
+ngay sau khi import.
 
 ## 9. Xử lý sự cố
 

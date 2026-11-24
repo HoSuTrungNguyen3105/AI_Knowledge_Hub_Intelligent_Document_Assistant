@@ -3,11 +3,11 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## 7-Agent Dynamic Model Routing\nImplements `ai-7-agent-dynamic-model-routing.md`: 7 roles (Leader, Planner, Architect, Developer/Executor, Tester, Reviewer, Researcher) with **per-task model routing**.\n\n**Model Capability Registry** marks a model `available` only when its provider key exists in the n8n environment (`GROQ_API_KEY` / `OLLAMA_API_KEY` / `OPENROUTER_API_KEY`, set in the .env file next to docker-compose.yml). Keys never appear in this JSON. Claude/GPT/DeepSeek are reachable only through OpenRouter and only when its key is set.\n\nPOST `/webhook/ai-team/start` with `{requirement, domain?, expected_outputs?, constraints?, documents?}`. Optional `agents` maps a role name to a MindFlow agent `{name, provider, model, system_prompt}` (sent by the MindFlow AI Factory page): the router honors that agent's provider/model and system prompt for the role when the provider is configured in the n8n env, and reports the assignment (or why it was ignored) in the final package. Tasks run sequentially in dependency order; the review gate allows at most 2 revision rounds. Run one execution at a time (run state uses workflow static data).",
-        "height": 300,
+        "content": "## 7-Agent Dynamic Model Routing\nImplements `ai-7-agent-dynamic-model-routing.md`: 7 roles (Leader, Planner, Architect, Developer/Executor, Tester, Reviewer, Researcher) with **per-task model routing**.\n\n**Model Capability Registry** marks a model `available` only when its provider key exists in the n8n environment (`GROQ_API_KEY` / `OLLAMA_API_KEY` / `OPENROUTER_API_KEY`, set in the .env file next to docker-compose.yml). Keys never appear in this JSON. Claude/GPT/DeepSeek are reachable only through OpenRouter and only when its key is set.\n\nPOST `/webhook/ai-team/start` with `{requirement, domain?, expected_outputs?, constraints?, documents?}`. Optional `agents` maps a role name to a MindFlow agent `{name, provider, model, system_prompt}` (sent by the MindFlow AI Factory page): the router honors that agent's provider/model and system prompt for the role when the provider is configured in the n8n env, and reports the assignment (or why it was ignored) in the final package. Tasks run sequentially in dependency order; the review gate allows at most 2 revision rounds. Run one execution at a time (run state uses workflow static data). The webhook is answered immediately (Respond Accepted); when the caller sends `callback_url` + `callback_token` (the MindFlow AI Factory page does), the final package is POSTed back to that URL at the end. A Telegram notification is sent on completion when TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set in the n8n env.",
+        "height": 340,
         "width": 900
       },
-      "id": "1f1e012e-3e63-4149-9031-6679f7910b71",
+      "id": "0e8fc027-484e-4e5b-b0fd-ced095abaeb7",
       "name": "Sticky Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -23,7 +23,7 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "c89de062-220f-4dc1-b20e-83121ec99308",
+      "id": "0dfc451a-cd97-4110-a699-7cc4c20654fc",
       "name": "Team Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -31,14 +31,14 @@
         0,
         300
       ],
-      "webhookId": "7b702ec5-3c8f-4daa-8b17-c17ca75f771d"
+      "webhookId": "39d90f09-8644-4c75-a471-825b54741e16"
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "\nconst has = (k) => Boolean($env[k] && String($env[k]).trim());\nfunction entry(provider, model_id, capabilities, strength, cost_rank, extra) {\n  const envKey = provider === 'groq' ? 'GROQ_API_KEY' : provider === 'ollama' ? 'OLLAMA_API_KEY' : 'OPENROUTER_API_KEY';\n  return Object.assign({\n    provider, model_id,\n    credential_name: 'env:' + envKey,\n    capabilities, strength, cost_rank,\n    context_limit: null, supports_tools: null,\n    status: has(envKey) ? 'available' : 'unavailable'\n  }, extra || {});\n}\n// Only models of providers that are actually configured can be available.\n// Claude/GPT/DeepSeek direct APIs are NOT assumed: they appear only via\n// OpenRouter, and only when OPENROUTER_API_KEY is set.\nconst registry = [\n  entry('groq', 'openai/gpt-oss-120b', ['reasoning', 'planning', 'architecture', 'review', 'research', 'general', 'coding'], 3, 1, { context_limit: 131072, supports_tools: true }),\n  entry('groq', 'openai/gpt-oss-20b', ['reasoning', 'planning', 'general', 'coding', 'writing', 'testing', 'fast', 'extraction'], 2, 1, { context_limit: 131072, supports_tools: true }),\n  entry('ollama', 'gpt-oss:120b', ['reasoning', 'planning', 'architecture', 'review', 'general'], 3, 2, { supports_tools: true }),\n  entry('ollama', 'qwen3-coder:480b', ['coding', 'testing', 'debugging'], 3, 2, { supports_tools: true }),\n  entry('ollama', 'deepseek-v3.1:671b', ['reasoning', 'review', 'research', 'architecture'], 3, 3, {}),\n  entry('ollama', 'gpt-oss:20b', ['general', 'fast', 'writing', 'extraction'], 2, 2, { supports_tools: true }),\n  entry('openrouter', 'anthropic/claude-sonnet-4.5', ['coding', 'reasoning', 'architecture', 'review', 'writing', 'testing'], 3, 3, {}),\n  entry('openrouter', 'openai/gpt-5', ['reasoning', 'coding', 'planning', 'architecture', 'review', 'research', 'general'], 3, 3, {}),\n  entry('openrouter', 'deepseek/deepseek-r1', ['reasoning', 'review', 'research'], 3, 2, {})\n];\nconst available = registry.filter(m => m.status === 'available');\nconst body = $input.first().json.body || {};\nconst projectId = 'proj-' + Date.now() + '-' + Math.floor(Math.random() * 100000);\nconst sd = $getWorkflowStaticData('global');\nsd.project_id = projectId;\nsd.requirement = body.requirement || '';\nsd.domain_hint = body.domain || [];\nsd.expected_outputs = body.expected_outputs || [];\nsd.constraints = body.constraints || [];\nsd.documents = body.documents || [];\n// Optional per-role agent assignments sent by MindFlow (AI Factory page):\n// body.agents = { \"AI Leader\": {name, provider, model, system_prompt}, ... }.\n// An assignment applies only when its provider is known AND that provider's\n// key exists in the n8n environment; otherwise it is reported as ignored so\n// the caller sees why their agent did not run. Only the PRESENCE of the\n// provider env key is checked here — key values never enter the workflow.\nconst ROLE_NAMES = ['AI Leader', 'AI Planner', 'AI Architect', 'AI Developer', 'AI Tester', 'AI Reviewer', 'AI Researcher'];\nconst PROVIDER_ENV = { groq: 'GROQ_API_KEY', ollama: 'OLLAMA_API_KEY', openrouter: 'OPENROUTER_API_KEY' };\nconst rawAgents = (body.agents && typeof body.agents === 'object' && !Array.isArray(body.agents)) ? body.agents : {};\nconst overrides = {};\nconst overridesIgnored = [];\nfor (const role of ROLE_NAMES) {\n  const a = rawAgents[role];\n  if (!a || typeof a !== 'object') continue;\n  const provider = String(a.provider || '').toLowerCase();\n  const model = String(a.model || '').trim();\n  const agentName = String(a.name || role).slice(0, 120);\n  if (!PROVIDER_ENV[provider] || !model) {\n    overridesIgnored.push({ role, agent_name: agentName, reason: 'invalid_provider_or_model' });\n    continue;\n  }\n  if (!has(PROVIDER_ENV[provider])) {\n    overridesIgnored.push({ role, agent_name: agentName, reason: 'provider_not_configured_in_n8n_env:' + PROVIDER_ENV[provider] });\n    continue;\n  }\n  overrides[role] = {\n    agent_name: agentName, provider, model,\n    system_prompt: typeof a.system_prompt === 'string' ? a.system_prompt.slice(0, 8000) : ''\n  };\n}\nsd.agent_overrides = overrides;\nsd.agent_overrides_ignored = overridesIgnored;\nsd.registry = registry;\nsd.results = [];\nsd.review = null;\nsd.revision_rounds = 0;\nsd.started_ms = Date.now();\nreturn [{ json: {\n  project_id: projectId,\n  requirement: sd.requirement,\n  domain_hint: sd.domain_hint,\n  expected_outputs: sd.expected_outputs,\n  constraints: sd.constraints,\n  documents: sd.documents,\n  has_available_model: available.length > 0,\n  available_models: available\n} }];\n"
+        "jsCode": "\nconst has = (k) => Boolean($env[k] && String($env[k]).trim());\nfunction entry(provider, model_id, capabilities, strength, cost_rank, extra) {\n  const envKey = provider === 'groq' ? 'GROQ_API_KEY' : provider === 'ollama' ? 'OLLAMA_API_KEY' : 'OPENROUTER_API_KEY';\n  return Object.assign({\n    provider, model_id,\n    credential_name: 'env:' + envKey,\n    capabilities, strength, cost_rank,\n    context_limit: null, supports_tools: null,\n    status: has(envKey) ? 'available' : 'unavailable'\n  }, extra || {});\n}\n// Only models of providers that are actually configured can be available.\n// Claude/GPT/DeepSeek direct APIs are NOT assumed: they appear only via\n// OpenRouter, and only when OPENROUTER_API_KEY is set.\nconst registry = [\n  entry('groq', 'openai/gpt-oss-120b', ['reasoning', 'planning', 'architecture', 'review', 'research', 'general', 'coding'], 3, 1, { context_limit: 131072, supports_tools: true }),\n  entry('groq', 'openai/gpt-oss-20b', ['reasoning', 'planning', 'general', 'coding', 'writing', 'testing', 'fast', 'extraction'], 2, 1, { context_limit: 131072, supports_tools: true }),\n  entry('ollama', 'gpt-oss:120b', ['reasoning', 'planning', 'architecture', 'review', 'general'], 3, 2, { supports_tools: true }),\n  entry('ollama', 'qwen3-coder:480b', ['coding', 'testing', 'debugging'], 3, 2, { supports_tools: true }),\n  entry('ollama', 'deepseek-v3.1:671b', ['reasoning', 'review', 'research', 'architecture'], 3, 3, {}),\n  entry('ollama', 'gpt-oss:20b', ['general', 'fast', 'writing', 'extraction'], 2, 2, { supports_tools: true }),\n  entry('openrouter', 'anthropic/claude-sonnet-4.5', ['coding', 'reasoning', 'architecture', 'review', 'writing', 'testing'], 3, 3, {}),\n  entry('openrouter', 'openai/gpt-5', ['reasoning', 'coding', 'planning', 'architecture', 'review', 'research', 'general'], 3, 3, {}),\n  entry('openrouter', 'deepseek/deepseek-r1', ['reasoning', 'review', 'research'], 3, 2, {})\n];\nconst available = registry.filter(m => m.status === 'available');\nconst body = $input.first().json.body || {};\nconst projectId = 'proj-' + Date.now() + '-' + Math.floor(Math.random() * 100000);\nconst sd = $getWorkflowStaticData('global');\nsd.project_id = projectId;\nsd.requirement = body.requirement || '';\nsd.domain_hint = body.domain || [];\nsd.expected_outputs = body.expected_outputs || [];\nsd.constraints = body.constraints || [];\nsd.documents = body.documents || [];\n// Optional per-role agent assignments sent by MindFlow (AI Factory page):\n// body.agents = { \"AI Leader\": {name, provider, model, system_prompt}, ... }.\n// An assignment applies only when its provider is known AND that provider's\n// key exists in the n8n environment; otherwise it is reported as ignored so\n// the caller sees why their agent did not run. Only the PRESENCE of the\n// provider env key is checked here — key values never enter the workflow.\nconst ROLE_NAMES = ['AI Leader', 'AI Planner', 'AI Architect', 'AI Developer', 'AI Tester', 'AI Reviewer', 'AI Researcher'];\nconst PROVIDER_ENV = { groq: 'GROQ_API_KEY', ollama: 'OLLAMA_API_KEY', openrouter: 'OPENROUTER_API_KEY' };\nconst rawAgents = (body.agents && typeof body.agents === 'object' && !Array.isArray(body.agents)) ? body.agents : {};\nconst overrides = {};\nconst overridesIgnored = [];\nfor (const role of ROLE_NAMES) {\n  const a = rawAgents[role];\n  if (!a || typeof a !== 'object') continue;\n  const provider = String(a.provider || '').toLowerCase();\n  const model = String(a.model || '').trim();\n  const agentName = String(a.name || role).slice(0, 120);\n  if (!PROVIDER_ENV[provider] || !model) {\n    overridesIgnored.push({ role, agent_name: agentName, reason: 'invalid_provider_or_model' });\n    continue;\n  }\n  if (!has(PROVIDER_ENV[provider])) {\n    overridesIgnored.push({ role, agent_name: agentName, reason: 'provider_not_configured_in_n8n_env:' + PROVIDER_ENV[provider] });\n    continue;\n  }\n  overrides[role] = {\n    agent_name: agentName, provider, model,\n    system_prompt: typeof a.system_prompt === 'string' ? a.system_prompt.slice(0, 8000) : ''\n  };\n}\nsd.agent_overrides = overrides;\nsd.agent_overrides_ignored = overridesIgnored;\n// Optional completion callback, sent by MindFlow for asynchronous runs:\n// the workflow answers the webhook immediately (see the Respond Accepted\n// node), executes in the background, and POSTs the final package to\n// callback_url with the per-run token when it is done. The token is a\n// secret generated by MindFlow for this run only; it stays in static data\n// and is never written to any output.\nconst cbUrl = typeof body.callback_url === 'string' ? body.callback_url : '';\nconst cbToken = typeof body.callback_token === 'string' ? body.callback_token : '';\nsd.callback = cbUrl.startsWith('http') && cbToken\n  ? { url: cbUrl, token: cbToken, run_id: String(body.run_id || '') }\n  : null;\nsd.registry = registry;\nsd.results = [];\nsd.review = null;\nsd.revision_rounds = 0;\nsd.started_ms = Date.now();\nreturn [{ json: {\n  project_id: projectId,\n  run_id: body.run_id ? String(body.run_id) : null,\n  requirement: sd.requirement,\n  domain_hint: sd.domain_hint,\n  expected_outputs: sd.expected_outputs,\n  constraints: sd.constraints,\n  documents: sd.documents,\n  has_available_model: available.length > 0,\n  available_models: available\n} }];\n"
       },
-      "id": "cb4aa4c4-eda3-42ed-b20a-ce1ab67ccccd",
+      "id": "fb9d806c-9dcb-4185-9495-cb37426b7210",
       "name": "Model Capability Registry",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -49,10 +49,25 @@
     },
     {
       "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: true, project_id: $json.project_id, run_id: $json.run_id || null }) }}",
+        "options": {}
+      },
+      "id": "1e3d9a85-d86e-42c2-8032-9ae4be4cf6ba",
+      "name": "Respond Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        390,
+        300
+      ]
+    },
+    {
+      "parameters": {
         "mode": "runOnceForAllItems",
         "jsCode": "\nconst PROVIDERS = {\n  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', env_key: 'GROQ_API_KEY' },\n  ollama: { url: 'https://ollama.com/v1/chat/completions', env_key: 'OLLAMA_API_KEY' },\n  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', env_key: 'OPENROUTER_API_KEY' }\n};\nfunction providerCall(provider, model, systemPrompt, userContent, maxTokens) {\n  const prov = PROVIDERS[provider];\n  const key = $env[prov.env_key] || '';\n  return {\n    api_url: prov.url,\n    auth_header: 'Bearer ' + key,\n    provider_body: {\n      model,\n      messages: [\n        { role: 'system', content: systemPrompt },\n        { role: 'user', content: userContent }\n      ],\n      max_tokens: maxTokens || 8192,\n      temperature: 0.3\n    }\n  };\n}\n\nfunction rankModels(models, cap, complexity) {\n  return models.filter(m => m.capabilities.includes(cap)).slice().sort((a, b) =>\n    complexity === 'low'\n      ? (a.cost_rank - b.cost_rank) || (a.strength - b.strength)\n      : (b.strength - a.strength) || (a.cost_rank - b.cost_rank));\n}\nconst input = $input.first().json;\nconst available = input.available_models || [];\nlet pick = rankModels(available, 'planning', 'high')[0]\n  || rankModels(available, 'reasoning', 'high')[0]\n  || rankModels(available, 'general', 'high')[0]\n  || available[0];\nif (!pick) return [{ json: { has_available_model: false, project_id: input.project_id } }];\nconst sdPre = $getWorkflowStaticData('global');\nconst leaderOverride = (sdPre.agent_overrides || {})['AI Leader'] || null;\nif (leaderOverride) {\n  pick = { provider: leaderOverride.provider, model_id: leaderOverride.model, capabilities: [], strength: 3, cost_rank: 1 };\n}\nconst promptParts = [\n  'You are the AI Leader and AI Planner of a 7-role AI team. Roles: AI Leader, AI Planner, AI Architect, AI Developer, AI Tester, AI Reviewer, AI Researcher.',\n  'Analyse the user requirement, decide its domain(s) (software, research, business, marketing, education, office, creative, mixed — do NOT force everything into a software project), and produce a task plan.',\n  'Rules:',\n  '- Use only roles that are needed; a role may own several tasks; never create circular dependencies.',\n  '- For every task choose provider + model_id ONLY from the AVAILABLE MODELS list below; copy the ids exactly. If no available model fits a task, set its model_selection to null and its status to \"needs_configuration\".',\n  '- Prefer strong coding models for complex code, strong reasoning models for planning/architecture/review, fast cheap models for simple extraction/formatting tasks.',\n  '- The Reviewer should use a different model than the Developer when the list allows it.',\n  'Respond with ONLY this JSON (no markdown, no commentary):',\n  '{\"project_id\":\"' + input.project_id + '\",\"project_summary\":\"...\",\"domain\":[\"...\"],\"expected_outputs\":[\"...\"],\"assumptions\":[],\"tasks\":[{\"task_id\":\"task-1\",\"role\":\"AI Researcher\",\"objective\":\"...\",\"instructions\":\"...\",\"task_type\":\"research|planning|architecture|coding|testing|review|writing|extraction|general\",\"domain\":[\"...\"],\"input_from\":[],\"depends_on\":[],\"model_selection\":{\"provider\":\"groq\",\"model_id\":\"...\",\"reason\":\"...\",\"fallback\":[]},\"complexity\":\"low|medium|high\",\"priority\":\"low|medium|high\",\"acceptance_criteria\":[\"...\"],\"output_format\":\"json\",\"status\":\"planned\"}]}',\n  'AVAILABLE MODELS (registry): ' + JSON.stringify(available)\n];\nif (leaderOverride && leaderOverride.system_prompt) {\n  promptParts.unshift('The user assigned their own MindFlow agent \"' + leaderOverride.agent_name + '\" to lead this team. Its instructions:\\n' + leaderOverride.system_prompt);\n}\nconst assignments = sdPre.agent_overrides || {};\nconst assignedRoles = Object.keys(assignments);\nif (assignedRoles.length) {\n  promptParts.push('FIXED AGENT ASSIGNMENTS from MindFlow (the router will honor these provider/model choices per role; plan tasks for these roles normally): ' + JSON.stringify(assignedRoles.map(r => ({ role: r, agent: assignments[r].agent_name, provider: assignments[r].provider, model: assignments[r].model }))));\n}\nconst systemPrompt = promptParts.join('\\n');\nconst userContent = [\n  'REQUIREMENT: ' + (input.requirement || ''),\n  input.domain_hint && input.domain_hint.length ? 'DOMAIN HINT: ' + JSON.stringify(input.domain_hint) : '',\n  input.expected_outputs && input.expected_outputs.length ? 'EXPECTED OUTPUTS: ' + JSON.stringify(input.expected_outputs) : '',\n  input.constraints && input.constraints.length ? 'CONSTRAINTS: ' + JSON.stringify(input.constraints) : '',\n  input.documents && input.documents.length ? 'DOCUMENTS: ' + JSON.stringify(input.documents).slice(0, 12000) : ''\n].filter(Boolean).join('\\n');\nconst call = providerCall(pick.provider, pick.model_id, systemPrompt, userContent, 8192);\nconst sd = $getWorkflowStaticData('global');\nsd.leader_selection = { provider: pick.provider, model_id: pick.model_id };\nreturn [{ json: Object.assign({ project_id: input.project_id, has_available_model: true, leader_selection: sd.leader_selection }, call) }];\n"
       },
-      "id": "d34886c3-db36-4da3-a4d2-e8b5b1f52ba5",
+      "id": "33f8c797-ef8c-432f-a51b-413eaafa51d3",
       "name": "Prepare Leader Plan Call",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -86,7 +101,7 @@
         },
         "options": {}
       },
-      "id": "2fa656b3-12e6-4e05-8603-3b2a7319b189",
+      "id": "b690c9ea-aab7-45be-97a2-6493e424b06d",
       "name": "Has Available Model",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -100,7 +115,7 @@
         "mode": "runOnceForAllItems",
         "jsCode": "\nconst input = $input.first().json;\nconst sd = $getWorkflowStaticData('global');\nreturn [{ json: {\n  project_id: input.project_id || sd.project_id || null,\n  status: 'needs_configuration',\n  error: 'no_available_model: no provider key is configured in the n8n environment. Set GROQ_API_KEY and/or OLLAMA_API_KEY (or OPENROUTER_API_KEY) in the .env file next to docker-compose.yml, restart n8n, and run again.',\n  model_registry: sd.registry || [],\n  task_results: [],\n  review: null,\n  final: null\n} }];\n"
       },
-      "id": "a8836ea9-4380-4168-8955-21a4e2f53731",
+      "id": "5ffa0f66-276a-41f5-a9db-6bcadb78eced",
       "name": "Build Needs-Configuration Package",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -134,7 +149,7 @@
           "timeout": 600000
         }
       },
-      "id": "ffc73dc9-338e-428d-901e-dcfbd436c6c4",
+      "id": "d3b27412-c74b-4565-b0f3-3e3bc8922d8e",
       "name": "Leader Plan Call",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -152,7 +167,7 @@
         "mode": "runOnceForAllItems",
         "jsCode": "\nfunction extractJson(text) {\n  if (typeof text !== 'string') return null;\n  let t = text.trim();\n  const fence = t.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (fence) t = fence[1].trim();\n  try { return JSON.parse(t); } catch (e) { /* fall through */ }\n  const start = t.indexOf('{');\n  if (start === -1) return null;\n  let depth = 0, inStr = false, esc = false;\n  for (let i = start; i < t.length; i++) {\n    const ch = t[i];\n    if (inStr) {\n      if (esc) esc = false;\n      else if (ch === '\\\\') esc = true;\n      else if (ch === '\"') inStr = false;\n    } else if (ch === '\"') inStr = true;\n    else if (ch === '{') depth++;\n    else if (ch === '}') {\n      depth--;\n      if (depth === 0) {\n        try { return JSON.parse(t.slice(start, i + 1)); } catch (e) { return null; }\n      }\n    }\n  }\n  return null;\n}\nfunction responseText(item) {\n  const j = item.json || {};\n  if (j.error) return null;\n  const choices = j.choices;\n  if (Array.isArray(choices) && choices.length) {\n    const msg = choices[0].message || {};\n    if (typeof msg.content === 'string' && msg.content.trim()) return msg.content;\n    if (Array.isArray(msg.content)) {\n      const text = msg.content.filter(p => p && p.type === 'text').map(p => p.text).join('');\n      if (text.trim()) return text;\n    }\n  }\n  return null;\n}\n\nconst ROLES = ['AI Leader', 'AI Planner', 'AI Architect', 'AI Developer', 'AI Tester', 'AI Reviewer', 'AI Researcher'];\nconst CAP_FOR_ROLE = {\n  'AI Leader': 'reasoning', 'AI Planner': 'planning', 'AI Architect': 'architecture',\n  'AI Developer': 'coding', 'AI Tester': 'testing', 'AI Reviewer': 'review', 'AI Researcher': 'research'\n};\nfunction rankModels(models, cap, complexity) {\n  return models.filter(m => m.capabilities.includes(cap)).slice().sort((a, b) =>\n    complexity === 'low'\n      ? (a.cost_rank - b.cost_rank) || (a.strength - b.strength)\n      : (b.strength - a.strength) || (a.cost_rank - b.cost_rank));\n}\nfunction rankedFor(models, cap, complexity) {\n  let ranked = rankModels(models, cap, complexity);\n  if (!ranked.length) ranked = rankModels(models, 'general', complexity);\n  return ranked;\n}\nfunction inferCap(task) {\n  const tt = String(task.task_type || '').toLowerCase();\n  if (/extract|classif|normal|format/.test(tt)) return 'fast';\n  let cap = CAP_FOR_ROLE[task.role] || 'general';\n  const dom = ((task.domain || []).join(' ') + ' ' + tt).toLowerCase();\n  if (cap === 'coding' && /(marketing|content|education|business|office|writing|seo)/.test(dom) && !/(code|software|website|web|app|api|debug)/.test(dom)) return 'writing';\n  return cap;\n}\nconst item = $input.first();\nconst sd = $getWorkflowStaticData('global');\nconst available = (sd.registry || []).filter(m => m.status === 'available');\nconst text = responseText(item);\nconst plan = text ? extractJson(text) : null;\nif (!plan || !Array.isArray(plan.tasks) || !plan.tasks.length) {\n  sd.plan = null;\n  sd.plan_error = 'leader_did_not_return_valid_plan';\n  sd.skipped_roles = ROLES.map(r => ({ role: r, status: 'skipped', reason: 'plan_failed' }));\n  return [{ json: { task: { task_id: 'plan', role: 'AI Leader', objective: 'Produce the team plan', status: 'failed', model_selection: null } } }];\n}\nconst byKey = {};\nfor (const m of available) byKey[m.provider + '::' + m.model_id] = m;\nconst tasks = [];\nplan.tasks.forEach((raw, i) => {\n  const role = ROLES.includes(raw.role) ? raw.role : 'AI Developer';\n  const task = {\n    task_id: String(raw.task_id || ('task-' + (i + 1))),\n    role,\n    objective: String(raw.objective || ''),\n    instructions: String(raw.instructions || ''),\n    task_type: String(raw.task_type || ''),\n    domain: Array.isArray(raw.domain) ? raw.domain : (Array.isArray(plan.domain) ? plan.domain : []),\n    depends_on: Array.isArray(raw.depends_on) ? raw.depends_on.map(String) : [],\n    complexity: ['low', 'medium', 'high'].includes(raw.complexity) ? raw.complexity : 'medium',\n    priority: raw.priority || 'medium',\n    acceptance_criteria: Array.isArray(raw.acceptance_criteria) ? raw.acceptance_criteria : [],\n    output_format: raw.output_format || 'json',\n    status: 'planned'\n  };\n  const cap = inferCap(task);\n  const ranked = rankedFor(available, cap, task.complexity);\n  const leaderSel = raw.model_selection || null;\n  const leaderEntry = leaderSel ? byKey[leaderSel.provider + '::' + leaderSel.model_id] : null;\n  const override = (sd.agent_overrides || {})[role] || null;\n  if (override) {\n    task.model_selection = {\n      provider: override.provider, model_id: override.model,\n      reason: 'mindflow_agent_assignment:' + override.agent_name,\n      fallback: ranked.filter(m => !(m.provider === override.provider && m.model_id === override.model)).slice(0, 2)\n        .map(m => ({ provider: m.provider, model_id: m.model_id }))\n    };\n  } else if (!ranked.length && !leaderEntry) {\n    task.status = 'needs_configuration';\n    task.model_selection = null;\n    task.router_note = 'no_available_model_for_capability:' + cap;\n  } else if (leaderEntry && leaderEntry.capabilities.includes(cap)) {\n    task.model_selection = {\n      provider: leaderEntry.provider, model_id: leaderEntry.model_id,\n      reason: leaderSel.reason || 'leader_choice_validated_by_router',\n      fallback: ranked.filter(m => m.model_id !== leaderEntry.model_id).slice(0, 2)\n        .map(m => ({ provider: m.provider, model_id: m.model_id }))\n    };\n  } else {\n    const chosen = ranked[0];\n    task.model_selection = {\n      provider: chosen.provider, model_id: chosen.model_id,\n      reason: leaderEntry\n        ? 'router_reassigned: leader choice unavailable or capability mismatch for ' + cap\n        : 'router_assigned: capability ' + cap + ', complexity ' + task.complexity,\n      fallback: ranked.slice(1, 3).map(m => ({ provider: m.provider, model_id: m.model_id }))\n    };\n  }\n  tasks.push(task);\n});\n// Topological order by depends_on (unknown deps ignored); cycle -> keep plan order.\nconst order = [];\nconst placed = new Set();\nlet guard = 0;\nlet remaining = tasks.slice();\nwhile (remaining.length && guard++ < 50) {\n  const ready = remaining.filter(t => t.depends_on.every(d => placed.has(d) || !tasks.some(x => x.task_id === d)));\n  if (!ready.length) { order.push(...remaining); sd.plan_warning = 'dependency_cycle_or_unresolvable_order'; break; }\n  for (const t of ready) { order.push(t); placed.add(t.task_id); }\n  remaining = remaining.filter(t => !placed.has(t.task_id));\n}\nconst usedRoles = new Set(tasks.map(t => t.role));\nsd.plan = { project_id: plan.project_id || sd.project_id, project_summary: plan.project_summary || '', domain: plan.domain || [], expected_outputs: plan.expected_outputs || [], assumptions: plan.assumptions || [], tasks: order };\nsd.skipped_roles = ROLES.filter(r => !usedRoles.has(r)).map(r => ({ role: r, status: 'skipped', reason: 'not_required_by_plan' }));\nreturn order.map(t => ({ json: { task: t } }));\n"
       },
-      "id": "32861de6-52a9-49da-be96-1611eb49258f",
+      "id": "08021941-a924-47c1-9e33-a97c6f8efda2",
       "name": "Parse Plan + Model Router",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -166,7 +181,7 @@
         "batchSize": 1,
         "options": {}
       },
-      "id": "ad60c169-c9ed-4d03-b06e-0e9b69bcf659",
+      "id": "6f1d01ed-e1bd-4af5-acb3-c5c341ebc95e",
       "name": "Task Loop",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
@@ -180,7 +195,7 @@
         "mode": "runOnceForAllItems",
         "jsCode": "\nconst PROVIDERS = {\n  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', env_key: 'GROQ_API_KEY' },\n  ollama: { url: 'https://ollama.com/v1/chat/completions', env_key: 'OLLAMA_API_KEY' },\n  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', env_key: 'OPENROUTER_API_KEY' }\n};\nfunction providerCall(provider, model, systemPrompt, userContent, maxTokens) {\n  const prov = PROVIDERS[provider];\n  const key = $env[prov.env_key] || '';\n  return {\n    api_url: prov.url,\n    auth_header: 'Bearer ' + key,\n    provider_body: {\n      model,\n      messages: [\n        { role: 'system', content: systemPrompt },\n        { role: 'user', content: userContent }\n      ],\n      max_tokens: maxTokens || 8192,\n      temperature: 0.3\n    }\n  };\n}\n\nconst ROLE_PROMPTS = {\n  'AI Leader': 'You are the AI Leader handling a coordination/synthesis task for the team.',\n  'AI Planner': 'You are the AI Planner: decompose goals into concrete, verifiable steps with dependencies and acceptance criteria.',\n  'AI Architect': 'You are the AI Architect: design the solution, structure or method that best fits the task domain — not only software.',\n  'AI Developer': 'You are the AI Developer/Executor: produce the actual deliverable of the task in its domain. For software tasks write the code; for other domains produce the professional artifact itself (document, content, analysis, plan).',\n  'AI Tester': 'You are the AI Tester/Validator: check the referenced work against its acceptance criteria. Never claim you ran tools or tests you did not actually run; label reasoning-based checks as such.',\n  'AI Reviewer': 'You are the AI Reviewer: independently challenge correctness, completeness, consistency, risks and usability of the referenced work.',\n  'AI Researcher': 'You are the AI Researcher: research from the provided context. Separate facts, inferences and assumptions; never invent sources.'\n};\nconst RESULT_CONTRACT = 'Respond with ONLY this JSON (no markdown): {\"project_id\":\"...\",\"task_id\":\"...\",\"role\":\"...\",\"provider\":\"...\",\"model_id\":\"...\",\"status\":\"completed|failed|needs_human_input\",\"summary\":\"...\",\"deliverables\":[],\"evidence\":[],\"assumptions\":[],\"risks\":[],\"handoff\":{\"to_role\":\"...\",\"notes\":\"...\"},\"needs_human_input\":false}';\nconst task = $input.first().json.task;\nconst sd = $getWorkflowStaticData('global');\nif (!task.model_selection || task.status === 'needs_configuration' || task.status === 'failed') {\n  return [{ json: { skip_call: true, task } }];\n}\nconst results = sd.results || [];\nconst depResults = results.filter(r => (task.depends_on || []).includes(r.task_id));\nconst taskOverride = (sd.agent_overrides || {})[task.role] || null;\nconst persona = taskOverride && taskOverride.system_prompt\n  ? taskOverride.system_prompt\n  : (ROLE_PROMPTS[task.role] || ROLE_PROMPTS['AI Developer']);\nconst systemPrompt = persona + '\\n' + RESULT_CONTRACT;\nconst userContent = [\n  'PROJECT: ' + (sd.plan ? sd.plan.project_summary || '' : '') + ' (requirement: ' + (sd.requirement || '') + ')',\n  'TASK ' + task.task_id + ' — ' + task.role,\n  'OBJECTIVE: ' + task.objective,\n  task.instructions ? 'INSTRUCTIONS: ' + task.instructions : '',\n  task.acceptance_criteria && task.acceptance_criteria.length ? 'ACCEPTANCE CRITERIA: ' + JSON.stringify(task.acceptance_criteria) : '',\n  depResults.length ? 'INPUT FROM DEPENDENCY TASKS: ' + JSON.stringify(depResults.map(r => ({ task_id: r.task_id, role: r.role, summary: r.summary, deliverables: r.deliverables }))).slice(0, 8000) : '',\n  'Your provider is ' + task.model_selection.provider + ' and your model_id is ' + task.model_selection.model_id + '; project_id is ' + sd.project_id + ', task_id is ' + task.task_id + ', role is ' + task.role + '.'\n].filter(Boolean).join('\\n');\nconst call = providerCall(task.model_selection.provider, task.model_selection.model_id, systemPrompt, userContent, 8192);\nreturn [{ json: Object.assign({ skip_call: false, task, started_ms: Date.now() }, call) }];\n"
       },
-      "id": "0e908017-202c-44e6-bc80-03ce635bd9c7",
+      "id": "d7304564-4283-41c0-acb9-94530949a882",
       "name": "Prepare Task Call",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -214,7 +229,7 @@
         },
         "options": {}
       },
-      "id": "1eef167d-ba15-417a-bf3a-d75865b46773",
+      "id": "70e72384-c3aa-4e56-94b7-53b73663836b",
       "name": "Skip Provider Call",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -228,7 +243,7 @@
         "mode": "runOnceForAllItems",
         "jsCode": "\nconst task = $input.first().json.task;\nconst sd = $getWorkflowStaticData('global');\nconst status = task.status === 'failed' ? 'failed' : 'needs_configuration';\nreturn [{ json: { task, result: {\n  project_id: sd.project_id, task_id: task.task_id, role: task.role,\n  provider: task.model_selection ? task.model_selection.provider : null,\n  model_id: task.model_selection ? task.model_selection.model_id : null,\n  model_reason: task.router_note || null,\n  status,\n  summary: status === 'failed' ? 'The Leader did not return a valid plan.' : 'No available model fits this task. Configure the missing provider and re-run.',\n  deliverables: [], evidence: [], assumptions: [], risks: [],\n  handoff: { to_role: 'AI Leader', notes: '' },\n  needs_human_input: status === 'needs_configuration',\n  duration_ms: 0\n} } }];\n"
       },
-      "id": "9d8ad31c-51af-4d0f-8f14-f5cc2da509c9",
+      "id": "9efa0725-feef-4301-866b-250dfaa57874",
       "name": "Make Skipped Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -262,7 +277,7 @@
           "timeout": 600000
         }
       },
-      "id": "3c7fa986-a503-4edd-9adc-13fe9df57a6b",
+      "id": "c5670ea8-c5e1-440d-bfbc-ffb5c7d2e7b5",
       "name": "Task Provider Call",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -280,7 +295,7 @@
         "mode": "runOnceForAllItems",
         "jsCode": "\nfunction extractJson(text) {\n  if (typeof text !== 'string') return null;\n  let t = text.trim();\n  const fence = t.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (fence) t = fence[1].trim();\n  try { return JSON.parse(t); } catch (e) { /* fall through */ }\n  const start = t.indexOf('{');\n  if (start === -1) return null;\n  let depth = 0, inStr = false, esc = false;\n  for (let i = start; i < t.length; i++) {\n    const ch = t[i];\n    if (inStr) {\n      if (esc) esc = false;\n      else if (ch === '\\\\') esc = true;\n      else if (ch === '\"') inStr = false;\n    } else if (ch === '\"') inStr = true;\n    else if (ch === '{') depth++;\n    else if (ch === '}') {\n      depth--;\n      if (depth === 0) {\n        try { return JSON.parse(t.slice(start, i + 1)); } catch (e) { return null; }\n      }\n    }\n  }\n  return null;\n}\nfunction responseText(item) {\n  const j = item.json || {};\n  if (j.error) return null;\n  const choices = j.choices;\n  if (Array.isArray(choices) && choices.length) {\n    const msg = choices[0].message || {};\n    if (typeof msg.content === 'string' && msg.content.trim()) return msg.content;\n    if (Array.isArray(msg.content)) {\n      const text = msg.content.filter(p => p && p.type === 'text').map(p => p.text).join('');\n      if (text.trim()) return text;\n    }\n  }\n  return null;\n}\n\nconst PROVIDERS = {\n  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', env_key: 'GROQ_API_KEY' },\n  ollama: { url: 'https://ollama.com/v1/chat/completions', env_key: 'OLLAMA_API_KEY' },\n  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', env_key: 'OPENROUTER_API_KEY' }\n};\nfunction providerCall(provider, model, systemPrompt, userContent, maxTokens) {\n  const prov = PROVIDERS[provider];\n  const key = $env[prov.env_key] || '';\n  return {\n    api_url: prov.url,\n    auth_header: 'Bearer ' + key,\n    provider_body: {\n      model,\n      messages: [\n        { role: 'system', content: systemPrompt },\n        { role: 'user', content: userContent }\n      ],\n      max_tokens: maxTokens || 8192,\n      temperature: 0.3\n    }\n  };\n}\n\nconst prep = $('Prepare Task Call').first().json;\nconst task = prep.task;\nconst item = $input.first();\nconst text = responseText(item);\nconst parsed = text ? extractJson(text) : null;\nconst sd = $getWorkflowStaticData('global');\nfunction normalize(p, providerUsed, modelUsed) {\n  return {\n    project_id: sd.project_id, task_id: task.task_id, role: task.role,\n    provider: providerUsed, model_id: modelUsed,\n    model_reason: task.model_selection ? task.model_selection.reason : null,\n    status: ['completed', 'failed', 'needs_human_input'].includes(p && p.status) ? p.status : 'completed',\n    summary: (p && p.summary) || '',\n    deliverables: (p && p.deliverables) || [],\n    evidence: (p && p.evidence) || [],\n    assumptions: (p && p.assumptions) || [],\n    risks: (p && p.risks) || [],\n    handoff: (p && p.handoff) || { to_role: 'AI Leader', notes: '' },\n    needs_human_input: Boolean(p && p.needs_human_input),\n    duration_ms: Date.now() - (prep.started_ms || Date.now())\n  };\n}\nif (parsed) {\n  return [{ json: { task, result: normalize(parsed, task.model_selection.provider, task.model_selection.model_id) } }];\n}\nconst fb = task.model_selection && Array.isArray(task.model_selection.fallback) ? task.model_selection.fallback[0] : null;\nif (fb && PROVIDERS[fb.provider] && ($env[PROVIDERS[fb.provider].env_key] || '')) {\n  const retryPrep = $('Prepare Task Call').first().json;\n  const messages = retryPrep.provider_body.messages;\n  const call = providerCall(fb.provider, fb.model_id, messages[0].content, messages[1].content, 8192);\n  return [{ json: Object.assign({ task, needs_fallback: true, first_error: 'provider_error_or_invalid_output' }, call) }];\n}\nreturn [{ json: { task, result: {\n  project_id: sd.project_id, task_id: task.task_id, role: task.role,\n  provider: task.model_selection.provider, model_id: task.model_selection.model_id,\n  model_reason: task.model_selection.reason,\n  status: 'failed', summary: 'Provider error or the model did not return valid JSON, and no fallback model is available.',\n  deliverables: [], evidence: [], assumptions: [], risks: [],\n  handoff: { to_role: 'AI Leader', notes: '' }, needs_human_input: false,\n  duration_ms: Date.now() - (prep.started_ms || Date.now())\n} } }];\n"
       },
-      "id": "292f479d-89fd-46e8-872c-20168c23c268",
+      "id": "f1443d7f-ffbc-4d99-8fe4-f2d4db2201c2",
       "name": "Parse Task Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -314,7 +329,7 @@
         },
         "options": {}
       },
-      "id": "525bafe3-9dd1-4ee4-8f16-ae3541a67586",
+      "id": "45e4c5fe-5525-4b16-8b96-dd265650a56c",
       "name": "Use Fallback Model",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -348,7 +363,7 @@
           "timeout": 600000
         }
       },
-      "id": "0c93fd62-f4ef-4745-b600-6fb0ab0ad4ad",
+      "id": "611d58d0-2a95-4b89-81c7-7f3062160016",
       "name": "Task Fallback Call",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -366,7 +381,7 @@
         "mode": "runOnceForAllItems",
         "jsCode": "\nfunction extractJson(text) {\n  if (typeof text !== 'string') return null;\n  let t = text.trim();\n  const fence = t.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (fence) t = fence[1].trim();\n  try { return JSON.parse(t); } catch (e) { /* fall through */ }\n  const start = t.indexOf('{');\n  if (start === -1) return null;\n  let depth = 0, inStr = false, esc = false;\n  for (let i = start; i < t.length; i++) {\n    const ch = t[i];\n    if (inStr) {\n      if (esc) esc = false;\n      else if (ch === '\\\\') esc = true;\n      else if (ch === '\"') inStr = false;\n    } else if (ch === '\"') inStr = true;\n    else if (ch === '{') depth++;\n    else if (ch === '}') {\n      depth--;\n      if (depth === 0) {\n        try { return JSON.parse(t.slice(start, i + 1)); } catch (e) { return null; }\n      }\n    }\n  }\n  return null;\n}\nfunction responseText(item) {\n  const j = item.json || {};\n  if (j.error) return null;\n  const choices = j.choices;\n  if (Array.isArray(choices) && choices.length) {\n    const msg = choices[0].message || {};\n    if (typeof msg.content === 'string' && msg.content.trim()) return msg.content;\n    if (Array.isArray(msg.content)) {\n      const text = msg.content.filter(p => p && p.type === 'text').map(p => p.text).join('');\n      if (text.trim()) return text;\n    }\n  }\n  return null;\n}\n\nconst prep = $('Parse Task Result').first().json;\nconst task = prep.task;\nconst item = $input.first();\nconst text = responseText(item);\nconst parsed = text ? extractJson(text) : null;\nconst sd = $getWorkflowStaticData('global');\nconst fb = task.model_selection.fallback[0];\nreturn [{ json: { task, result: {\n  project_id: sd.project_id, task_id: task.task_id, role: task.role,\n  provider: fb.provider, model_id: fb.model_id,\n  model_reason: (task.model_selection.reason || '') + ' [fallback used after primary model failed]',\n  status: parsed ? (['completed', 'failed', 'needs_human_input'].includes(parsed.status) ? parsed.status : 'completed') : 'failed',\n  summary: parsed ? (parsed.summary || '') : 'Fallback model also failed or returned invalid output.',\n  deliverables: parsed ? (parsed.deliverables || []) : [],\n  evidence: parsed ? (parsed.evidence || []) : [],\n  assumptions: parsed ? (parsed.assumptions || []) : [],\n  risks: parsed ? (parsed.risks || []) : [],\n  handoff: parsed ? (parsed.handoff || { to_role: 'AI Leader', notes: '' }) : { to_role: 'AI Leader', notes: '' },\n  needs_human_input: parsed ? Boolean(parsed.needs_human_input) : false,\n  duration_ms: 0\n} } }];\n"
       },
-      "id": "0a5349ca-fd9c-42fe-85b8-2a93f91480c3",
+      "id": "25b9fa4e-8336-4f02-b853-c915cfeb7f45",
       "name": "Parse Fallback Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -380,7 +395,7 @@
         "mode": "runOnceForAllItems",
         "jsCode": "\nconst input = $input.first().json;\nconst sd = $getWorkflowStaticData('global');\nsd.results = sd.results || [];\nif (input.result) sd.results.push(input.result);\nreturn [{ json: {} }];\n"
       },
-      "id": "d10eefbe-9df9-4a25-a855-3fafb8d15338",
+      "id": "94c311bc-827b-4325-a7e4-40ab19096670",
       "name": "Record Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -394,7 +409,7 @@
         "mode": "runOnceForAllItems",
         "jsCode": "\nconst PROVIDERS = {\n  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', env_key: 'GROQ_API_KEY' },\n  ollama: { url: 'https://ollama.com/v1/chat/completions', env_key: 'OLLAMA_API_KEY' },\n  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', env_key: 'OPENROUTER_API_KEY' }\n};\nfunction providerCall(provider, model, systemPrompt, userContent, maxTokens) {\n  const prov = PROVIDERS[provider];\n  const key = $env[prov.env_key] || '';\n  return {\n    api_url: prov.url,\n    auth_header: 'Bearer ' + key,\n    provider_body: {\n      model,\n      messages: [\n        { role: 'system', content: systemPrompt },\n        { role: 'user', content: userContent }\n      ],\n      max_tokens: maxTokens || 8192,\n      temperature: 0.3\n    }\n  };\n}\n\nfunction rankModels(models, cap) {\n  return models.filter(m => m.capabilities.includes(cap)).slice()\n    .sort((a, b) => (b.strength - a.strength) || (a.cost_rank - b.cost_rank));\n}\nconst sd = $getWorkflowStaticData('global');\nconst available = (sd.registry || []).filter(m => m.status === 'available');\nconst results = sd.results || [];\nconst completed = results.filter(r => r.status === 'completed');\nif (!completed.length) {\n  sd.review = { status: 'needs_configuration', score: 0, issues: ['no_task_completed'], missing_requirements: [], contradictions: [], unsupported_claims: [], required_revisions: [], final_notes: ['No task completed, so there is nothing to review.'] };\n  return [{ json: { skip_review: true } }];\n}\n// Prefer a reviewer model different from the most used executor model.\nconst freq = {};\nfor (const r of completed) { const k = r.provider + '::' + r.model_id; freq[k] = (freq[k] || 0) + 1; }\nconst dominant = Object.keys(freq).sort((a, b) => freq[b] - freq[a])[0];\nlet ranked = rankModels(available, 'review');\nconst different = ranked.filter(m => (m.provider + '::' + m.model_id) !== dominant);\nif (different.length) ranked = different;\nconst pick = ranked[0] || rankModels(available, 'reasoning')[0] || available[0];\nif (!pick) { sd.review = null; return [{ json: { skip_review: true } }]; }\nconst reviewerOverride = (sd.agent_overrides || {})['AI Reviewer'] || null;\nconst reviewerPick = reviewerOverride\n  ? { provider: reviewerOverride.provider, model_id: reviewerOverride.model }\n  : pick;\nsd.reviewer_selection = { provider: reviewerPick.provider, model_id: reviewerPick.model_id };\nconst reviewerPersona = reviewerOverride && reviewerOverride.system_prompt ? reviewerOverride.system_prompt + '\\n' : '';\nconst systemPrompt = reviewerPersona + [\n  'You are the AI Reviewer performing the final independent review of an AI team project.',\n  'Check every task result against the plan and its acceptance criteria. Be strict but fair.',\n  'Respond with ONLY this JSON (no markdown): {\"status\":\"approved|changes_requested\",\"score\":0,\"issues\":[],\"missing_requirements\":[],\"contradictions\":[],\"unsupported_claims\":[],\"required_revisions\":[],\"final_notes\":[]}',\n  'score is 0-100. In required_revisions list the task_id values that must be redone (exact ids from the plan). Approve only when acceptance criteria are met and no serious issue remains.'\n].join('\\n');\nconst userContent = [\n  'PROJECT: ' + (sd.plan ? sd.plan.project_summary || '' : '') + ' (requirement: ' + (sd.requirement || '') + ')',\n  'PLAN: ' + JSON.stringify(sd.plan).slice(0, 6000),\n  'TASK RESULTS: ' + JSON.stringify(results).slice(0, 14000),\n  'Revision round so far: ' + (sd.revision_rounds || 0) + ' of max 2.'\n].join('\\n');\nconst call = providerCall(reviewerPick.provider, reviewerPick.model_id, systemPrompt, userContent, 4096);\nreturn [{ json: Object.assign({ skip_review: false }, call) }];\n"
       },
-      "id": "16761a2f-2907-45f5-8044-6088757e9015",
+      "id": "e9d184aa-52c0-4ed9-978d-9a4661cd4e90",
       "name": "Prepare Review Call",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -428,7 +443,7 @@
         },
         "options": {}
       },
-      "id": "af8c3875-5cd2-4812-b38d-79c26a583a07",
+      "id": "85c12c86-822e-4833-8d45-8363a08dba6e",
       "name": "Skip Review",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -462,7 +477,7 @@
           "timeout": 600000
         }
       },
-      "id": "5a69d4c8-c6d4-419e-956d-3c60d9540049",
+      "id": "ea868393-eeba-4b0c-b32b-6ab164e943b6",
       "name": "Review Call",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -480,7 +495,7 @@
         "mode": "runOnceForAllItems",
         "jsCode": "\nfunction extractJson(text) {\n  if (typeof text !== 'string') return null;\n  let t = text.trim();\n  const fence = t.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (fence) t = fence[1].trim();\n  try { return JSON.parse(t); } catch (e) { /* fall through */ }\n  const start = t.indexOf('{');\n  if (start === -1) return null;\n  let depth = 0, inStr = false, esc = false;\n  for (let i = start; i < t.length; i++) {\n    const ch = t[i];\n    if (inStr) {\n      if (esc) esc = false;\n      else if (ch === '\\\\') esc = true;\n      else if (ch === '\"') inStr = false;\n    } else if (ch === '\"') inStr = true;\n    else if (ch === '{') depth++;\n    else if (ch === '}') {\n      depth--;\n      if (depth === 0) {\n        try { return JSON.parse(t.slice(start, i + 1)); } catch (e) { return null; }\n      }\n    }\n  }\n  return null;\n}\nfunction responseText(item) {\n  const j = item.json || {};\n  if (j.error) return null;\n  const choices = j.choices;\n  if (Array.isArray(choices) && choices.length) {\n    const msg = choices[0].message || {};\n    if (typeof msg.content === 'string' && msg.content.trim()) return msg.content;\n    if (Array.isArray(msg.content)) {\n      const text = msg.content.filter(p => p && p.type === 'text').map(p => p.text).join('');\n      if (text.trim()) return text;\n    }\n  }\n  return null;\n}\n\nconst item = $input.first();\nconst sd = $getWorkflowStaticData('global');\nconst text = responseText(item);\nconst review = text ? extractJson(text) : null;\nif (!review || !review.status) {\n  sd.review = { status: 'review_failed', score: 0, issues: ['reviewer_did_not_return_valid_json'], missing_requirements: [], contradictions: [], unsupported_claims: [], required_revisions: [], final_notes: [] };\n  return [{ json: { needs_revision: false } }];\n}\nsd.review = review;\nconst rounds = sd.revision_rounds || 0;\nconst wanted = Array.isArray(review.required_revisions) ? review.required_revisions.map(String) : [];\nconst planTasks = sd.plan && Array.isArray(sd.plan.tasks) ? sd.plan.tasks : [];\nconst targets = planTasks.filter(t => wanted.includes(t.task_id));\nif (review.status !== 'approved' && rounds < 2 && targets.length) {\n  sd.revision_rounds = rounds + 1;\n  sd.revision_targets = targets.map(t => t.task_id);\n  return targets.map(t => ({ json: { task_id: t.task_id, needs_revision: true } }));\n}\nreturn [{ json: { needs_revision: false } }];\n"
       },
-      "id": "6105b9ae-c2bc-4e78-bc7b-dfb8ec2847af",
+      "id": "fa33f8fc-3d89-4816-a7e0-6d1e1cf78194",
       "name": "Parse Review",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -514,7 +529,7 @@
         },
         "options": {}
       },
-      "id": "06817ae6-f9b6-4f0b-8000-218d346e6412",
+      "id": "d170ba43-c233-459a-8425-011f38470623",
       "name": "Needs Revision",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -528,7 +543,7 @@
         "batchSize": 1,
         "options": {}
       },
-      "id": "5e4caa9d-e546-47b5-aa0a-859bd1027e82",
+      "id": "67df5e8d-9c9a-436b-bfd0-c2dcd922e6f6",
       "name": "Revision Loop",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
@@ -542,7 +557,7 @@
         "mode": "runOnceForAllItems",
         "jsCode": "\nconst PROVIDERS = {\n  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', env_key: 'GROQ_API_KEY' },\n  ollama: { url: 'https://ollama.com/v1/chat/completions', env_key: 'OLLAMA_API_KEY' },\n  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', env_key: 'OPENROUTER_API_KEY' }\n};\nfunction providerCall(provider, model, systemPrompt, userContent, maxTokens) {\n  const prov = PROVIDERS[provider];\n  const key = $env[prov.env_key] || '';\n  return {\n    api_url: prov.url,\n    auth_header: 'Bearer ' + key,\n    provider_body: {\n      model,\n      messages: [\n        { role: 'system', content: systemPrompt },\n        { role: 'user', content: userContent }\n      ],\n      max_tokens: maxTokens || 8192,\n      temperature: 0.3\n    }\n  };\n}\n\nconst taskId = $input.first().json.task_id;\nconst sd = $getWorkflowStaticData('global');\nconst task = (sd.plan.tasks || []).find(t => t.task_id === taskId);\nconst previous = (sd.results || []).find(r => r.task_id === taskId) || {};\nconst review = sd.review || {};\nif (!task || !task.model_selection) return [{ json: { task_id: taskId, skip_call: true } }];\nconst revisionOverride = (sd.agent_overrides || {})[task.role] || null;\nconst revisionPersona = revisionOverride && revisionOverride.system_prompt ? revisionOverride.system_prompt + '\\n' : '';\nconst systemPrompt = revisionPersona + 'You are the ' + task.role + ' revising your earlier work after an independent review. Fix every listed issue; keep what was already correct. Respond with ONLY this JSON (no markdown): {\"project_id\":\"...\",\"task_id\":\"...\",\"role\":\"...\",\"provider\":\"...\",\"model_id\":\"...\",\"status\":\"completed|failed|needs_human_input\",\"summary\":\"...\",\"deliverables\":[],\"evidence\":[],\"assumptions\":[],\"risks\":[],\"handoff\":{\"to_role\":\"AI Reviewer\",\"notes\":\"...\"},\"needs_human_input\":false}';\nconst userContent = [\n  'TASK ' + task.task_id + ' — ' + task.role,\n  'OBJECTIVE: ' + task.objective,\n  task.instructions ? 'INSTRUCTIONS: ' + task.instructions : '',\n  task.acceptance_criteria && task.acceptance_criteria.length ? 'ACCEPTANCE CRITERIA: ' + JSON.stringify(task.acceptance_criteria) : '',\n  'YOUR PREVIOUS RESULT: ' + JSON.stringify(previous).slice(0, 6000),\n  'REVIEW ISSUES TO FIX: ' + JSON.stringify({ issues: review.issues || [], missing_requirements: review.missing_requirements || [], contradictions: review.contradictions || [], unsupported_claims: review.unsupported_claims || [], final_notes: review.final_notes || [] }).slice(0, 4000),\n  'Your provider is ' + task.model_selection.provider + ' and your model_id is ' + task.model_selection.model_id + '; project_id is ' + sd.project_id + ', task_id is ' + task.task_id + ', role is ' + task.role + '.'\n].filter(Boolean).join('\\n');\nconst call = providerCall(task.model_selection.provider, task.model_selection.model_id, systemPrompt, userContent, 8192);\nreturn [{ json: Object.assign({ task_id: taskId, task, skip_call: false, started_ms: Date.now() }, call) }];\n"
       },
-      "id": "dc3c9347-20f3-401b-8726-f1b48b2f309d",
+      "id": "c63f5e53-70bd-4afc-8cdd-3066e1d712cc",
       "name": "Prepare Revision Call",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -576,7 +591,7 @@
           "timeout": 600000
         }
       },
-      "id": "c2be4ec4-050c-4a6a-8522-22037886798d",
+      "id": "f367610c-b851-4076-a0e8-b471dc2d0cfd",
       "name": "Revision Call",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -594,7 +609,7 @@
         "mode": "runOnceForAllItems",
         "jsCode": "\nfunction extractJson(text) {\n  if (typeof text !== 'string') return null;\n  let t = text.trim();\n  const fence = t.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (fence) t = fence[1].trim();\n  try { return JSON.parse(t); } catch (e) { /* fall through */ }\n  const start = t.indexOf('{');\n  if (start === -1) return null;\n  let depth = 0, inStr = false, esc = false;\n  for (let i = start; i < t.length; i++) {\n    const ch = t[i];\n    if (inStr) {\n      if (esc) esc = false;\n      else if (ch === '\\\\') esc = true;\n      else if (ch === '\"') inStr = false;\n    } else if (ch === '\"') inStr = true;\n    else if (ch === '{') depth++;\n    else if (ch === '}') {\n      depth--;\n      if (depth === 0) {\n        try { return JSON.parse(t.slice(start, i + 1)); } catch (e) { return null; }\n      }\n    }\n  }\n  return null;\n}\nfunction responseText(item) {\n  const j = item.json || {};\n  if (j.error) return null;\n  const choices = j.choices;\n  if (Array.isArray(choices) && choices.length) {\n    const msg = choices[0].message || {};\n    if (typeof msg.content === 'string' && msg.content.trim()) return msg.content;\n    if (Array.isArray(msg.content)) {\n      const text = msg.content.filter(p => p && p.type === 'text').map(p => p.text).join('');\n      if (text.trim()) return text;\n    }\n  }\n  return null;\n}\n\nconst prep = $('Prepare Revision Call').first().json;\nconst task = prep.task;\nconst sd = $getWorkflowStaticData('global');\nif (!task) return [{ json: {} }];\nconst item = $input.first();\nconst text = responseText(item);\nconst parsed = text ? extractJson(text) : null;\nconst result = {\n  project_id: sd.project_id, task_id: task.task_id, role: task.role,\n  provider: task.model_selection.provider, model_id: task.model_selection.model_id,\n  model_reason: (task.model_selection.reason || '') + ' [revision round ' + (sd.revision_rounds || 1) + ']',\n  status: parsed ? (['completed', 'failed', 'needs_human_input'].includes(parsed.status) ? parsed.status : 'completed') : 'failed',\n  summary: parsed ? (parsed.summary || '') : 'Revision call failed or returned invalid output; previous result kept.',\n  deliverables: parsed ? (parsed.deliverables || []) : ((sd.results || []).find(r => r.task_id === task.task_id) || {}).deliverables || [],\n  evidence: parsed ? (parsed.evidence || []) : [],\n  assumptions: parsed ? (parsed.assumptions || []) : [],\n  risks: parsed ? (parsed.risks || []) : [],\n  handoff: parsed ? (parsed.handoff || { to_role: 'AI Reviewer', notes: '' }) : { to_role: 'AI Reviewer', notes: '' },\n  needs_human_input: parsed ? Boolean(parsed.needs_human_input) : false,\n  duration_ms: Date.now() - (prep.started_ms || Date.now()),\n  revised: true\n};\nsd.results = (sd.results || []).filter(r => r.task_id !== task.task_id);\nsd.results.push(result);\nreturn [{ json: {} }];\n"
       },
-      "id": "0984abd7-34f6-45a1-bbdb-763712acb1c4",
+      "id": "23b61773-fe44-409e-b584-2935bc0fa8ba",
       "name": "Parse Revision Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -608,7 +623,7 @@
         "mode": "runOnceForAllItems",
         "jsCode": "\nconst PROVIDERS = {\n  groq: { url: 'https://api.groq.com/openai/v1/chat/completions', env_key: 'GROQ_API_KEY' },\n  ollama: { url: 'https://ollama.com/v1/chat/completions', env_key: 'OLLAMA_API_KEY' },\n  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', env_key: 'OPENROUTER_API_KEY' }\n};\nfunction providerCall(provider, model, systemPrompt, userContent, maxTokens) {\n  const prov = PROVIDERS[provider];\n  const key = $env[prov.env_key] || '';\n  return {\n    api_url: prov.url,\n    auth_header: 'Bearer ' + key,\n    provider_body: {\n      model,\n      messages: [\n        { role: 'system', content: systemPrompt },\n        { role: 'user', content: userContent }\n      ],\n      max_tokens: maxTokens || 8192,\n      temperature: 0.3\n    }\n  };\n}\n\nfunction rankModels(models, cap) {\n  return models.filter(m => m.capabilities.includes(cap)).slice()\n    .sort((a, b) => (b.strength - a.strength) || (a.cost_rank - b.cost_rank));\n}\nconst sd = $getWorkflowStaticData('global');\nconst available = (sd.registry || []).filter(m => m.status === 'available');\nlet pick = rankModels(available, 'reasoning')[0] || available[0];\nconst leaderOverride = (sd.agent_overrides || {})['AI Leader'] || null;\nif (leaderOverride) pick = { provider: leaderOverride.provider, model_id: leaderOverride.model };\nif (!pick) return [{ json: { skip_call: true } }];\nconst systemPrompt = [\n  ...(leaderOverride && leaderOverride.system_prompt ? [leaderOverride.system_prompt] : []),\n  'You are the AI Leader delivering the final synthesis of an AI team project.',\n  'Write in the same language as the requirement.',\n  'Respond with ONLY this JSON (no markdown): {\"summary\":\"...\",\"deliverables\":[],\"open_questions\":[],\"notes\":[]}'\n].join('\\n');\nconst userContent = [\n  'REQUIREMENT: ' + (sd.requirement || ''),\n  'PLAN SUMMARY: ' + (sd.plan ? sd.plan.project_summary || '' : ''),\n  'TASK RESULTS: ' + JSON.stringify(sd.results || []).slice(0, 14000),\n  'FINAL REVIEW: ' + JSON.stringify(sd.review || {})\n].join('\\n');\nconst call = providerCall(pick.provider, pick.model_id, systemPrompt, userContent, 4096);\nreturn [{ json: Object.assign({ skip_call: false }, call) }];\n"
       },
-      "id": "0c5fd524-5211-437d-89ef-f416717eb400",
+      "id": "07da3204-6302-4eb5-a770-cb4e4b6b113d",
       "name": "Prepare Finalize Call",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -642,7 +657,7 @@
           "timeout": 600000
         }
       },
-      "id": "ab39ed29-d2ce-49c2-8e9f-7d242825811d",
+      "id": "95f8266b-ba4e-4f30-923b-6b97a01d9a36",
       "name": "Leader Finalize Call",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -660,7 +675,7 @@
         "mode": "runOnceForAllItems",
         "jsCode": "\nfunction extractJson(text) {\n  if (typeof text !== 'string') return null;\n  let t = text.trim();\n  const fence = t.match(/```(?:json)?\\s*([\\s\\S]*?)```/);\n  if (fence) t = fence[1].trim();\n  try { return JSON.parse(t); } catch (e) { /* fall through */ }\n  const start = t.indexOf('{');\n  if (start === -1) return null;\n  let depth = 0, inStr = false, esc = false;\n  for (let i = start; i < t.length; i++) {\n    const ch = t[i];\n    if (inStr) {\n      if (esc) esc = false;\n      else if (ch === '\\\\') esc = true;\n      else if (ch === '\"') inStr = false;\n    } else if (ch === '\"') inStr = true;\n    else if (ch === '{') depth++;\n    else if (ch === '}') {\n      depth--;\n      if (depth === 0) {\n        try { return JSON.parse(t.slice(start, i + 1)); } catch (e) { return null; }\n      }\n    }\n  }\n  return null;\n}\nfunction responseText(item) {\n  const j = item.json || {};\n  if (j.error) return null;\n  const choices = j.choices;\n  if (Array.isArray(choices) && choices.length) {\n    const msg = choices[0].message || {};\n    if (typeof msg.content === 'string' && msg.content.trim()) return msg.content;\n    if (Array.isArray(msg.content)) {\n      const text = msg.content.filter(p => p && p.type === 'text').map(p => p.text).join('');\n      if (text.trim()) return text;\n    }\n  }\n  return null;\n}\n\nconst sd = $getWorkflowStaticData('global');\nlet final = null;\nconst item = $input.first();\nif (item && item.json && !item.json.skip_call) {\n  const text = responseText(item);\n  final = text ? extractJson(text) : null;\n}\nconst results = sd.results || [];\nconst review = sd.review || null;\nlet status = 'completed';\nif (!sd.plan) status = 'failed';\nelse if (results.some(r => r.status === 'needs_configuration')) status = 'needs_configuration';\nelse if (review && review.status === 'changes_requested') status = 'completed_with_issues';\nelse if (results.some(r => r.status === 'failed')) status = 'completed_with_issues';\nreturn [{ json: {\n  project_id: sd.project_id,\n  status,\n  domain: sd.plan ? sd.plan.domain || [] : [],\n  plan: sd.plan || null,\n  plan_error: sd.plan_error || null,\n  model_registry: (sd.registry || []).filter(m => m.status === 'available'),\n  leader_selection: sd.leader_selection || null,\n  agent_assignments: Object.entries(sd.agent_overrides || {}).map(([role, o]) => ({ role, agent_name: o.agent_name, provider: o.provider, model: o.model })),\n  agent_assignments_ignored: sd.agent_overrides_ignored || [],\n  reviewer_selection: sd.reviewer_selection || null,\n  task_results: results,\n  skipped_roles: sd.skipped_roles || [],\n  review,\n  revision_rounds: sd.revision_rounds || 0,\n  final,\n  duration_ms: Date.now() - (sd.started_ms || Date.now())\n} }];\n"
       },
-      "id": "9d5a6715-9a48-4e40-90ab-7d9f558e19c2",
+      "id": "c256d41b-d8f1-42f2-acbc-7df6060baf60",
       "name": "Build Final Package",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -671,18 +686,175 @@
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst sd = $getWorkflowStaticData('global');\nconst pkg = $input.first().json;\nsd.final_status = pkg.status || null;\nsd.final_project_id = pkg.project_id || sd.project_id || null;\nconst cb = sd.callback || null;\nreturn [{ json: {\n  has_callback: Boolean(cb),\n  api_url: cb ? cb.url : '',\n  auth_header: cb ? 'Bearer ' + cb.token : '',\n  provider_body: { package: pkg }\n} }];\n"
       },
-      "id": "bee93aeb-f4d4-4739-981d-cfee4dc13a59",
-      "name": "Respond to Webhook",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1.1,
+      "id": "92bbcb44-4489-489d-a48a-0afa5254f0a4",
+      "name": "Prepare Callback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         3900,
         300
       ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.has_callback }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "623f4947-6844-4785-a9a3-38a8ebb9c3e9",
+      "name": "Has Callback",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.api_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.auth_header }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.provider_body) }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "544a28e1-381f-4662-9a26-7fd4ad45599f",
+      "name": "Callback to MindFlow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4420,
+        220
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst sd = $getWorkflowStaticData('global');\nconst token = $env.TELEGRAM_BOT_TOKEN || '';\nconst chatId = $env.TELEGRAM_CHAT_ID || '';\nconst configured = Boolean(token && chatId);\nconst review = sd.review || null;\nconst lines = [\n  'AI Factory — lượt chạy hoàn tất',\n  'Dự án: ' + (sd.final_project_id || sd.project_id || ''),\n  'Trạng thái: ' + (sd.final_status || 'unknown')\n];\nif (review && typeof review.score === 'number') {\n  lines.push('Điểm Reviewer: ' + review.score + '/100');\n}\nconst summary = sd.plan && sd.plan.project_summary\n  ? String(sd.plan.project_summary).slice(0, 300) : '';\nif (summary) lines.push(summary);\nreturn [{ json: {\n  telegram_configured: configured,\n  api_url: configured ? 'https://api.telegram.org/bot' + token + '/sendMessage' : '',\n  auth_header: '',\n  provider_body: { chat_id: chatId, text: lines.join('\\n') }\n} }];\n"
+      },
+      "id": "5b4822be-0228-4cad-bbfb-392318559ffb",
+      "name": "Prepare Telegram",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4420,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.telegram_configured }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "047be3e0-1358-43de-a044-7fd26105799e",
+      "name": "Telegram Configured",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4680,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.api_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $json.auth_header }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.provider_body) }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "2fef9b31-6bc6-4aea-ad0a-11b3f3a4a668",
+      "name": "Notify Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4940,
+        460
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
     }
   ],
   "connections": {
@@ -698,6 +870,17 @@
       ]
     },
     "Model Capability Registry": {
+      "main": [
+        [
+          {
+            "node": "Respond Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Accepted": {
       "main": [
         [
           {
@@ -1036,7 +1219,7 @@
       "main": [
         [
           {
-            "node": "Respond to Webhook",
+            "node": "Prepare Callback",
             "type": "main",
             "index": 0
           }
@@ -1047,7 +1230,69 @@
       "main": [
         [
           {
-            "node": "Respond to Webhook",
+            "node": "Prepare Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Callback": {
+      "main": [
+        [
+          {
+            "node": "Has Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Callback": {
+      "main": [
+        [
+          {
+            "node": "Callback to MindFlow",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Callback to MindFlow": {
+      "main": [
+        [
+          {
+            "node": "Prepare Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Telegram": {
+      "main": [
+        [
+          {
+            "node": "Telegram Configured",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Configured": {
+      "main": [
+        [
+          {
+            "node": "Notify Telegram",
             "type": "main",
             "index": 0
           }
