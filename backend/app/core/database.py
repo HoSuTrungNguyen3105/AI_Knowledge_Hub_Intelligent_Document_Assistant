@@ -78,6 +78,11 @@ async def init_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.resources.create_index([("user_id", 1), ("type", 1)])
     await db.resources.create_index([("user_id", 1), ("updated_at", -1)])
     await db.resources.create_index([("user_id", 1), ("skills.name", 1)])
+    await db.projects.create_index([("user_id", 1), ("updated_at", -1)])
+    await db.project_analyses.create_index([("project_id", 1), ("created_at", -1)])
+    await db.project_analyses.create_index([("user_id", 1), ("project_id", 1)])
+    await db.allocations.create_index([("project_id", 1), ("created_at", -1)])
+    await db.allocations.create_index([("user_id", 1), ("project_id", 1)])
 
 
 @asynccontextmanager
