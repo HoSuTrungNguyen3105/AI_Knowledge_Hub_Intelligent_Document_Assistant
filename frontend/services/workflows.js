@@ -38,6 +38,19 @@ export const workflowsService = {
     const { data } = await api.post(workflowsPath, payload, { signal });
     return data;
   },
+  async plan(payload, signal) {
+    // One Leader pass that analyzes + decomposes + sizes the team;
+    // generous timeout on purpose, like project analysis.
+    const { data } = await api.post(`${workflowsPath}/plan`, payload, {
+      signal,
+      timeout: 240000,
+    });
+    return data;
+  },
+  async applyPlan(payload, signal) {
+    const { data } = await api.post(`${workflowsPath}/plan/apply`, payload, { signal });
+    return data;
+  },
   async get(id, signal) {
     const { data } = await api.get(workflowPath(id), { signal });
     return data;

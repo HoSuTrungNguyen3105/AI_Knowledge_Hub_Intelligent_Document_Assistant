@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { Ban, GitBranch, Pause, Play, Plus, RotateCcw, Sparkles } from "lucide-react";
 import { teamsService, workflowsService } from "../../services/workflows";
+import { WorkflowPlanner } from "./workflow-planner";
 import { DESIGN_PALETTES, DESIGN_STYLES, OUTPUT_TYPES, WORKFLOW_STATUS, WORKFLOW_TITLE_MAX, buildDesignBrief, getWorkflowError, validateWorkflowForm } from "../../utils/workflows";
 
 export function WorkflowsList() {
@@ -79,6 +80,7 @@ export function WorkflowsList() {
     <div className="wf-header"><div><h1><Sparkles size={26} /> AI Agent Studio</h1>
       <p className="muted">Multi-Agent Collaboration Workspace — giao mục tiêu chung cho cả nhóm Agent.</p></div></div>
     {error && <p className="wf-error" role="alert">{error}</p>}
+    <WorkflowPlanner />
     <div className="wf-card">
       <h2><Plus size={17} /> Tạo workflow mới</h2>
       {teamsLoading ? <p className="wf-empty">Đang tải…</p> : teamsError ? (

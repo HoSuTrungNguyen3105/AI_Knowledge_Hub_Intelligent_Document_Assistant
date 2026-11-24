@@ -42,6 +42,7 @@ export function WorkflowDetail({ workflowId }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
   const [view, setView] = useState("workspace");
+  const [msgType, setMsgType] = useState("all");
   const [renameMember, setRenameMember] = useState(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [, setTick] = useState(0);
@@ -139,6 +140,10 @@ export function WorkflowDetail({ workflowId }) {
 
   const status = WORKFLOW_STATUS[workflow.status] || WORKFLOW_STATUS.queued;
   const terminal = ["completed", "failed", "cancelled"].includes(workflow.status);
+  const messageTypes = [...new Set(messages.map((m) => m.message_type))];
+  const visibleMessages = msgType === "all" ? messages : messages.filter((m) => m.message_type === msgType);
+  const plan = workflow.plan || null;
+  const planTaskByKey = new Map((plan?.tasks || []).map((t) => [t.key, t]));
 
   return <div className="wf-page">
     <div className="wf-header">
@@ -163,6 +168,26 @@ export function WorkflowDetail({ workflowId }) {
     </div>
 
     {view === "office" ? <AgentOffice workflow={workflow} team={team} tasks={tasks} messages={messages} onRenameAgent={setRenameMember} /> : <>
+    {plan && <section className="wf-card" aria-label="Kế hoạch đã duyệt" style={{ marginBottom: 14 }}>
+      <h2><ListTodo size={17} /> Kế hoạch đã duyệt</h2>
+      <p style={{ marginTop: 8 }}>{plan.summary}</p>
+      <div className="row" style={{ marginTop: 8 }}>
+        <span className="wf-badge medium">Độ phức tạp: {plan.complexity}</span>
+        <span className="wf-badge low">Đội hình: {plan.chosen_agent_count} Agent</span>
+        <span className="wf-badge medium">{(plan.tasks || []).length} task theo kế hoạch</span>
+      </div>
+      <div className="wf-plan-tasks" style={{ marginTop: 10 }}>
+        {(plan.tasks || []).map((t) => <article className="wf-plan-task" key={t.key}>
+          <p><b>{t.key} · {t.title}</b> <span className="wf-badge medium">{roleMeta(t.suggested_role).label}</span> <span className="wf-badge low">Wave {t.wave}</span>
+            {t.parallelizable && <span className="wf-badge low">Song song</span>}</p>
+          {t.depends_on?.length > 0 && <p style={{ fontSize: 12.5 }}>Phụ thuộc: {t.depends_on.map((k) => `${k} (${planTaskByKey.get(k)?.title || "?"})`).join(", ")}</p>}
+          {t.acceptance_criteria?.length > 0 && <p style={{ fontSize: 12.5 }}>Nghiệm thu: {t.acceptance_criteria.join("; ")}</p>}
+        </article>)}
+      </div>
+      {(plan.lineup || []).length > 0 && <p className="muted" style={{ fontSize: 12.5, marginTop: 8 }}>
+        Đội hình: {(plan.lineup || []).map((i) => `${roleMeta(i.role).label}: ${i.agent_name || "chưa có Agent"}`).join(" · ")}
+      </p>}
+    </section>}
     <div className="wf-agent-strip" aria-label="Agent tham gia">
       {members.map((m) => {
         const meta = roleMeta(m.role); const Icon = ROLE_ICONS[m.role] || Sparkles;
@@ -212,10 +237,14 @@ export function WorkflowDetail({ workflowId }) {
       <section className="wf-card wf-comm" aria-label="Communication Center">
         <div className="wf-comm-head"><h2><MessagesSquare size={17} /> Communication Center</h2>
           <span className="wf-live"><span className="wf-dot" style={{ background: workflow.status === "running" ? "#16a34a" : "#94a3b8" }} />{workflow.status === "running" ? "Live" : status.label}</span>
+          <label className="wf-switch">Lọc tin nhắn <select value={msgType} onChange={(e) => setMsgType(e.target.value)} aria-label="Lọc theo loại tin nhắn">
+            <option value="all">Tất cả</option>
+            {messageTypes.map((type) => <option key={type} value={type}>{type}</option>)}
+          </select></label>
           <label className="wf-switch">Auto Scroll <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} /></label>
         </div>
         <div className="wf-messages" ref={messagesRef}>
-          {messages.map((msg) => {
+          {visibleMessages.map((msg) => {
             const from = agentById.get(msg.from_agent_id);
             const role = msg.from_agent_id === "user" ? "member" : (from?.role || "coordinator");
             const meta = roleMeta(role); const Icon = ROLE_ICONS[role] || Sparkles;
@@ -230,7 +259,7 @@ export function WorkflowDetail({ workflowId }) {
                 <div className="wf-bubble" style={{ background: meta.soft }}>{msg.content}</div>
               </div></div>;
           })}
-          {!messages.length && <p className="wf-empty">Chưa có tin nhắn nào. Bấm Run Workflow để các Agent bắt đầu trao đổi thật.</p>}
+          {!visibleMessages.length && <p className="wf-empty">{messages.length ? "Không có tin nhắn nào thuộc loại đang lọc." : "Chưa có tin nhắn nào. Bấm Run Workflow để các Agent bắt đầu trao đổi thật."}</p>}
         </div>
         <p className="muted" style={{ fontSize: 12 }}>Tin nhắn hiển thị là dữ liệu thật từ Backend (MongoDB + SSE). Gửi yêu cầu mới bằng cách tạo workflow mới.</p>
       </section>
