@@ -18,6 +18,7 @@ from app.api.v1 import (
     providers,
     seed,
     workflows,
+    workspaces,
 )
 from app.core.config import Settings, get_settings
 from app.core.database import lifespan_mongo
@@ -120,6 +121,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         workflows.router,
         n8n_factory.router,
         seed.router,
+        workspaces.router,
     ):
         application.include_router(router, prefix="/api/v1")
     return application
