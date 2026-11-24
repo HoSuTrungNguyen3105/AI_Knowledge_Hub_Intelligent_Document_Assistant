@@ -1,0 +1,84 @@
+import { api } from "./api";
+
+const base = "/ai/projects";
+const projectPath = (id) => `${base}/${encodeURIComponent(id)}`;
+
+// Workforce projects: CRUD + AI analyses + team recommendations
+// (allocations). Cookie-authenticated and owner-scoped, like the rest.
+export const projectsService = {
+  async list(signal) {
+    const { data } = await api.get(base, { signal });
+    return data.projects;
+  },
+  async create(payload) {
+    const { data } = await api.post(base, payload);
+    return data;
+  },
+  async patch(id, payload) {
+    const { data } = await api.patch(projectPath(id), payload);
+    return data;
+  },
+  async remove(id) {
+    await api.delete(projectPath(id));
+  },
+  async analyses(id, signal) {
+    const { data } = await api.get(`${projectPath(id)}/analyses`, { signal });
+    return data.analyses;
+  },
+  async analyze(id, payload) {
+    // One LLM pass over the requirements; generous timeout on purpose.
+    const { data } = await api.post(`${projectPath(id)}/analyze`, payload, {
+      timeout: 180000,
+    });
+    return data;
+  },
+  async recommend(id, analysisId) {
+    const { data } = await api.post(`${projectPath(id)}/recommend`, {
+      analysis_id: analysisId || undefined,
+    });
+    return data;
+  },
+  async allocations(id, signal) {
+    const { data } = await api.get(`${projectPath(id)}/allocations`, { signal });
+    return data.allocations;
+  },
+  async reassign(id, allocationId, items) {
+    const { data } = await api.patch(
+      `${projectPath(id)}/allocations/${encodeURIComponent(allocationId)}`,
+      { items },
+    );
+    return data;
+  },
+  async decide(id, allocationId, decision) {
+    const { data } = await api.post(
+      `${projectPath(id)}/allocations/${encodeURIComponent(allocationId)}/decide`,
+      { decision },
+    );
+    return data;
+  },
+};
+
+const ERROR_MESSAGES = {
+  project_not_found: "Không tìm thấy dự án này.",
+  analysis_not_found: "Dự án chưa có bản phân tích nào.",
+  analysis_invalid_response:
+    "AI trả về nội dung không đọc được. Hãy thử model khác rồi phân tích lại.",
+  allocation_not_found: "Không tìm thấy bản đề xuất phân công này.",
+  allocation_hard_constraint:
+    "Nguồn lực này bị ràng buộc cứng với task (ví dụ AI bị cấm phạm vi của task) nên không gán được.",
+  allocation_already_decided: "Bản đề xuất này đã được duyệt hoặc từ chối rồi.",
+  resource_not_found: "Không tìm thấy nguồn lực này trong Workforce.",
+  credentials_missing: "Provider này chưa được cấu hình key. Hãy mở trang Providers trước.",
+  provider_disabled: "Provider này đang tắt. Hãy bật lại ở trang Providers.",
+  model_not_synced: "Model chưa được đồng bộ cho provider này.",
+  model_not_chat_capable: "Model này không hỗ trợ chat.",
+};
+
+export function getProjectError(error, fallback = "Đã xảy ra lỗi. Hãy thử lại.") {
+  const detail = error?.response?.data?.detail;
+  const code = typeof detail === "object" && detail !== null ? detail.code : null;
+  if (code && ERROR_MESSAGES[code]) return ERROR_MESSAGES[code];
+  if (typeof detail === "object" && detail !== null && detail.message) return detail.message;
+  if (typeof detail === "string" && detail) return detail;
+  return fallback;
+}
