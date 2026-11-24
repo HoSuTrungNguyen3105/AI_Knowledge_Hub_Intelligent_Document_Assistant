@@ -10,25 +10,55 @@ import { useLogout } from "../hooks/use-logout";
 import { initials } from "../utils/format";
 import { APP_NAME, APP_STAGE } from "../utils/app-config";
 
-const navigation = [
-  { href: "/dashboard", label: "Tổng quan", icon: LayoutDashboard },
-  { href: "/workspaces", label: "Workspaces", icon: Building2 },
-  { href: "/chat", label: "AI Chat", icon: MessagesSquare },
-  { href: "/compare", label: "Compare AI", icon: Columns2 },
-  { href: "/agents", label: "Agent Studio", icon: Bot },
-  { href: "/agents/teams", label: "Agent Teams", icon: Users },
-  { href: "/agents/workflows", label: "Workflows", icon: GitBranch },
-  { href: "/knowledge", label: "Kho kiến thức", icon: LibraryBig, upcoming: true },
-  { href: "/notes", label: "Ghi chú", icon: NotebookPen, upcoming: true },
-  { href: "/settings", label: "Cài đặt AI", icon: Settings2 },
+// Navigation grouped by purpose (NEXORA spec §8.2). Only pages that
+// really exist are listed; upcoming modules keep their marker dot.
+// The flat `navigation` list is derived for search + page titles.
+const navigationGroups = [
+  {
+    label: "Workspace",
+    items: [
+      { href: "/dashboard", label: "Tổng quan", icon: LayoutDashboard },
+      { href: "/workspaces", label: "Workspaces", icon: Building2 },
+    ],
+  },
+  {
+    label: "AI Management",
+    items: [
+      { href: "/agents", label: "Agent Studio", icon: Bot },
+      { href: "/agents/teams", label: "Agent Teams", icon: Users },
+      { href: "/chat", label: "AI Chat", icon: MessagesSquare },
+      { href: "/compare", label: "Compare AI", icon: Columns2 },
+    ],
+  },
+  {
+    label: "Automation",
+    items: [
+      { href: "/agents/workflows", label: "Workflows", icon: GitBranch },
+    ],
+  },
+  {
+    label: "Knowledge",
+    items: [
+      { href: "/knowledge", label: "Kho kiến thức", icon: LibraryBig, upcoming: true },
+      { href: "/notes", label: "Ghi chú", icon: NotebookPen, upcoming: true },
+    ],
+  },
+  {
+    label: "Administration",
+    items: [
+      { href: "/settings", label: "Cài đặt AI", icon: Settings2 },
+    ],
+  },
 ];
+
+const navigation = navigationGroups.flatMap((group) => group.items);
 
 const isActivePath = (pathname, href) => pathname === href || (href !== "/agents" && typeof pathname === "string" && pathname.startsWith(`${href}/`));
 
 function SidebarContent({ pathname, onNavigate, mobile = false }) {
   return <><div className="sidebar-brand"><Link href="/dashboard" onClick={onNavigate} aria-label={`${APP_NAME} — Tổng quan`}><Brand /></Link>{mobile && <button className="icon-button" onClick={onNavigate} aria-label="Đóng menu"><PanelLeftClose size={20} /></button>}</div>
     <div className="workspace-label"><span className="workspace-icon">K</span><div>Không gian cá nhân<small>Chỉ bạn có quyền truy cập</small></div></div>
-    <nav aria-label={mobile ? "Điều hướng trên điện thoại" : "Điều hướng chính"} className="main-nav">{navigation.map(({ href, label, icon: Icon, upcoming }) => <Link key={href} href={href} onClick={onNavigate} className={`nav-item ${isActivePath(pathname, href) ? "active" : ""}`} aria-current={isActivePath(pathname, href) ? "page" : undefined}><Icon size={19} strokeWidth={1.7} /><span>{label}</span>{upcoming && <span className="nav-dot" title="Giai đoạn tiếp theo" aria-label="Chưa triển khai" />}</Link>)}</nav>
+    <nav aria-label={mobile ? "Điều hướng trên điện thoại" : "Điều hướng chính"} className="main-nav">{navigationGroups.map((group) => <div className="nav-group" key={group.label}><p className="nav-group-label">{group.label}</p>{group.items.map(({ href, label, icon: Icon, upcoming }) => <Link key={href} href={href} onClick={onNavigate} className={`nav-item ${isActivePath(pathname, href) ? "active" : ""}`} aria-current={isActivePath(pathname, href) ? "page" : undefined}><Icon size={19} strokeWidth={1.7} /><span>{label}</span>{upcoming && <span className="nav-dot" title="Giai đoạn tiếp theo" aria-label="Chưa triển khai" />}</Link>)}</div>)}</nav>
     <div className="sidebar-bottom"><div className="build-note"><span className="status-dot" /><span>{APP_STAGE}</span></div><p>Nền tảng hôm nay.<br />Tri thức kết nối ngày mai.</p></div>
   </>;
 }

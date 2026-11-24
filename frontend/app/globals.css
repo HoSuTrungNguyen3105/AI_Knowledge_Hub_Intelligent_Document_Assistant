@@ -37,6 +37,9 @@ h3 { font-size: 14px; font-weight: 600; }
 .workspace-label small { display: block; font-size: 10px; font-weight: 400; color: #94a3b8; }
 .workspace-icon { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid rgb(255 255 255 / 18%); border-radius: 8px; color: #c4b5fd; }
 .main-nav { display: flex; flex-direction: column; gap: 5px; }
+.nav-group { display: flex; flex-direction: column; gap: 5px; margin-top: 16px; }
+.nav-group:first-child { margin-top: 0; }
+.nav-group-label { margin: 0; padding: 0 13px 2px; font-size: 10.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: #94a3b8; }
 .nav-item { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 10px 13px; border-radius: 10px; color: #94a3b8; font-size: 13px; }
 .nav-item:hover { background: rgb(255 255 255 / 7%); color: #fff; }
 .nav-item.active { color: #fff; background: var(--accent); font-weight: 600; }
