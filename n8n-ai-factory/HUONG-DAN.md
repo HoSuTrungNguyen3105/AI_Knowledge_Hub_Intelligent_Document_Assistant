@@ -2,7 +2,7 @@
 
 Thư mục `n8n-ai-factory/` này là hệ thống 10 AI Agent chạy bằng n8n, nằm
 **độc lập** với backend/frontend MindFlow: nó có Docker Compose, database
-PostgreSQL và service thực thi riêng. MindFlow không bị ảnh hưởng gì khi
+MongoDB và service thực thi riêng. MindFlow không bị ảnh hưởng gì khi
 bạn chạy hay tắt hệ thống này.
 
 Luồng hoạt động: bạn nhập yêu cầu → Project Manager chia việc → các Agent
@@ -31,7 +31,9 @@ notepad .env
 
 Trong file `.env` vừa tạo, điền:
 
-1. `POSTGRES_PASSWORD`: đặt một mật khẩu tuỳ ý.
+1. MongoDB: không cần đặt gì — compose tự chạy MongoDB không mật khẩu
+   (chỉ truy cập được trên máy bạn). Muốn xem dữ liệu thì mở MongoDB
+   Compass, kết nối `mongodb://localhost:27017`, database `ai_factory`.
 2. `HOST_WORKSPACES_DIR`: đường dẫn tuyệt đối của thư mục workspaces trên
    máy bạn. Nếu repo nằm ở
    `F:\Clone\clone-digotal_3\AI_Application\AI_Knowledge_Hub_Intelligent_Document_Assistant`
@@ -63,22 +65,20 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Lần đầu build vài phút. Đạt khi `postgres` healthy, `n8n` và
+Lần đầu build vài phút. Đạt khi `mongo`, `n8n` và
 `code-exec-service` đều Up. Kiểm tra nhanh: mở http://localhost:8080/health
 thấy `{"status":"ok"...}` là service thực thi đã sống.
 
 ## Bước 4 — Thiết lập n8n (làm 1 lần)
 
 1. Mở http://localhost:5678 → tạo tài khoản owner (chỉ dùng local).
-2. Tạo credential **Postgres**: menu **Credentials → New → Postgres**, đặt
-   tên đúng **`AI Factory Postgres`**, Host `postgres`, Port `5432`,
-   Database `ai_factory`, User `aifactory`, Password = mật khẩu bạn đặt ở
-   Bước 2. (Không cần tạo credential cho Groq/Ollama nữa — key đã nằm ở
-   `.env`.)
+2. **Không cần tạo credential nào trong n8n** — khoá provider đã nằm ở
+   `.env` (Bước 2), còn dữ liệu do service thực thi tự ghi vào MongoDB.
+   (Các workflow cũ dùng Postgres đã được thay toàn bộ; nếu n8n của bạn
+   còn import bản workflow cũ từ trước thì xoá đi và import lại bản mới.)
 3. Import workflow: menu **Workflows → ⋯ → Import from File**, import lần
    lượt 6 file trong thư mục `n8n-ai-factory\workflows\`. Mở từng workflow,
-   kiểm tra các node Postgres đã gắn credential `AI Factory Postgres`
-   (chưa gắn thì chọn lại theo tên), bấm **Save** rồi gạt **Active**.
+   bấm **Save** rồi gạt **Active**.
    **Phải Active cả 6 workflow** — thiếu một cái là hệ thống gọi tới sẽ 404.
 
 ## Bước 5 — Chạy thử (ví dụ website bán giày sneaker)
@@ -139,7 +139,7 @@ Cách dùng:
 
 1. Import thêm file `07-seven-agent-dynamic-routing.json` vào n8n (như
    Bước 4), bấm **Save** và gạt **Active**. Workflow này không cần
-   credential Postgres — chỉ cần key provider trong file `.env`
+   credential nào cả — chỉ cần key provider trong file `.env`
    (`GROQ_API_KEY` / `OLLAMA_API_KEY` đã điền ở Bước 2 là chạy được ngay).
 2. Gửi yêu cầu (PowerShell):
 
@@ -176,10 +176,10 @@ thứ tự phụ thuộc.
 |---|---|
 | Agent báo `missing_env_key` | `.env` chưa có key của provider đang chọn, hoặc chưa `docker compose up -d` lại sau khi sửa `.env` |
 | Webhook 404 | Chưa Active đủ 6 workflow, hoặc gọi sai path |
-| Node Postgres báo credential lỗi | Tên credential phải đúng `AI Factory Postgres`; chọn lại trong node rồi Save |
+| Dashboard báo `database_unavailable` / workflow lỗi ở node `(CES)` | MongoDB chưa lên: `docker compose ps` kiểm tra container `mongo`; xem `docker compose logs code-exec-service` |
 | Bước build báo `HOST_WORKSPACES_DIR is not configured` | Chưa điền biến này ở Bước 2, hoặc đường dẫn sai |
-| Agent báo `model_did_not_return_valid_json` | Model đó không tuân thủ JSON — đổi model cho Agent đó trên Dashboard/node Resolve Agent Config. Lượt lỗi vẫn lưu trong bảng `agent_runs` để xem lại |
-| Chạy lâu bất thường | Xem n8n → Executions để biết đang kẹt ở node nào; xem Dashboard/`agent_runs` để biết Agent nào đang chạy |
+| Agent báo `model_did_not_return_valid_json` | Model đó không tuân thủ JSON — đổi model cho Agent đó trên Dashboard/node Resolve Agent Config. Lượt lỗi vẫn lưu trong collection `agent_runs` (MongoDB) để xem lại |
+| Chạy lâu bất thường | Xem n8n → Executions để biết đang kẹt ở node nào; xem Dashboard hoặc collection `agent_runs` trong MongoDB để biết Agent nào đang chạy |
 
 Chi tiết kiến trúc, API của Code Execution Service và các giới hạn an
 toàn: xem **README.md** trong thư mục này.

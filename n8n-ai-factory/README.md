@@ -6,7 +6,7 @@ Backend Developer, Integration Agent, QA Engineer, Code Reviewer) phối hợp
 xây dựng website/module phần mềm qua **OpenRouter**, sinh code thật, chạy
 build/test trong **Docker sandbox** riêng, có vòng QA → sửa lỗi → review lại,
 và đóng gói **ZIP** để tải xuống. Trạng thái mọi Agent được lưu vào
-**PostgreSQL** và theo dõi qua Dashboard đi kèm.
+**MongoDB** (qua Code Execution Service) và theo dõi qua Dashboard đi kèm.
 
 ```
 Người dùng ──► Dashboard (:8080) ──► n8n Main Orchestrator (:5678)
@@ -19,7 +19,7 @@ Người dùng ──► Dashboard (:8080) ──► n8n Main Orchestrator (:567
                               Code Execution Service (Docker sandbox:
                               ghi file, npm install/lint/test/build, ZIP)
                                           │
-                                     PostgreSQL (projects, tasks,
+                                     MongoDB (projects, tasks,
                                      agent_runs, artifacts, qa_reviews)
 ```
 
@@ -39,7 +39,9 @@ cp .env.example .env
 
 Mở `.env` và đặt:
 
-- `POSTGRES_PASSWORD`: mật khẩu tuỳ ý.
+- MongoDB: compose tự chạy sẵn một container MongoDB không mật khẩu (chỉ
+  truy cập được trên máy bạn) — xem dữ liệu bằng MongoDB Compass tại
+  `mongodb://localhost:27017`, database `ai_factory`. Không cần đặt gì thêm.
 - `HOST_WORKSPACES_DIR`: **đường dẫn tuyệt đối trên máy host** của thư mục
   `ces-data/workspaces` trong thư mục dự án này. Ví dụ Windows:
   `C:/ai-agent-factory/ces-data/workspaces`; macOS/Linux:
@@ -50,7 +52,7 @@ Khởi động:
 
 ```bash
 docker compose up -d --build
-docker compose ps        # postgres healthy, n8n và code-exec-service up
+docker compose ps        # mongo, n8n và code-exec-service up
 ```
 
 - n8n: http://localhost:5678 (lần đầu tạo tài khoản owner).
@@ -72,16 +74,12 @@ từng Agent), hoặc trong node **Resolve Agent Config** của workflow Agent
 Execution (`DEFAULT_PROVIDER` và bảng `models` của từng Agent), hoặc ghi đè
 theo từng lần chạy bằng trường `providers` / `models` của request.
 
-Credential n8n duy nhất còn cần tạo (tham chiếu theo tên, sai tên là node
-báo lỗi ngay):
-
-- **AI Factory Postgres** — loại *Postgres*: Host `postgres`, Port `5432`,
-  Database / User / Password đúng các giá trị `POSTGRES_DB / POSTGRES_USER /
-  POSTGRES_PASSWORD` trong `.env`.
-
-Sau khi import (mục 4), mở từng workflow kiểm tra các node Postgres đã gắn
-đúng credential trên; nếu n8n báo credential chưa chọn thì chọn lại theo
-tên rồi lưu. Hướng dẫn từng bước bằng tiếng Việt: xem **HUONG-DAN.md**.
+Bản này **không cần tạo credential nào trong n8n**: khoá provider đọc từ
+`.env` như trên, còn dữ liệu (projects, tasks, agent_runs, qa_reviews,
+artifacts) do **Code Execution Service ghi vào MongoDB** qua API `/db/*`
+nội bộ — các workflow không chạm trực tiếp vào database, nên cũng không
+còn node Postgres nào trong workflow. Hướng dẫn từng bước bằng tiếng
+Việt: xem **HUONG-DAN.md**.
 
 ## 4. Import workflow vào n8n
 
@@ -220,7 +218,8 @@ các file đó.
 | `POST /projects/:id/run` `{steps}` | Chạy install/lint/test/build trong sandbox |
 | `POST /projects/:id/package` | Đóng ZIP (luôn loại `node_modules`, `.git`, `.env*`) |
 | `GET /projects/:id/download` | Tải ZIP |
-| `GET /api/projects`, `GET /api/projects/:id` | Trạng thái cho Dashboard (đọc PostgreSQL) |
+| `POST /db/projects`, `/db/projects/update`, `/db/tasks`, `/db/runs`, `/db/runs/update`, `/db/reviews`, `/db/artifacts` | Workflow ghi dữ liệu vào MongoDB (nội bộ) |
+| `GET /api/projects`, `GET /api/projects/:id` | Trạng thái cho Dashboard (đọc MongoDB) |
 
 Sandbox Docker cho mỗi bước chạy: container dùng một lần từ image
 `node:20-alpine`, `--memory 1g --cpus 2 --pids-limit 256`, timeout 300s,
@@ -237,7 +236,7 @@ mục riêng — service không cho truy cập chéo project khác.
 ## 11. Workflow 07 — 7 Agent tự chọn model theo task (Dynamic Model Routing)
 
 Theo đặc tả `ai-7-agent-dynamic-model-routing.md`: một workflow độc lập
-(không cần Postgres/Dashboard) với đúng **7 role logic** — AI Leader,
+(không cần database/Dashboard) với đúng **7 role logic** — AI Leader,
 AI Planner, AI Architect, AI Developer/Executor, AI Tester/Validator,
 AI Reviewer, AI Researcher — xử lý **đa lĩnh vực** (phần mềm, nghiên cứu,
 kinh doanh, marketing, giáo dục, văn phòng, sáng tạo), không ép mọi yêu
@@ -291,16 +290,17 @@ chạy **một execution tại một thời điểm**. Sinh lại JSON sau khi s
 - **`missing_env_key`**: file `.env` cạnh docker-compose chưa có khoá của provider đang chọn, hoặc đã sửa `.env` mà chưa `docker compose up -d` lại để n8n nhận biến mới.
 - **Webhook 404**: workflow chưa Active, hoặc sai path — kiểm tra cả 6
   workflow đã bật.
-- **Node Postgres/OpenRouter báo credential lỗi**: tên credential phải đúng
-  `AI Factory Postgres` và `OpenRouter API`; chọn lại credential trong node
-  rồi lưu workflow.
+- **Dashboard báo `database_unavailable` hoặc workflow lỗi ở node `(CES)`**:
+  MongoDB chưa lên hoặc Code Execution Service chưa nối được — kiểm tra
+  `docker compose ps` (container `mongo` phải Up) và
+  `docker compose logs code-exec-service`.
 - **Lỗi `HOST_WORKSPACES_DIR is not configured`** ở bước build: đặt biến này
   trong `.env` (đường dẫn host tuyệt đối) rồi `docker compose up -d` lại.
 - **Agent trả `model_did_not_return_valid_json`**: model đó không tuân thủ
   JSON — đổi model cho Agent đó trong node Resolve Agent Config hoặc qua
   Dashboard. Lượt chạy lỗi vẫn được lưu đầy đủ trong `agent_runs`.
 - **Chạy lâu**: bình thường — 10 Agent + build. Xem tiến độ ở Dashboard hoặc
-  bảng `agent_runs`; n8n Executions cho thấy node đang chạy.
+  collection `agent_runs` trong MongoDB; n8n Executions cho thấy node đang chạy.
 
 ## 10. Giới hạn trung thực
 

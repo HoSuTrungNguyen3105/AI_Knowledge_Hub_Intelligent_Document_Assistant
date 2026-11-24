@@ -12,8 +12,6 @@ import uuid
 OUT = os.environ.get("FACTORY_OUT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "workflows")
 os.makedirs(OUT, exist_ok=True)
 
-PG_CRED = {"postgres": {"id": None, "name": "AI Factory Postgres"}}
-OR_CRED = {"httpHeaderAuth": {"id": None, "name": "OpenRouter API"}}
 BASE = "={{ ($env.AI_FACTORY_BASE_URL || 'http://localhost:5678') + '/webhook/ai-factory/"
 CES = "={{ ($env.CODE_EXEC_URL || 'http://code-exec-service:8080')"
 
@@ -51,10 +49,10 @@ def http(name, url, body_expr, x, y, timeout=900000):
                  "options": {"timeout": timeout}}, x, y)
 
 
-def pg(name, query_expr, x, y):
-    return node(name, "n8n-nodes-base.postgres", 2.6,
-                {"operation": "executeQuery", "query": query_expr, "options": {}},
-                x, y, credentials=PG_CRED)
+def ces_db(name, path_suffix, body_expr, x, y):
+    """Persistence now goes through the Code Execution Service, which stores
+    everything in MongoDB (the user's stack) — no Postgres nodes remain."""
+    return http(name, CES + " + '" + path_suffix + "' }}", body_expr, x, y)
 
 
 def if_node(name, condition, x, y):
@@ -198,12 +196,13 @@ const userContent = [
   `Echo task_id="${taskId}" and project_id="${body.project_id}" in your JSON answer.`
 ].join('\n');
 """ + ESC_JS + r"""
-const isUuid = /^[0-9a-fA-F-]{36}$/.test(String(body.project_id || ''));
 const contextForDb = { task_description: body.task_description || '', input_context: body.input_context ?? {}, provider, model };
-const sql_insert = isUuid
-  ? `INSERT INTO agent_runs (project_id, task_id, agent_id, agent_name, model, status, input_context, started_at) VALUES (${esc(body.project_id)}::uuid, ${esc(taskId)}, ${esc(agentId)}, ${esc(cfg.name)}, ${esc(model)}, 'RUNNING', ${escJson(contextForDb)}, now()) RETURNING id`
-  : 'SELECT NULL AS id';
-return [{ json: { agent_id: agentId, agent_name: cfg.name, model, provider, api_url: prov.url, auth_header: 'Bearer ' + apiKey, task_id: taskId, project_id: body.project_id ?? null, system_prompt: systemPrompt, user_content: userContent, started_ms: Date.now(), sql_insert } }];
+const run_doc = {
+  project_id: body.project_id ?? null, task_id: taskId, agent_id: agentId, agent_name: cfg.name,
+  model, provider, status: 'RUNNING', input_context: contextForDb,
+  started_at: new Date().toISOString(), created_at: new Date().toISOString()
+};
+return [{ json: { agent_id: agentId, agent_name: cfg.name, model, provider, api_url: prov.url, auth_header: 'Bearer ' + apiKey, task_id: taskId, project_id: body.project_id ?? null, system_prompt: systemPrompt, user_content: userContent, started_ms: Date.now(), run_doc } }];
 """
 
 RESOLVE_JS = RESOLVE_JS.replace("__DEFAULT_PROVIDER__", os.environ.get("FACTORY_DEFAULT_PROVIDER", "openrouter"))
@@ -256,11 +255,17 @@ if (!content) {
   }
 }
 """ + ESC_JS + r"""
-const sql_update = meta.run_id
-  ? `UPDATE agent_runs SET status=${esc(status)}, output=${escJson(roleOutput)}, error=${esc(error)}, prompt_tokens=${usage.prompt_tokens ?? 'NULL'}, completion_tokens=${usage.completion_tokens ?? 'NULL'}, total_tokens=${usage.total_tokens ?? 'NULL'}, cost_usd=${usage.cost ?? 'NULL'}, duration_ms=${duration}, finished_at=now() WHERE id=${esc(meta.run_id)}::uuid`
-  : 'SELECT 1';
+const run_update = {
+  id: meta.run_id, task_id: meta.task_id,
+  set: {
+    status, output: roleOutput, error,
+    prompt_tokens: usage.prompt_tokens ?? null, completion_tokens: usage.completion_tokens ?? null,
+    total_tokens: usage.total_tokens ?? null, cost_usd: usage.cost ?? null,
+    duration_ms: duration, finished_at: new Date().toISOString()
+  }
+};
 return [{ json: {
-  sql_update,
+  run_update,
   response: {
     task_id: meta.task_id, project_id: meta.project_id, agent_id: meta.agent_id,
     status, output: roleOutput, error, artifacts: [],
@@ -284,7 +289,7 @@ def workflow_agent_execution():
         code("Resolve Agent Config", RESOLVE_JS, 500, 320),
         if_node("Config OK?", bool_cond("={{ !!$json.fatal }}"), 760, 320),
         respond("Respond — Fatal", "={{ JSON.stringify($json.fatal) }}", 1020, 520),
-        pg("Insert Run (Postgres)", "={{ $json.sql_insert }}", 1020, 220),
+        ces_db("Insert Run (CES)", "/db/runs", "={{ JSON.stringify($json.run_doc) }}", 1020, 220),
         code("Build Provider Request", BUILD_BODY_JS, 1280, 220),
         node("Provider Chat Completions", "n8n-nodes-base.httpRequest", 4.2,
              {"method": "POST", "url": "={{ $json.api_url }}",
@@ -298,16 +303,16 @@ def workflow_agent_execution():
              1540, 220, retryOnFail=True, maxTries=2,
              waitBetweenTries=5000, onError="continueRegularOutput"),
         code("Parse Result", PARSE_JS, 1800, 220),
-        pg("Update Run (Postgres)", "={{ $json.sql_update }}", 2060, 220),
+        ces_db("Update Run (CES)", "/db/runs/update", "={{ JSON.stringify($json.run_update) }}", 2060, 220),
         respond("Respond — Result", "={{ JSON.stringify($('Parse Result').first().json.response) }}", 2320, 220),
     ]
     conns = {}
     chain(conns, ["Webhook — Agent Execute", "Resolve Agent Config", "Config OK?"])
     link(conns, "Config OK?", "Respond — Fatal", output=0)       # fatal present → true
-    link(conns, "Config OK?", "Insert Run (Postgres)", output=1)  # ok → false
-    chain(conns, ["Insert Run (Postgres)", "Build Provider Request",
+    link(conns, "Config OK?", "Insert Run (CES)", output=1)  # ok → false
+    chain(conns, ["Insert Run (CES)", "Build Provider Request",
                   "Provider Chat Completions", "Parse Result",
-                  "Update Run (Postgres)", "Respond — Result"])
+                  "Update Run (CES)", "Respond — Result"])
     save("02-agent-execution.json", "AI Factory — Agent Execution", nodes, conns)
 
 
@@ -469,21 +474,21 @@ return [{ json: {
 } }];
 """
 
-ARTIFACTS_SQL_JS = ESC_JS + r"""
+ARTIFACTS_DOC_JS = r"""
 const merged = $('Merge Final Files').first().json;
 const stored = $input.first().json;
-let sql = 'SELECT 1';
 const written = (stored && stored.written) || [];
-if (written.length) {
-  const values = written.map(w => `(${esc(merged.project_id)}::uuid, 'source_file', ${esc(w.path)}, ${Number(w.size_bytes) || 0}, ${esc(w.sha256 || null)})`).join(',\n');
-  sql = `INSERT INTO artifacts (project_id, kind, path, size_bytes, sha256) VALUES ${values}`;
-}
-return [{ json: { sql, stored } }];
+const artifact_docs = written.map(w => ({
+  project_id: merged.project_id, kind: 'source_file', path: w.path,
+  size_bytes: Number(w.size_bytes) || 0, sha256: w.sha256 || null,
+  created_at: new Date().toISOString()
+}));
+return [{ json: { artifact_docs, stored } }];
 """
 
 CODEGEN_RESPONSE_JS = r"""
 const merged = $('Merge Final Files').first().json;
-const stored = $('Build Artifacts SQL').first().json.stored || {};
+const stored = $('Build Artifacts Docs').first().json.stored || {};
 return [{ json: { response: {
   project_id: merged.project_id,
   attempt: merged.attempt,
@@ -520,8 +525,8 @@ def workflow_codegen():
         code("Merge Final Files", MERGE_JS, 2060, 320),
         http("Store Files in CES", CES + " + '/projects/' + $json.project_id + '/files' }}",
              "={{ JSON.stringify($json.ces_body) }}", 2320, 320),
-        code("Build Artifacts SQL", ARTIFACTS_SQL_JS, 2580, 320),
-        pg("Insert Artifacts (Postgres)", "={{ $json.sql }}", 2840, 320),
+        code("Build Artifacts Docs", ARTIFACTS_DOC_JS, 2580, 320),
+        ces_db("Insert Artifacts (CES)", "/db/artifacts", "={{ JSON.stringify({ docs: $json.artifact_docs }) }}", 2840, 320),
         code("Build Response", CODEGEN_RESPONSE_JS, 3100, 320),
         respond("Respond — Codegen Result", "={{ JSON.stringify($json.response) }}", 3360, 320),
     ]
@@ -533,7 +538,7 @@ def workflow_codegen():
     link(conns, "Integration Enabled?", "Call Integration Agent", output=0)
     link(conns, "Integration Enabled?", "Merge Final Files", output=1)
     chain(conns, ["Call Integration Agent", "Merge Final Files", "Store Files in CES",
-                  "Build Artifacts SQL", "Insert Artifacts (Postgres)", "Build Response",
+                  "Build Artifacts Docs", "Insert Artifacts (CES)", "Build Response",
                   "Respond — Codegen Result"])
     save("04-code-generation.json", "AI Factory — Code Generation", nodes, conns)
 
@@ -604,9 +609,14 @@ if (!run.build_ok) {
   issues.push({ severity: 'critical', target_agent: 'frontend_developer', description: 'Build step failed in the sandbox — see build_results log tails.', file: '' });
 }
 const passed = Boolean(run.build_ok) && qa.verdict !== 'fail' && rev.verdict !== 'request_changes' && !issues.some(i => i.severity === 'critical');
-const sql = `INSERT INTO qa_reviews (project_id, attempt, build_ok, qa_verdict, reviewer_verdict, passed, issues, logs) VALUES (${esc(prep.project_id)}::uuid, ${Number(prep.attempt) || 0}, ${run.build_ok ? 'true' : 'false'}, ${esc(qa.verdict || null)}, ${esc(rev.verdict || null)}, ${passed ? 'true' : 'false'}, ${escJson(issues)}, ${escJson(run.results || [])})`;
+const review_doc = {
+  project_id: prep.project_id, attempt: Number(prep.attempt) || 0,
+  build_ok: Boolean(run.build_ok), qa_verdict: qa.verdict || null,
+  reviewer_verdict: rev.verdict || null, passed,
+  issues, logs: run.results || [], created_at: new Date().toISOString()
+};
 return [{ json: {
-  sql,
+  review_doc,
   response: {
     project_id: prep.project_id, attempt: prep.attempt, passed,
     build_ok: Boolean(run.build_ok),
@@ -635,14 +645,14 @@ def workflow_qa():
         http("Call Reviewer Agent", BASE + "agent-execute' }}",
              "={{ JSON.stringify($json.agent_call) }}", 1800, 320),
         code("Build Verdict", VERDICT_JS, 2060, 320),
-        pg("Insert QA Review (Postgres)", "={{ $json.sql }}", 2320, 320),
+        ces_db("Insert QA Review (CES)", "/db/reviews", "={{ JSON.stringify($json.review_doc) }}", 2320, 320),
         respond("Respond — QA Result",
                 "={{ JSON.stringify($('Build Verdict').first().json.response) }}", 2580, 320),
     ]
     conns = {}
     chain(conns, ["Webhook — QA Review", "Prepare QA Run", "Run Build & Tests (CES)",
                   "Build QA Call", "Call QA Agent", "Build Reviewer Call",
-                  "Call Reviewer Agent", "Build Verdict", "Insert QA Review (Postgres)",
+                  "Call Reviewer Agent", "Build Verdict", "Insert QA Review (CES)",
                   "Respond — QA Result"])
     save("05-qa-and-review.json", "AI Factory — QA and Review", nodes, conns)
 
@@ -661,12 +671,12 @@ return [{ json: {
 } }];
 """
 
-PKG_UPDATE_JS = ESC_JS + r"""
+PKG_UPDATE_JS = r"""
 const prep = $('Prepare Package').first().json;
 const pkg = $input.first().json;
-const sql = `UPDATE projects SET zip_url=${esc(pkg.download_url || null)}, updated_at=now() WHERE id=${esc(prep.project_id)}::uuid`;
+const project_update = { project_id: prep.project_id, set: { zip_url: pkg.download_url || null } };
 return [{ json: {
-  sql,
+  project_update,
   response: {
     project_id: prep.project_id,
     download_url: pkg.download_url || null,
@@ -688,13 +698,13 @@ def workflow_package():
         http("Package ZIP (CES)", "={{ $json.ces_url }}",
              "={{ JSON.stringify($json.ces_body) }}", 760, 320),
         code("Build Project Update", PKG_UPDATE_JS, 1020, 320),
-        pg("Update Project (Postgres)", "={{ $json.sql }}", 1280, 320),
+        ces_db("Update Project (CES)", "/db/projects/update", "={{ JSON.stringify($json.project_update) }}", 1280, 320),
         respond("Respond — Package Result",
                 "={{ JSON.stringify($('Build Project Update').first().json.response) }}", 1540, 320),
     ]
     conns = {}
     chain(conns, ["Webhook — Package", "Prepare Package", "Package ZIP (CES)",
-                  "Build Project Update", "Update Project (Postgres)",
+                  "Build Project Update", "Update Project (CES)",
                   "Respond — Package Result"])
     save("06-zip-packaging.json", "AI Factory — ZIP Packaging", nodes, conns)
 
@@ -723,15 +733,19 @@ return [{ json: {
 } }];
 """
 
-PROJECT_SQL_JS = ESC_JS + r"""
+PROJECT_DOC_JS = r"""
 const v = $input.first().json;
 const name = v.project_name || v.requirement.slice(0, 60);
-const sql = `INSERT INTO projects (name, mode, module_name, requirement, status, models) VALUES (${esc(name)}, ${esc(v.mode)}, ${esc(v.module_name)}, ${esc(v.requirement)}, 'RUNNING', ${escJson(v.models)}) RETURNING id, status, created_at`;
-return [{ json: { ...v, sql } }];
+const project_doc = {
+  name, mode: v.mode, module_name: v.module_name, requirement: v.requirement,
+  status: 'RUNNING', models: v.models, providers: v.providers,
+  created_at: new Date().toISOString()
+};
+return [{ json: { ...v, project_doc } }];
 """
 
 PM_CALL_JS = r"""
-const project = $('Create Project (Postgres)').first().json;
+const project = $('Create Project (CES)').first().json;
 const v = $('Validate Request').first().json;
 let existingFiles = [];
 try {
@@ -766,12 +780,12 @@ let needed = (Array.isArray(plan.agents_needed) && plan.agents_needed.length)
 if (v.mode === 'full') needed = [...ALL];
 for (const must of ['qa_engineer', 'code_reviewer']) if (!needed.includes(must)) needed.push(must);
 const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
-let taskSql = 'SELECT 1';
-if (tasks.length) {
-  const values = tasks.map(t => `(${esc(projectId)}::uuid, ${esc(t.task_key || '')}, ${esc(t.agent_id || '')}, ${esc(t.title || '')}, ${esc(t.description || '')}, 'PENDING', ${escJson(t.depends_on || [])})`).join(',\n');
-  taskSql = `INSERT INTO tasks (project_id, task_key, agent_id, title, description, status, depends_on) VALUES ${values}`;
-}
-return [{ json: { project_id: projectId, plan_summary: plan.summary || '', plan_tasks: tasks, agents_needed: needed, task_sql: taskSql } }];
+const task_docs = tasks.map(t => ({
+  project_id: projectId, task_key: t.task_key || '', agent_id: t.agent_id || '',
+  title: t.title || '', description: t.description || '', status: 'PENDING',
+  depends_on: t.depends_on || [], created_at: new Date().toISOString()
+}));
+return [{ json: { project_id: projectId, plan_summary: plan.summary || '', plan_tasks: tasks, agents_needed: needed, task_docs } }];
 """
 
 PHASE1_JS = r"""
@@ -890,9 +904,9 @@ const summary = {
   issues_remaining: fin.qa.issues || [],
   zip: { download_url: pkg.download_url || null, file_count: pkg.file_count ?? null, size_bytes: pkg.size_bytes ?? null }
 };
-const sql = `UPDATE projects SET status=${esc(fin.status)}, zip_url=${esc(pkg.download_url || null)}, summary=${escJson(summary)}, updated_at=now() WHERE id=${esc(fin.project_id)}::uuid`;
+const project_update = { project_id: fin.project_id, set: { status: fin.status, zip_url: pkg.download_url || null, summary } };
 return [{ json: {
-  sql,
+  project_update,
   response: {
     project_id: fin.project_id,
     status: fin.status,
@@ -918,14 +932,14 @@ def workflow_main():
                "Pipeline: PM → (BA ∥ UI/UX) → (FE Architect ∥ BE Architect) → Code Generation "
                "(devs ∥ → Integration → store) → QA & Review → fix loop (max 2 extra rounds) → ZIP.\n"
                "Sub-workflows are called over their webhooks — **activate all 6 workflows** and create the "
-               "credentials **OpenRouter API** and **AI Factory Postgres** before running.", 0, 40, 720, 200),
+               "no n8n credentials are needed — provider keys come from the environment (.env), and all data is stored in MongoDB via the Code Execution Service.", 0, 40, 720, 200),
         webhook("Webhook — Start", "ai-factory/start", px(0), 420),
         code("Validate Request", VALIDATE_JS, px(1), 420),
         if_node("Request Valid?", bool_cond("={{ $json.valid }}"), px(2), 420),
         respond("Respond — Invalid Request",
                 "={{ JSON.stringify({ error: 'invalid_request', details: $json.errors }) }}", px(2), 700),
-        code("Build Project SQL", PROJECT_SQL_JS, px(3), 420),
-        pg("Create Project (Postgres)", "={{ $json.sql }}", px(4), 420),
+        code("Build Project Doc", PROJECT_DOC_JS, px(3), 420),
+        ces_db("Create Project (CES)", "/db/projects", "={{ JSON.stringify($json.project_doc) }}", px(4), 420),
         if_node("Existing Project?",
                 {"id": nid(), "leftValue": "={{ $json.mode }}", "rightValue": "existing",
                  "operator": {"type": "string", "operation": "equals"}}, px(5), 420),
@@ -936,7 +950,7 @@ def workflow_main():
         http("Call Project Manager", BASE + "agent-execute' }}",
              "={{ JSON.stringify($json.agent_call) }}", px(7), 420),
         code("Parse Plan", PARSE_PLAN_JS, px(8), 420),
-        pg("Insert Tasks (Postgres)", "={{ $json.task_sql }}", px(9), 420),
+        ces_db("Insert Tasks (CES)", "/db/tasks", "={{ JSON.stringify({ docs: $json.task_docs }) }}", px(9), 420),
         code("Build Phase 1 Calls", PHASE1_JS, px(10), 420),
         http("Run Phase 1 — BA + UX", BASE + "parallel' }}",
              "={{ JSON.stringify($json.parallel_body) }}", px(11), 420),
@@ -958,20 +972,20 @@ def workflow_main():
         http("Package ZIP", BASE + "package' }}",
              "={{ JSON.stringify({ project_id: $json.project_id }) }}", px(19), 420),
         code("Build Final Update", FINAL_UPDATE_JS, px(20), 420),
-        pg("Update Project (Postgres)", "={{ $json.sql }}", px(21), 420),
+        ces_db("Update Project (CES)", "/db/projects/update", "={{ JSON.stringify($json.project_update) }}", px(21), 420),
         respond("Respond — Result",
                 "={{ JSON.stringify($('Build Final Update').first().json.response) }}", px(22), 420),
     ]
     conns = {}
     chain(conns, ["Webhook — Start", "Validate Request", "Request Valid?"])
     link(conns, "Request Valid?", "Respond — Invalid Request", output=1)
-    link(conns, "Request Valid?", "Build Project SQL", output=0)
-    chain(conns, ["Build Project SQL", "Create Project (Postgres)", "Existing Project?"])
+    link(conns, "Request Valid?", "Build Project Doc", output=0)
+    chain(conns, ["Build Project Doc", "Create Project (CES)", "Existing Project?"])
     link(conns, "Existing Project?", "Import Existing ZIP", output=0)
     link(conns, "Existing Project?", "Build PM Call", output=1)
     link(conns, "Import Existing ZIP", "Build PM Call")
     chain(conns, ["Build PM Call", "Call Project Manager", "Parse Plan",
-                  "Insert Tasks (Postgres)", "Build Phase 1 Calls", "Run Phase 1 — BA + UX",
+                  "Insert Tasks (CES)", "Build Phase 1 Calls", "Run Phase 1 — BA + UX",
                   "Build Phase 2 Calls", "Run Phase 2 — Architects", "Build Codegen Input",
                   "Run Code Generation", "Run QA & Review", "QA Passed?"])
     link(conns, "QA Passed?", "Final Summary", output=0)
@@ -980,7 +994,7 @@ def workflow_main():
     link(conns, "Fix Attempts Left?", "Final Summary", output=1)
     link(conns, "Build Fix Round", "Run Code Generation")
     chain(conns, ["Final Summary", "Package ZIP", "Build Final Update",
-                  "Update Project (Postgres)", "Respond — Result"])
+                  "Update Project (CES)", "Respond — Result"])
     save("01-main-orchestrator.json", "AI Factory — Main Orchestrator", nodes, conns)
 
 

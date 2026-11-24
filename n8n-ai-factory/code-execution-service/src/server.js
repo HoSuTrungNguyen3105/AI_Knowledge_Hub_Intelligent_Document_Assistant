@@ -31,7 +31,7 @@ const HOST_WORKSPACES_DIR = process.env.HOST_WORKSPACES_DIR || "";
 const SANDBOX_MODE = (process.env.SANDBOX_MODE || "docker").toLowerCase();
 const SANDBOX_IMAGE = process.env.SANDBOX_IMAGE || "node:20-alpine";
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
-const DATABASE_URL = process.env.DATABASE_URL || "";
+const MONGO_URL = process.env.MONGO_URL || "mongodb://localhost:27017/ai_factory";
 
 const MAX_FILES_PER_REQUEST = 200;
 const MAX_FILE_BYTES = 1_000_000;
@@ -45,14 +45,29 @@ const PROJECT_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
 const ALLOWED_DOTFILES = new Set([".gitignore", ".env.example", ".npmrc", ".editorconfig"]);
 const NEVER_PACKAGE = [/^node_modules\//, /^\.git\//, /(^|\/)\.env($|\.)(?!example)/, /\.log$/];
 
-let pgPool = null;
-if (DATABASE_URL) {
-  try {
-    const { Pool } = require("pg");
-    pgPool = new Pool({ connectionString: DATABASE_URL, max: 4 });
-  } catch (error) {
-    console.error("PostgreSQL pool disabled:", error.message);
+// MongoDB is connected lazily on first use: the service still starts and
+// serves workspaces/builds even while the database container is booting.
+let mongo = null;
+let mongoConnecting = null;
+async function db() {
+  if (mongo) return mongo;
+  if (!mongoConnecting) {
+    mongoConnecting = (async () => {
+      const { MongoClient, ObjectId } = require("mongodb");
+      const client = new MongoClient(MONGO_URL);
+      await client.connect();
+      const database = client.db();
+      await database.collection("projects").createIndex({ id: 1 }, { unique: true });
+      await database.collection("agent_runs").createIndex({ project_id: 1, created_at: 1 });
+      await database.collection("tasks").createIndex({ project_id: 1 });
+      await database.collection("qa_reviews").createIndex({ project_id: 1 });
+      await database.collection("artifacts").createIndex({ project_id: 1 });
+      mongo = { db: database, ObjectId };
+      console.log("MongoDB connected:", MONGO_URL.replace(/\/\/[^@]*@/, "//***@"));
+      return mongo;
+    })().catch((error) => { mongoConnecting = null; throw error; });
   }
+  return mongoConnecting;
 }
 
 const app = express();
@@ -302,42 +317,101 @@ app.get("/projects/:id/download", assertProjectId, async (req, res) => {
   return res.download(zipPath, `${req.params.id}.zip`);
 });
 
-// --- Read-only status API for the dashboard (PostgreSQL backed) ----------
-app.get("/api/projects", async (_req, res) => {
-  if (!pgPool) return res.status(503).json({ error: "database_not_configured" });
+// --- Persistence API used by the n8n workflows (MongoDB backed) ---------
+// The workflows never talk to the database directly: they POST documents
+// here and this service stores them in MongoDB (collections: projects,
+// tasks, agent_runs, qa_reviews, artifacts). Project ids are ObjectId hex
+// strings, also stored on each project document as its `id` field.
+function stripMongoId(doc) { if (doc) delete doc._id; return doc; }
+function dbError(res, error) {
+  return res.status(503).json({ error: "database_unavailable", detail: String(error.message).slice(0, 200) });
+}
+
+app.post("/db/projects", async (req, res) => {
   try {
-    const { rows } = await pgPool.query(
-      "SELECT id, name, mode, module_name, status, zip_url, created_at, updated_at FROM projects ORDER BY created_at DESC LIMIT 100"
-    );
-    return res.json({ projects: rows });
-  } catch (error) {
-    return res.status(503).json({ error: "database_unavailable", detail: String(error.message).slice(0, 200) });
-  }
+    const { db: database, ObjectId } = await db();
+    const _id = new ObjectId();
+    const doc = { ...(req.body || {}), _id, id: _id.toHexString() };
+    doc.created_at = doc.created_at || new Date().toISOString();
+    await database.collection("projects").insertOne(doc);
+    return res.json({ ok: true, id: doc.id, status: doc.status || "RUNNING",
+      created_at: doc.created_at, mode: doc.mode || null, module_name: doc.module_name || null });
+  } catch (error) { return dbError(res, error); }
+});
+
+app.post("/db/projects/update", async (req, res) => {
+  try {
+    const { db: database } = await db();
+    const set = { ...((req.body && req.body.set) || {}), updated_at: new Date().toISOString() };
+    const result = await database.collection("projects")
+      .updateOne({ id: String((req.body && req.body.project_id) || "") }, { $set: set });
+    return res.json({ ok: true, matched: result.matchedCount });
+  } catch (error) { return dbError(res, error); }
+});
+
+app.post("/db/tasks", async (req, res) => {
+  try {
+    const { db: database } = await db();
+    const docs = (req.body && Array.isArray(req.body.docs)) ? req.body.docs : [];
+    if (docs.length) await database.collection("tasks").insertMany(docs);
+    return res.json({ ok: true, inserted: docs.length });
+  } catch (error) { return dbError(res, error); }
+});
+
+app.post("/db/runs", async (req, res) => {
+  try {
+    const { db: database } = await db();
+    const result = await database.collection("agent_runs").insertOne({ ...(req.body || {}) });
+    return res.json({ ok: true, id: result.insertedId.toHexString() });
+  } catch (error) { return dbError(res, error); }
+});
+
+app.post("/db/runs/update", async (req, res) => {
+  try {
+    const { db: database, ObjectId } = await db();
+    const body = req.body || {};
+    const filter = (body.id && ObjectId.isValid(body.id)) ? { _id: new ObjectId(body.id) } : { task_id: body.task_id || "" };
+    const result = await database.collection("agent_runs").updateOne(filter, { $set: body.set || {} });
+    return res.json({ ok: true, matched: result.matchedCount });
+  } catch (error) { return dbError(res, error); }
+});
+
+app.post("/db/reviews", async (req, res) => {
+  try {
+    const { db: database } = await db();
+    const result = await database.collection("qa_reviews").insertOne({ ...(req.body || {}) });
+    return res.json({ ok: true, id: result.insertedId.toHexString() });
+  } catch (error) { return dbError(res, error); }
+});
+
+app.post("/db/artifacts", async (req, res) => {
+  try {
+    const { db: database } = await db();
+    const docs = (req.body && Array.isArray(req.body.docs)) ? req.body.docs : [];
+    if (docs.length) await database.collection("artifacts").insertMany(docs);
+    return res.json({ ok: true, inserted: docs.length });
+  } catch (error) { return dbError(res, error); }
+});
+
+// --- Read-only status API for the dashboard (MongoDB backed) -------------
+app.get("/api/projects", async (_req, res) => {
+  try {
+    const { db: database } = await db();
+    const rows = await database.collection("projects").find({}).sort({ created_at: -1 }).limit(100).toArray();
+    return res.json({ projects: rows.map(stripMongoId) });
+  } catch (error) { return dbError(res, error); }
 });
 
 app.get("/api/projects/:id", assertProjectId, async (req, res) => {
-  if (!pgPool) return res.status(503).json({ error: "database_not_configured" });
   try {
-    const project = await pgPool.query("SELECT * FROM projects WHERE id = $1", [req.params.id]);
-    if (!project.rows.length) return res.status(404).json({ error: "project_not_found" });
-    const runs = await pgPool.query(
-      `SELECT agent_id, agent_name, model, status, error, prompt_tokens, completion_tokens,
-              total_tokens, cost_usd, duration_ms, attempt, output, created_at
-         FROM agent_runs WHERE project_id = $1 ORDER BY created_at ASC`,
-      [req.params.id]
-    );
-    const tasks = await pgPool.query(
-      "SELECT task_key, agent_id, title, status FROM tasks WHERE project_id = $1 ORDER BY created_at ASC",
-      [req.params.id]
-    );
-    const qa = await pgPool.query(
-      "SELECT attempt, build_ok, qa_verdict, reviewer_verdict, passed, issues, created_at FROM qa_reviews WHERE project_id = $1 ORDER BY created_at ASC",
-      [req.params.id]
-    );
-    return res.json({ project: project.rows[0], agent_runs: runs.rows, tasks: tasks.rows, qa_reviews: qa.rows });
-  } catch (error) {
-    return res.status(503).json({ error: "database_unavailable", detail: String(error.message).slice(0, 200) });
-  }
+    const { db: database } = await db();
+    const project = await database.collection("projects").findOne({ id: req.params.id });
+    if (!project) return res.status(404).json({ error: "project_not_found" });
+    const runs = await database.collection("agent_runs").find({ project_id: req.params.id }).sort({ created_at: 1 }).toArray();
+    const tasks = await database.collection("tasks").find({ project_id: req.params.id }).sort({ created_at: 1 }).toArray();
+    const qa = await database.collection("qa_reviews").find({ project_id: req.params.id }).sort({ created_at: 1 }).toArray();
+    return res.json({ project: stripMongoId(project), agent_runs: runs.map(stripMongoId), tasks: tasks.map(stripMongoId), qa_reviews: qa.map(stripMongoId) });
+  } catch (error) { return dbError(res, error); }
 });
 
 async function start() {

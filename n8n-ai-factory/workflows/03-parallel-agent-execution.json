@@ -8,7 +8,7 @@
         "width": 560,
         "color": 4
       },
-      "id": "f12dc522-504a-4159-ad07-658099af1122",
+      "id": "5d5cb07a-ec17-4200-a271-912f22dd7ff4",
       "name": "Sticky Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -24,7 +24,7 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "90adc18e-e218-48a9-b401-27b2239e5c59",
+      "id": "6541aad7-44c8-4628-9db7-5d15257f9e5f",
       "name": "Webhook — Parallel Execute",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -32,13 +32,13 @@
         240,
         320
       ],
-      "webhookId": "ed4b349b-9f16-4a9b-b58e-7a439dbab6d6"
+      "webhookId": "0103d8b8-4576-4674-b6fd-784c9eadae55"
     },
     {
       "parameters": {
         "jsCode": "\nconst helpers = this.helpers;\nconst input = $input.first().json;\nconst body = input.body ?? input;\nconst calls = Array.isArray(body.calls) ? body.calls : [];\nconst base = ($env.AI_FACTORY_BASE_URL || 'http://localhost:5678').replace(/\\/$/, '');\nasync function runOne(call) {\n  try {\n    if (helpers && helpers.httpRequest) {\n      return await helpers.httpRequest({\n        method: 'POST', url: `${base}/webhook/ai-factory/agent-execute`,\n        body: call, json: true, timeout: 900000\n      });\n    }\n    const res = await fetch(`${base}/webhook/ai-factory/agent-execute`, {\n      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(call)\n    });\n    return await res.json();\n  } catch (e) {\n    return { task_id: call.task_id ?? null, project_id: call.project_id ?? null, agent_id: call.agent_id, status: 'FAILED', output: null, error: String((e && e.message) || e), artifacts: [] };\n  }\n}\nconst results = await Promise.all(calls.map(runOne));\nconst requiredPairs = calls.map((c, i) => ({ call: c, result: results[i] })).filter(p => p.call.required !== false);\nconst allOk = requiredPairs.every(p => p.result && p.result.status === 'COMPLETED');\nreturn [{ json: {\n  project_id: body.project_id ?? null,\n  phase: body.phase ?? null,\n  results,\n  all_required_completed: allOk,\n  failures: results.filter(r => !r || r.status !== 'COMPLETED').map(r => ({ agent_id: r && r.agent_id, error: r && r.error }))\n} }];\n"
       },
-      "id": "2d902e28-2862-4e21-8db0-34dffbf6ab25",
+      "id": "03d0f256-5ec7-43d3-a98d-86fd716f6bec",
       "name": "Run Calls In Parallel",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -53,7 +53,7 @@
         "responseBody": "={{ JSON.stringify($json) }}",
         "options": {}
       },
-      "id": "2f840ed0-145b-4779-9438-9cb49e464718",
+      "id": "ed50ba23-a94d-400d-9bad-e280a8e3568a",
       "name": "Respond — Parallel Results",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,

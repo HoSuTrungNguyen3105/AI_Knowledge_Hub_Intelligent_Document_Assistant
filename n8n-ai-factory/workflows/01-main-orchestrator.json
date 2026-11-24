@@ -3,12 +3,12 @@
   "nodes": [
     {
       "parameters": {
-        "content": "## Main Orchestrator — AI Agent Factory\nPOST /webhook/ai-factory/start with {mode: full|module|existing, requirement, module_name?, project_name?, models?, existing_zip_base64?}.\n\nPipeline: PM → (BA ∥ UI/UX) → (FE Architect ∥ BE Architect) → Code Generation (devs ∥ → Integration → store) → QA & Review → fix loop (max 2 extra rounds) → ZIP.\nSub-workflows are called over their webhooks — **activate all 6 workflows** and create the credentials **OpenRouter API** and **AI Factory Postgres** before running.",
+        "content": "## Main Orchestrator — AI Agent Factory\nPOST /webhook/ai-factory/start with {mode: full|module|existing, requirement, module_name?, project_name?, models?, existing_zip_base64?}.\n\nPipeline: PM → (BA ∥ UI/UX) → (FE Architect ∥ BE Architect) → Code Generation (devs ∥ → Integration → store) → QA & Review → fix loop (max 2 extra rounds) → ZIP.\nSub-workflows are called over their webhooks — **activate all 6 workflows** and create the no n8n credentials are needed — provider keys come from the environment (.env), and all data is stored in MongoDB via the Code Execution Service.",
         "height": 200,
         "width": 720,
         "color": 4
       },
-      "id": "b040be0a-6d9c-4fc7-a2a4-dbe709a69e0d",
+      "id": "87617540-e215-4bf3-a2e2-ca6f04f3e1b4",
       "name": "Sticky Note",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -24,7 +24,7 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "c5fcc9fc-cd01-464b-8316-1d90b49a67d1",
+      "id": "98b28502-8eb2-436e-89ae-cab08cd30c24",
       "name": "Webhook — Start",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -32,13 +32,13 @@
         240,
         420
       ],
-      "webhookId": "d1224d44-47fa-4b02-afa7-bafec5890b61"
+      "webhookId": "54f5a808-427a-4628-ba12-849e39682df3"
     },
     {
       "parameters": {
         "jsCode": "\nconst input = $input.first().json;\nconst body = input.body ?? input;\nconst mode = ['full', 'module', 'existing'].includes(body.mode) ? body.mode : null;\nconst requirement = typeof body.requirement === 'string' ? body.requirement.trim() : '';\nconst errors = [];\nif (!mode) errors.push('mode must be one of: full, module, existing');\nif (!requirement) errors.push('requirement is required');\nif (mode === 'module' && !String(body.module_name || '').trim()) errors.push('module_name is required for mode=module');\nif (mode === 'existing' && !body.existing_zip_base64) errors.push('existing_zip_base64 is required for mode=existing');\nreturn [{ json: {\n  valid: errors.length === 0, errors,\n  mode, requirement,\n  module_name: body.module_name || null,\n  project_name: body.project_name || null,\n  models: body.models || {},\n  providers: body.providers || {},\n  existing_zip_base64: body.existing_zip_base64 || null\n} }];\n"
       },
-      "id": "a29936a3-50cb-4437-a192-0207d6e3dedd",
+      "id": "540c0a81-c3fc-4abe-84fb-809796d288c4",
       "name": "Validate Request",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -57,7 +57,7 @@
           },
           "conditions": [
             {
-              "id": "1e7ecd7d-9876-42ee-8dea-34d8057e22f5",
+              "id": "07ae8baa-9267-408c-9e7c-534631a4a66b",
               "leftValue": "={{ $json.valid }}",
               "operator": {
                 "type": "boolean",
@@ -70,7 +70,7 @@
         },
         "options": {}
       },
-      "id": "35f1b468-43d4-43b2-a8b2-431b4c49beed",
+      "id": "99e5a255-49a6-4f40-bcf9-c7a4a62d131c",
       "name": "Request Valid?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -85,7 +85,7 @@
         "responseBody": "={{ JSON.stringify({ error: 'invalid_request', details: $json.errors }) }}",
         "options": {}
       },
-      "id": "c626a5a9-4d41-42df-b80e-36a1de8fc882",
+      "id": "abc4ab61-f236-4394-934a-d706369f43d0",
       "name": "Respond — Invalid Request",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
@@ -96,10 +96,10 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst esc = (v) => (v === null || v === undefined) ? 'NULL' : `'${String(v).replace(/'/g, \"''\")}'`;\nconst escJson = (v) => (v === null || v === undefined) ? 'NULL' : `'${JSON.stringify(v).replace(/'/g, \"''\")}'::jsonb`;\n\nconst v = $input.first().json;\nconst name = v.project_name || v.requirement.slice(0, 60);\nconst sql = `INSERT INTO projects (name, mode, module_name, requirement, status, models) VALUES (${esc(name)}, ${esc(v.mode)}, ${esc(v.module_name)}, ${esc(v.requirement)}, 'RUNNING', ${escJson(v.models)}) RETURNING id, status, created_at`;\nreturn [{ json: { ...v, sql } }];\n"
+        "jsCode": "\nconst v = $input.first().json;\nconst name = v.project_name || v.requirement.slice(0, 60);\nconst project_doc = {\n  name, mode: v.mode, module_name: v.module_name, requirement: v.requirement,\n  status: 'RUNNING', models: v.models, providers: v.providers,\n  created_at: new Date().toISOString()\n};\nreturn [{ json: { ...v, project_doc } }];\n"
       },
-      "id": "5e8fcc7a-f062-4c8e-98f3-6a7d6dd868a5",
-      "name": "Build Project SQL",
+      "id": "bf75fcd1-7a59-43db-b796-e422ce8a195e",
+      "name": "Build Project Doc",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -109,24 +109,24 @@
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "={{ $json.sql }}",
-        "options": {}
+        "method": "POST",
+        "url": "={{ ($env.CODE_EXEC_URL || 'http://code-exec-service:8080') + '/db/projects' }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.project_doc) }}",
+        "options": {
+          "timeout": 900000
+        }
       },
-      "id": "254a07df-93b4-4585-aa73-9be3f01053d8",
-      "name": "Create Project (Postgres)",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
+      "id": "23e23ebc-90f4-40d5-9106-c0808a221270",
+      "name": "Create Project (CES)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         1360,
         420
-      ],
-      "credentials": {
-        "postgres": {
-          "id": null,
-          "name": "AI Factory Postgres"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -138,7 +138,7 @@
           },
           "conditions": [
             {
-              "id": "793ea44e-ac72-4e92-ae39-da9ba4de4ab7",
+              "id": "89e4933b-4ef2-43ea-a8ad-3650ea379379",
               "leftValue": "={{ $json.mode }}",
               "rightValue": "existing",
               "operator": {
@@ -151,7 +151,7 @@
         },
         "options": {}
       },
-      "id": "12111caa-d6aa-4fdb-999e-a8564ec4dcba",
+      "id": "9b04ee4c-2a35-4032-9d0e-ddda98c9fd42",
       "name": "Existing Project?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -172,7 +172,7 @@
           "timeout": 900000
         }
       },
-      "id": "a8b6691d-5c79-4475-8e71-a91422b75c09",
+      "id": "6a325866-6c74-47ab-bb1e-2463054c933e",
       "name": "Import Existing ZIP",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -183,9 +183,9 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst project = $('Create Project (Postgres)').first().json;\nconst v = $('Validate Request').first().json;\nlet existingFiles = [];\ntry {\n  const imp = $('Import Existing ZIP').first().json;\n  existingFiles = (imp.written || []).map(w => w.path);\n} catch { existingFiles = []; }\nconst modeNotes = {\n  full: 'Plan the COMPLETE website described below: every page, feature and component. The plan must cover analysis, UX design, frontend and backend architecture, development, integration, QA and review.',\n  module: `Plan ONLY the module \"${v.module_name}\" of a larger product: just the agents and tasks this module needs.`,\n  existing: 'The user uploaded an EXISTING project (its file tree is in the context). Plan the minimal, surgical set of changes that satisfies the requirement. Never plan to delete or rewrite files outside the task scope.'\n};\nconst agentCall = {\n  project_id: project.id,\n  task_id: `${project.id}-pm`,\n  agent_id: 'project_manager',\n  task_description: `${modeNotes[v.mode]}\\n\\nUSER REQUIREMENT:\\n${v.requirement}`,\n  input_context: { mode: v.mode, module_name: v.module_name, requirement: v.requirement, existing_files: existingFiles },\n  models: v.models,\n  providers: v.providers\n};\nreturn [{ json: { project_id: project.id, agent_call: agentCall } }];\n"
+        "jsCode": "\nconst project = $('Create Project (CES)').first().json;\nconst v = $('Validate Request').first().json;\nlet existingFiles = [];\ntry {\n  const imp = $('Import Existing ZIP').first().json;\n  existingFiles = (imp.written || []).map(w => w.path);\n} catch { existingFiles = []; }\nconst modeNotes = {\n  full: 'Plan the COMPLETE website described below: every page, feature and component. The plan must cover analysis, UX design, frontend and backend architecture, development, integration, QA and review.',\n  module: `Plan ONLY the module \"${v.module_name}\" of a larger product: just the agents and tasks this module needs.`,\n  existing: 'The user uploaded an EXISTING project (its file tree is in the context). Plan the minimal, surgical set of changes that satisfies the requirement. Never plan to delete or rewrite files outside the task scope.'\n};\nconst agentCall = {\n  project_id: project.id,\n  task_id: `${project.id}-pm`,\n  agent_id: 'project_manager',\n  task_description: `${modeNotes[v.mode]}\\n\\nUSER REQUIREMENT:\\n${v.requirement}`,\n  input_context: { mode: v.mode, module_name: v.module_name, requirement: v.requirement, existing_files: existingFiles },\n  models: v.models,\n  providers: v.providers\n};\nreturn [{ json: { project_id: project.id, agent_call: agentCall } }];\n"
       },
-      "id": "e1fdbe4a-098d-4dcf-b795-716df1f80bf5",
+      "id": "ade5a738-137f-4181-a797-0e172d5d6ff8",
       "name": "Build PM Call",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -206,7 +206,7 @@
           "timeout": 900000
         }
       },
-      "id": "a8975715-f72c-4637-9845-2783bc67bd69",
+      "id": "0400c0d8-d6c3-436f-8038-6b7afa0fdeda",
       "name": "Call Project Manager",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -217,9 +217,9 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst esc = (v) => (v === null || v === undefined) ? 'NULL' : `'${String(v).replace(/'/g, \"''\")}'`;\nconst escJson = (v) => (v === null || v === undefined) ? 'NULL' : `'${JSON.stringify(v).replace(/'/g, \"''\")}'::jsonb`;\n\nconst pm = $input.first().json;\nconst plan = (pm && pm.output) || {};\nconst projectId = $('Build PM Call').first().json.project_id;\nconst v = $('Validate Request').first().json;\nconst ALL = ['project_manager', 'business_analyst', 'ui_ux_designer', 'frontend_architect', 'frontend_developer', 'backend_architect', 'backend_developer', 'integration_agent', 'qa_engineer', 'code_reviewer'];\nlet needed = (Array.isArray(plan.agents_needed) && plan.agents_needed.length)\n  ? plan.agents_needed.filter(a => ALL.includes(a)) : [...ALL];\nif (v.mode === 'full') needed = [...ALL];\nfor (const must of ['qa_engineer', 'code_reviewer']) if (!needed.includes(must)) needed.push(must);\nconst tasks = Array.isArray(plan.tasks) ? plan.tasks : [];\nlet taskSql = 'SELECT 1';\nif (tasks.length) {\n  const values = tasks.map(t => `(${esc(projectId)}::uuid, ${esc(t.task_key || '')}, ${esc(t.agent_id || '')}, ${esc(t.title || '')}, ${esc(t.description || '')}, 'PENDING', ${escJson(t.depends_on || [])})`).join(',\\n');\n  taskSql = `INSERT INTO tasks (project_id, task_key, agent_id, title, description, status, depends_on) VALUES ${values}`;\n}\nreturn [{ json: { project_id: projectId, plan_summary: plan.summary || '', plan_tasks: tasks, agents_needed: needed, task_sql: taskSql } }];\n"
+        "jsCode": "\nconst esc = (v) => (v === null || v === undefined) ? 'NULL' : `'${String(v).replace(/'/g, \"''\")}'`;\nconst escJson = (v) => (v === null || v === undefined) ? 'NULL' : `'${JSON.stringify(v).replace(/'/g, \"''\")}'::jsonb`;\n\nconst pm = $input.first().json;\nconst plan = (pm && pm.output) || {};\nconst projectId = $('Build PM Call').first().json.project_id;\nconst v = $('Validate Request').first().json;\nconst ALL = ['project_manager', 'business_analyst', 'ui_ux_designer', 'frontend_architect', 'frontend_developer', 'backend_architect', 'backend_developer', 'integration_agent', 'qa_engineer', 'code_reviewer'];\nlet needed = (Array.isArray(plan.agents_needed) && plan.agents_needed.length)\n  ? plan.agents_needed.filter(a => ALL.includes(a)) : [...ALL];\nif (v.mode === 'full') needed = [...ALL];\nfor (const must of ['qa_engineer', 'code_reviewer']) if (!needed.includes(must)) needed.push(must);\nconst tasks = Array.isArray(plan.tasks) ? plan.tasks : [];\nconst task_docs = tasks.map(t => ({\n  project_id: projectId, task_key: t.task_key || '', agent_id: t.agent_id || '',\n  title: t.title || '', description: t.description || '', status: 'PENDING',\n  depends_on: t.depends_on || [], created_at: new Date().toISOString()\n}));\nreturn [{ json: { project_id: projectId, plan_summary: plan.summary || '', plan_tasks: tasks, agents_needed: needed, task_docs } }];\n"
       },
-      "id": "d8606924-f7b4-4480-89b2-af94d9f0bff3",
+      "id": "de1e0f01-a8f8-4a41-aa32-c72f3b18cd96",
       "name": "Parse Plan",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -230,30 +230,30 @@
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "={{ $json.task_sql }}",
-        "options": {}
+        "method": "POST",
+        "url": "={{ ($env.CODE_EXEC_URL || 'http://code-exec-service:8080') + '/db/tasks' }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ docs: $json.task_docs }) }}",
+        "options": {
+          "timeout": 900000
+        }
       },
-      "id": "13c07493-d910-4483-8cda-c802760db274",
-      "name": "Insert Tasks (Postgres)",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
+      "id": "17162699-72b8-4f1f-936d-44fd1cff15a4",
+      "name": "Insert Tasks (CES)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         2760,
         420
-      ],
-      "credentials": {
-        "postgres": {
-          "id": null,
-          "name": "AI Factory Postgres"
-        }
-      }
+      ]
     },
     {
       "parameters": {
         "jsCode": "\nconst plan = $('Parse Plan').first().json;\nconst v = $('Validate Request').first().json;\nconst pm = $('Call Project Manager').first().json;\nconst DESCRIPTIONS = {\n  business_analyst: 'Analyse the requirement and the PM plan: produce features, user stories and acceptance criteria.',\n  ui_ux_designer: 'Design the sitemap, every page structure, the shared components and the complete design system for this project.'\n};\nconst wanted = ['business_analyst', 'ui_ux_designer'].filter(a => plan.agents_needed.includes(a));\nconst calls = wanted.map(a => ({\n  project_id: plan.project_id,\n  task_id: `${plan.project_id}-${a}`,\n  agent_id: a,\n  task_description: DESCRIPTIONS[a],\n  input_context: { requirement: v.requirement, mode: v.mode, module_name: v.module_name, pm_plan: pm.output || {} },\n  models: v.models,\n  providers: v.providers,\n  required: true\n}));\nreturn [{ json: { project_id: plan.project_id, parallel_body: { project_id: plan.project_id, phase: 'analysis_design', calls } } }];\n"
       },
-      "id": "37d818e3-ec52-4d33-933d-76bf4db22e25",
+      "id": "27f7afcd-d09f-40db-96ef-1201b46a1535",
       "name": "Build Phase 1 Calls",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -274,7 +274,7 @@
           "timeout": 900000
         }
       },
-      "id": "d8afead7-79c4-4741-9956-0274b2440754",
+      "id": "06c1997f-09db-47a1-a16d-a7439b9f2398",
       "name": "Run Phase 1 — BA + UX",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -287,7 +287,7 @@
       "parameters": {
         "jsCode": "\nconst plan = $('Parse Plan').first().json;\nconst v = $('Validate Request').first().json;\nconst pm = $('Call Project Manager').first().json;\nconst phase1 = $input.first().json;\nconst byAgent = {};\nfor (const r of phase1.results || []) byAgent[r.agent_id] = r.output || null;\nconst DESCRIPTIONS = {\n  frontend_architect: 'Define the complete frontend architecture (Vite + React + Tailwind): folder structure, routes, components with props, state management — following the design system in your context.',\n  backend_architect: 'Design the backend architecture: folder structure, database schema, the full REST API contract and the auth approach. If this project needs no backend, state that clearly.'\n};\nconst CONTEXTS = {\n  frontend_architect: { requirement: v.requirement, business: byAgent.business_analyst, design: byAgent.ui_ux_designer, pm_plan: pm.output || {} },\n  backend_architect: { requirement: v.requirement, business: byAgent.business_analyst, design_summary: byAgent.ui_ux_designer ? byAgent.ui_ux_designer.design_system : null, pm_plan: pm.output || {} }\n};\nconst wanted = ['frontend_architect', 'backend_architect'].filter(a => plan.agents_needed.includes(a));\nconst calls = wanted.map(a => ({\n  project_id: plan.project_id,\n  task_id: `${plan.project_id}-${a}`,\n  agent_id: a,\n  task_description: DESCRIPTIONS[a],\n  input_context: CONTEXTS[a],\n  models: v.models,\n  providers: v.providers,\n  required: true\n}));\nreturn [{ json: { project_id: plan.project_id, phase1_by_agent: byAgent, parallel_body: { project_id: plan.project_id, phase: 'architecture', calls } } }];\n"
       },
-      "id": "e0fd3c7c-55f1-42a0-b83b-9a658d9a8c16",
+      "id": "47f1065a-7c19-4849-bc5b-4163d44371f4",
       "name": "Build Phase 2 Calls",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -308,7 +308,7 @@
           "timeout": 900000
         }
       },
-      "id": "e001d54f-f8b2-463d-a92b-dcbe9d0c4101",
+      "id": "96feb449-57e4-4be7-89a4-50485fb9d517",
       "name": "Run Phase 2 — Architects",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -321,7 +321,7 @@
       "parameters": {
         "jsCode": "\nconst plan = $('Parse Plan').first().json;\nconst v = $('Validate Request').first().json;\nconst pm = $('Call Project Manager').first().json;\nconst phase2 = $input.first().json;\nconst byAgent = {};\nconst phase1 = $('Run Phase 1 — BA + UX').first().json;\nfor (const r of phase1.results || []) byAgent[r.agent_id] = r.output || null;\nfor (const r of phase2.results || []) byAgent[r.agent_id] = r.output || null;\nconst devs = ['frontend_developer', 'backend_developer'].filter(a => plan.agents_needed.includes(a));\nconst codegen_input = {\n  project_id: plan.project_id,\n  mode: v.mode,\n  module_name: v.module_name,\n  attempt: 0,\n  agents: devs,\n  with_integration: plan.agents_needed.includes('integration_agent'),\n  providers: v.providers,\n  models: v.models,\n  spec: {\n    requirement: v.requirement,\n    business: byAgent.business_analyst || null,\n    design: byAgent.ui_ux_designer || null,\n    frontend_arch: byAgent.frontend_architect || null,\n    backend_arch: byAgent.backend_architect || null,\n    pm_plan: pm.output || {}\n  }\n};\nreturn [{ json: { project_id: plan.project_id, codegen_input } }];\n"
       },
-      "id": "fb060a58-f9ea-4525-bfec-601b966c5f05",
+      "id": "41a5d210-12f3-42bb-baeb-ec952e491907",
       "name": "Build Codegen Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -342,7 +342,7 @@
           "timeout": 900000
         }
       },
-      "id": "01fdacda-36e9-4e45-aed3-7c47c36d6c14",
+      "id": "565b1300-d605-4139-9005-f6992c437579",
       "name": "Run Code Generation",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -363,7 +363,7 @@
           "timeout": 1500000
         }
       },
-      "id": "546d4fa8-111b-4f7c-97d6-cddf26051c97",
+      "id": "32e2ac87-6335-4cab-96a1-06661ff6aa49",
       "name": "Run QA & Review",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -382,7 +382,7 @@
           },
           "conditions": [
             {
-              "id": "9f455e20-0a26-4ae0-ae65-52497c758537",
+              "id": "fc2db240-192b-4406-be16-80b7786d1c26",
               "leftValue": "={{ $json.passed }}",
               "operator": {
                 "type": "boolean",
@@ -395,7 +395,7 @@
         },
         "options": {}
       },
-      "id": "dd5d2cde-fa0a-4e86-97b9-2224dcf1d25f",
+      "id": "5817ad13-602b-4d8f-b40d-144dedfec412",
       "name": "QA Passed?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -414,7 +414,7 @@
           },
           "conditions": [
             {
-              "id": "9cf53662-2965-4066-a9f7-4586bbb5fa5b",
+              "id": "eaa452cd-9e7c-4701-a200-9de7aa3ff786",
               "leftValue": "={{ $json.attempt }}",
               "rightValue": 2,
               "operator": {
@@ -427,7 +427,7 @@
         },
         "options": {}
       },
-      "id": "5e5d25e1-57ba-4edc-a2ff-135e9afb725d",
+      "id": "9013fd93-eccd-474f-9edf-55153753e5b3",
       "name": "Fix Attempts Left?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
@@ -440,7 +440,7 @@
       "parameters": {
         "jsCode": "\nconst qa = $input.first().json;\nconst plan = $('Parse Plan').first().json;\nconst base = $('Build Codegen Input').first().json.codegen_input;\nconst targets = [...new Set((qa.issues || []).map(i => i.target_agent).filter(a => ['frontend_developer', 'backend_developer'].includes(a)))];\nconst codegen_input = {\n  ...base,\n  mode: 'fix',\n  attempt: (qa.attempt ?? 0) + 1,\n  agents: targets.length ? targets : base.agents,\n  issues: qa.issues || []\n};\nreturn [{ json: { project_id: plan.project_id, codegen_input } }];\n"
       },
-      "id": "c5fcd1e0-bced-413b-accb-183f22f3c2b4",
+      "id": "96e2da43-93ab-4717-ae8f-110014c95e89",
       "name": "Build Fix Round",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -453,7 +453,7 @@
       "parameters": {
         "jsCode": "\nconst qa = $input.first().json;\nconst plan = $('Parse Plan').first().json;\nreturn [{ json: {\n  project_id: plan.project_id,\n  status: qa.passed ? 'COMPLETED' : 'COMPLETED_WITH_ISSUES',\n  qa\n} }];\n"
       },
-      "id": "4435d5c8-bfe5-46a5-9f95-0dd5bd50c548",
+      "id": "125d90c9-bdd4-46df-b8d5-618fee5caa92",
       "name": "Final Summary",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -474,7 +474,7 @@
           "timeout": 900000
         }
       },
-      "id": "a67d9eb1-2220-445f-96fe-a78afbfef082",
+      "id": "3f48bf9c-b9c5-4385-b69d-adfa14b714e2",
       "name": "Package ZIP",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -485,9 +485,9 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst esc = (v) => (v === null || v === undefined) ? 'NULL' : `'${String(v).replace(/'/g, \"''\")}'`;\nconst escJson = (v) => (v === null || v === undefined) ? 'NULL' : `'${JSON.stringify(v).replace(/'/g, \"''\")}'::jsonb`;\n\nconst pkg = $input.first().json;\nconst fin = $('Final Summary').first().json;\nconst summary = {\n  qa_passed: fin.qa.passed ?? null,\n  qa_attempts: (fin.qa.attempt ?? 0) + 1,\n  issues_remaining: fin.qa.issues || [],\n  zip: { download_url: pkg.download_url || null, file_count: pkg.file_count ?? null, size_bytes: pkg.size_bytes ?? null }\n};\nconst sql = `UPDATE projects SET status=${esc(fin.status)}, zip_url=${esc(pkg.download_url || null)}, summary=${escJson(summary)}, updated_at=now() WHERE id=${esc(fin.project_id)}::uuid`;\nreturn [{ json: {\n  sql,\n  response: {\n    project_id: fin.project_id,\n    status: fin.status,\n    download_url: pkg.download_url || null,\n    file_count: pkg.file_count ?? null,\n    size_bytes: pkg.size_bytes ?? null,\n    qa: { passed: fin.qa.passed ?? null, attempts: (fin.qa.attempt ?? 0) + 1, remaining_issues: fin.qa.issues || [] }\n  }\n} }];\n"
+        "jsCode": "\nconst esc = (v) => (v === null || v === undefined) ? 'NULL' : `'${String(v).replace(/'/g, \"''\")}'`;\nconst escJson = (v) => (v === null || v === undefined) ? 'NULL' : `'${JSON.stringify(v).replace(/'/g, \"''\")}'::jsonb`;\n\nconst pkg = $input.first().json;\nconst fin = $('Final Summary').first().json;\nconst summary = {\n  qa_passed: fin.qa.passed ?? null,\n  qa_attempts: (fin.qa.attempt ?? 0) + 1,\n  issues_remaining: fin.qa.issues || [],\n  zip: { download_url: pkg.download_url || null, file_count: pkg.file_count ?? null, size_bytes: pkg.size_bytes ?? null }\n};\nconst project_update = { project_id: fin.project_id, set: { status: fin.status, zip_url: pkg.download_url || null, summary } };\nreturn [{ json: {\n  project_update,\n  response: {\n    project_id: fin.project_id,\n    status: fin.status,\n    download_url: pkg.download_url || null,\n    file_count: pkg.file_count ?? null,\n    size_bytes: pkg.size_bytes ?? null,\n    qa: { passed: fin.qa.passed ?? null, attempts: (fin.qa.attempt ?? 0) + 1, remaining_issues: fin.qa.issues || [] }\n  }\n} }];\n"
       },
-      "id": "a1c146ff-94cd-4135-b2a4-7870f638636f",
+      "id": "f4ebb55b-61d4-42a4-812a-4022a0df7d64",
       "name": "Build Final Update",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -498,24 +498,24 @@
     },
     {
       "parameters": {
-        "operation": "executeQuery",
-        "query": "={{ $json.sql }}",
-        "options": {}
+        "method": "POST",
+        "url": "={{ ($env.CODE_EXEC_URL || 'http://code-exec-service:8080') + '/db/projects/update' }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.project_update) }}",
+        "options": {
+          "timeout": 900000
+        }
       },
-      "id": "e148241f-8473-4490-8be9-8cc3e0f38453",
-      "name": "Update Project (Postgres)",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2.6,
+      "id": "07a884c5-457d-4aa7-a501-2c3273f2833c",
+      "name": "Update Project (CES)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
         6120,
         420
-      ],
-      "credentials": {
-        "postgres": {
-          "id": null,
-          "name": "AI Factory Postgres"
-        }
-      }
+      ]
     },
     {
       "parameters": {
@@ -523,7 +523,7 @@
         "responseBody": "={{ JSON.stringify($('Build Final Update').first().json.response) }}",
         "options": {}
       },
-      "id": "f85d9cce-1cdd-4c62-a0cc-ff99730081f6",
+      "id": "fd2ef6fb-860b-4496-acf4-75bc58d61d8c",
       "name": "Respond — Result",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
@@ -560,7 +560,7 @@
       "main": [
         [
           {
-            "node": "Build Project SQL",
+            "node": "Build Project Doc",
             "type": "main",
             "index": 0
           }
@@ -574,18 +574,18 @@
         ]
       ]
     },
-    "Build Project SQL": {
+    "Build Project Doc": {
       "main": [
         [
           {
-            "node": "Create Project (Postgres)",
+            "node": "Create Project (CES)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Create Project (Postgres)": {
+    "Create Project (CES)": {
       "main": [
         [
           {
@@ -651,14 +651,14 @@
       "main": [
         [
           {
-            "node": "Insert Tasks (Postgres)",
+            "node": "Insert Tasks (CES)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Insert Tasks (Postgres)": {
+    "Insert Tasks (CES)": {
       "main": [
         [
           {
@@ -819,14 +819,14 @@
       "main": [
         [
           {
-            "node": "Update Project (Postgres)",
+            "node": "Update Project (CES)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Update Project (Postgres)": {
+    "Update Project (CES)": {
       "main": [
         [
           {
