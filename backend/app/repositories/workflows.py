@@ -73,7 +73,7 @@ class WorkflowRepository:
     # Workflows
     async def create_workflow(
         self, user_id, *, team_id, title, goal, max_steps, budget,
-        output_type="text", design_brief=None, requires_approval=False
+        output_type="text", design_brief=None, requires_approval=False, plan=None
     ):
         now = utcnow()
         doc = {
@@ -84,6 +84,7 @@ class WorkflowRepository:
             "goal": goal,
             "output_type": output_type,
             "design_brief": design_brief,
+            "plan": plan,
             "requires_approval": requires_approval,
             "approval_status": "none",
             "artifact_status": "none",

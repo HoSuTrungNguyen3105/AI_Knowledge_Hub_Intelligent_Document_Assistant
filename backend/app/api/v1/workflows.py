@@ -12,6 +12,10 @@ from app.api.v1.agents import agent_http
 from app.schemas.workflows import (
     EventList,
     MessageList,
+    PlanApplyIn,
+    PlanApplyOut,
+    PlanOut,
+    PlanRequest,
     TaskList,
     TeamCreate,
     TeamList,
@@ -23,6 +27,7 @@ from app.schemas.workflows import (
     WorkflowOut,
 )
 from app.services.ai.chat import ChatHTTP
+from app.services.workflow_planning import PlanningService
 from app.services.workflows import WorkflowService, launch_workflow
 
 router = APIRouter(tags=["AI multi-agent"])
@@ -72,6 +77,34 @@ async def delete_team(
 ):
     await _service(db, settings, http).delete_team(user.id, team_id)
     return Response(status_code=204)
+
+
+# --- Dynamic planning ----------------------------------------------------------
+@router.post("/ai/agent-workflows/plan", response_model=PlanOut)
+async def plan_workflow(
+    payload: PlanRequest,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: AgentHTTPDep,
+):
+    """Task Analysis + Decomposition + Agent Selection: the Leader agent
+    drafts a plan, the backend guarantees its shape (count in {1,2,3,5},
+    cycle-free dependencies, lineup matched to real agents)."""
+    return await PlanningService(db, settings, http).analyze(user.id, payload)
+
+
+@router.post("/ai/agent-workflows/plan/apply", response_model=PlanApplyOut, status_code=201)
+async def apply_workflow_plan(
+    payload: PlanApplyIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: AgentHTTPDep,
+):
+    """Materialize an approved plan: create the team from the lineup and
+    a workflow carrying the plan, ready to start."""
+    return await PlanningService(db, settings, http).apply(user.id, payload)
 
 
 # --- Workflows -----------------------------------------------------------------
