@@ -66,6 +66,13 @@ ERRORS = {
     "collab_agent_not_member": (422, "A mentioned agent is not a member of this room."),
     "resource_not_found": (404, "That workforce resource does not exist."),
     "resource_not_ai": (422, "Only AI resources sync to n8n."),
+    "project_file_too_large": (413, "The project file is larger than 5 MB."),
+    "project_file_empty": (422, "The project file has no readable text."),
+    "project_file_unsupported": (
+        422,
+        "Only .md, .txt, .pdf or .docx project files are supported.",
+    ),
+    "project_file_unreadable": (422, "The project file could not be read."),
     "project_not_found": (404, "That project does not exist."),
     "analysis_invalid_response": (
         502,

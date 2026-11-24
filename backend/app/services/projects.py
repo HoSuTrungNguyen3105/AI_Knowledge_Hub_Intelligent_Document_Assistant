@@ -37,8 +37,21 @@ from app.services.ai.base_provider import ProviderError
 from app.services.ai.chat import ChatHTTP
 from app.services.ai.chat_types import ChatRequest, ChatTurn
 from app.services.ai.registry import get_provider
+from app.services.project_files import extract_project_text
 
 logger = logging.getLogger(__name__)
+
+
+def _title_from_text(text: str, filename: str) -> str:
+    """Project name when the caller did not give one: the first
+    meaningful line of the brief (markdown heading marks stripped),
+    falling back to the file name."""
+    for line in text.splitlines():
+        candidate = line.strip().lstrip("#").strip()
+        if candidate:
+            return candidate[:200]
+    stem = filename.rsplit(".", 1)[0].strip() if "." in filename else filename.strip()
+    return (stem or "Dự án từ file")[:200]
 
 ANALYST_SYSTEM_PROMPT = """Bạn là chuyên gia phân tích dự án phần mềm.
 Nhiệm vụ: đọc yêu cầu dự án và chia thành các task có thể phân công
@@ -170,6 +183,25 @@ class ProjectService:
         }
         await self.db.projects.insert_one(doc)
         return self._out(doc)
+
+    async def create_from_file(
+        self,
+        user_id: UUID,
+        *,
+        filename: str,
+        data: bytes,
+        name: str = "",
+        tech_stack: list[str] | None = None,
+    ) -> ProjectOut:
+        """Create a project whose description is the text of an
+        uploaded brief file (.md/.txt/.pdf/.docx)."""
+        text = extract_project_text(filename, data)
+        payload = ProjectCreate(
+            name=name.strip() or _title_from_text(text, filename),
+            description=text[:10000],
+            tech_stack=tech_stack or [],
+        )
+        return await self.create(user_id, payload)
 
     async def get(self, user_id: UUID, project_id: UUID) -> ProjectOut:
         return self._out(await self._get_owned(user_id, project_id))

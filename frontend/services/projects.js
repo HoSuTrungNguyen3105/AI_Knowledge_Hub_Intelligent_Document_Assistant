@@ -14,6 +14,18 @@ export const projectsService = {
     const { data } = await api.post(base, payload);
     return data;
   },
+  async importFile(file, { name, techStack, provider, model }) {
+    // Multipart upload: the backend reads the brief, creates the
+    // project and runs analysis + recommendation in one request.
+    const form = new FormData();
+    form.append("file", file);
+    form.append("name", name || "");
+    form.append("tech_stack", techStack || "");
+    form.append("provider", provider);
+    form.append("model", model);
+    const { data } = await api.post(`${base}/import`, form, { timeout: 240000 });
+    return data;
+  },
   async patch(id, payload) {
     const { data } = await api.patch(projectPath(id), payload);
     return data;
@@ -68,11 +80,19 @@ const ERROR_MESSAGES = {
     "Nguồn lực này bị ràng buộc cứng với task (ví dụ AI bị cấm phạm vi của task) nên không gán được.",
   allocation_already_decided: "Bản đề xuất này đã được duyệt hoặc từ chối rồi.",
   resource_not_found: "Không tìm thấy nguồn lực này trong Workforce.",
+  project_file_too_large: "File dự án lớn hơn 5 MB.",
+  project_file_empty: "File không có nội dung chữ đọc được.",
+  project_file_unsupported: "Chỉ hỗ trợ file .md, .txt, .pdf hoặc .docx.",
+  project_file_unreadable: "Không đọc được file — file có thể bị hỏng.",
   credentials_missing: "Provider này chưa được cấu hình key. Hãy mở trang Providers trước.",
   provider_disabled: "Provider này đang tắt. Hãy bật lại ở trang Providers.",
   model_not_synced: "Model chưa được đồng bộ cho provider này.",
   model_not_chat_capable: "Model này không hỗ trợ chat.",
 };
+
+export function projectErrorByCode(code, fallback = "Đã xảy ra lỗi.") {
+  return ERROR_MESSAGES[code] || fallback;
+}
 
 export function getProjectError(error, fallback = "Đã xảy ra lỗi. Hãy thử lại.") {
   const detail = error?.response?.data?.detail;

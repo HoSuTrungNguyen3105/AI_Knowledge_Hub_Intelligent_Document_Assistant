@@ -1,7 +1,8 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, File, Form, Response, UploadFile
+from pydantic import BaseModel
 
 from app.api.dependencies import AppSettings, CurrentUser, Database
 from app.api.v1.agents import agent_http
@@ -21,6 +22,7 @@ from app.schemas.projects import (
     ProjectOut,
     ProjectPatch,
 )
+from app.services.ai.base_provider import ProviderError
 from app.services.ai.chat import ChatHTTP
 from app.services.allocations import AllocationService
 from app.services.projects import ProjectService
@@ -44,6 +46,62 @@ async def create_project(
     payload: ProjectCreate, user: CurrentUser, db: Database, settings: AppSettings
 ) -> ProjectOut:
     return await _service(db, settings).create(user.id, payload)
+
+
+class ProjectImportOut(BaseModel):
+    project: ProjectOut
+    analysis: AnalysisOut | None = None
+    allocation: AllocationOut | None = None
+    analysis_error: str | None = None
+
+
+@router.post("/ai/projects/import", response_model=ProjectImportOut, status_code=201)
+async def import_project(
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: AgentHTTPDep,
+    file: UploadFile = File(...),
+    name: str = Form(""),
+    tech_stack: str = Form(""),
+    provider: str = Form(...),
+    model: str = Form(...),
+) -> ProjectImportOut:
+    """Upload a brief file (.md/.txt/.pdf/.docx): create the project
+    from its text, then immediately analyze it and draft the team
+    recommendation so the sections below fill in without extra clicks.
+    A failed analysis keeps the created project and reports the error
+    code in analysis_error instead of failing the whole upload."""
+    service = _service(db, settings, http)
+    data = await file.read()
+    stack = [part.strip() for part in tech_stack.split(",") if part.strip()]
+    project = await service.create_from_file(
+        user.id,
+        filename=file.filename or "brief",
+        data=data,
+        name=name,
+        tech_stack=stack,
+    )
+    analysis = None
+    allocation = None
+    analysis_error = None
+    try:
+        analysis = await service.analyze(
+            user.id, project.id, AnalyzeIn(provider=provider, model=model)
+        )
+        allocation = await _allocations(db, settings).recommend(
+            user.id, project.id, RecommendIn()
+        )
+    except ProviderError as exc:
+        analysis_error = exc.code
+    # Re-read so the returned project carries its post-analysis status.
+    project = await service.get(user.id, project.id)
+    return ProjectImportOut(
+        project=project,
+        analysis=analysis,
+        allocation=allocation,
+        analysis_error=analysis_error,
+    )
 
 
 @router.get("/ai/projects/{project_id}", response_model=ProjectOut)
