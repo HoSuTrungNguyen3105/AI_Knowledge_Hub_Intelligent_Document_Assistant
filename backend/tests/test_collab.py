@@ -105,7 +105,8 @@ async def test_plain_message_and_mention_validation(owner):
     room = create_room(client, [member["id"]])
 
     posted = client.post(
-        f"{BASE}/{room['id']}/messages", json={"content": "Ghi chú chung", "mention_agent_ids": []}
+        f"{BASE}/{room['id']}/messages",
+        json={"content": "Ghi chú chung", "mention_agent_ids": []},
     )
     assert posted.status_code == 201, posted.text
     assert len(posted.json()["messages"]) == 1
