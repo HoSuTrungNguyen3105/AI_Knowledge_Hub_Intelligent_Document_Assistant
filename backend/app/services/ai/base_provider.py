@@ -52,6 +52,15 @@ ERRORS = {
     "workflow_step_limit": (409, "The workflow reached its maximum number of agent turns."),
     "workflow_revision_limit": (409, "The task reached its maximum number of revisions."),
     "workflow_timeout": (504, "The workflow timed out."),
+    "n8n_unreachable": (
+        503,
+        "n8n is not reachable. Start the local n8n stack (Docker) and try again.",
+    ),
+    "n8n_run_failed": (
+        502,
+        "The n8n workflow run failed. Open the execution in n8n for details.",
+    ),
+    "invalid_factory_roles": (422, "Assign agents only to the seven team roles."),
     "validation_error": (422, "The submitted data is invalid."),
     "artifact_no_files": (422, "The agent did not return any valid website files."),
     "artifact_missing_index": (422, "The generated website is missing index.html."),

@@ -172,6 +172,27 @@ Lưu ý: chạy **một lượt tại một thời điểm** cho workflow này (
 lượt chạy lưu trong static data của workflow); task chạy tuần tự theo
 thứ tự phụ thuộc.
 
+## Bước 8 — Chạy đội Agent ngay trong MindFlow (trang AI Factory)
+
+Sau khi đã import bản mới nhất của workflow 07 và bấm Publish/Active:
+
+1. Mở MindFlow → mục **Agents → AI Factory** (đường dẫn `/agents/factory`).
+2. Trang này tự liệt kê các Agent bạn **đã tạo trong MindFlow** và tự gán
+   vào đúng vai trò theo tên (AI Leader → vai trò Leader, AI Developer →
+   Developer…). Bạn đổi Agent cho từng vai trò tuỳ ý, hoặc để trống một
+   vai trò để n8n tự chọn model từ registry của nó.
+3. Nhập yêu cầu → bấm **Chạy đội Agent qua n8n**. MindFlow gửi yêu cầu
+   kèm provider/model/system prompt của từng Agent đã gán sang webhook
+   của workflow 07; kết quả (kế hoạch, từng nhiệm vụ, đánh giá Reviewer,
+   bản tổng hợp cuối) hiện ngay trên trang. Một lượt chạy mất vài phút.
+
+Điều kiện: n8n đang chạy (`docker compose up -d`) và backend MindFlow với
+tới được n8n ở `http://localhost:5678` (mặc định; đổi bằng biến môi trường
+`N8N_WEBHOOK_BASE_URL` trong `backend/.env` nếu bạn chạy n8n ở nơi khác).
+Provider của Agent được gán cũng phải có key trong `.env` của n8n — nếu
+chưa có, trang kết quả sẽ ghi rõ vai trò đó bị bỏ qua vì
+`provider_not_configured_in_n8n_env`.
+
 ## Lỗi thường gặp
 
 | Hiện tượng | Nguyên nhân & cách xử lý |
@@ -182,6 +203,7 @@ thứ tự phụ thuộc.
 | Bước build báo `HOST_WORKSPACES_DIR is not configured` | Chưa điền biến này ở Bước 2, hoặc đường dẫn sai |
 | Agent báo `model_did_not_return_valid_json` | Model đó không tuân thủ JSON — đổi model cho Agent đó trên Dashboard/node Resolve Agent Config. Lượt lỗi vẫn lưu trong collection `agent_runs` (MongoDB) để xem lại |
 | Chạy lâu bất thường | Xem n8n → Executions để biết đang kẹt ở node nào; xem Dashboard hoặc collection `agent_runs` trong MongoDB để biết Agent nào đang chạy |
+| Trang AI Factory (MindFlow) báo không kết nối được n8n | n8n chưa chạy (`docker compose up -d`), workflow 07 chưa Publish/Active, hoặc backend MindFlow không tới được `localhost:5678` (kiểm tra `N8N_WEBHOOK_BASE_URL` trong `backend/.env`) |
 
 Chi tiết kiến trúc, API của Code Execution Service và các giới hạn an
 toàn: xem **README.md** trong thư mục này.
