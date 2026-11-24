@@ -14,6 +14,9 @@ class Settings(BaseSettings):
 
     mongodb_uri: str = "mongodb://localhost:27017"
     mongodb_database: str = "mindflow_ai"
+    # Deployment environment: development | demo | production. Demo seeding
+    # (NEXORA spec Part 5) is only allowed outside production.
+    app_env: str = "development"
     jwt_secret: SecretStr
     credential_encryption_key: SecretStr | None = None
     cors_origins: list[str] = Field(
@@ -76,6 +79,14 @@ class Settings(BaseSettings):
         ):
             raise ValueError("JWT_SECRET must be a random secret of at least 32 characters")
         return value
+
+    @field_validator("app_env")
+    @classmethod
+    def validate_app_env(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"development", "demo", "production"}:
+            raise ValueError("APP_ENV must be development, demo or production")
+        return normalized
 
     @field_validator("mongodb_uri")
     @classmethod

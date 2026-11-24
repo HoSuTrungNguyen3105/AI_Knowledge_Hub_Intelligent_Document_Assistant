@@ -61,6 +61,7 @@ async def init_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.agent_workflow_events.create_index([("workflow_id", 1), ("created_at", 1)])
     await db.agent_workflow_files.create_index([("workflow_id", 1), ("path", 1)])
     await db.agent_workflow_files.create_index("user_id")
+    await db.seed_registry.create_index("key", unique=True)
 
 
 @asynccontextmanager
