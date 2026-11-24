@@ -27,6 +27,7 @@ from app.schemas.n8n_factory import (
 )
 from app.services.agents import AgentService
 from app.services.ai.base_provider import ProviderError
+from app.services.notifications import notify
 
 WEBHOOK_PATH = "/webhook/ai-team/start"
 RUNS_COLLECTION = "n8n_factory_runs"
@@ -309,4 +310,22 @@ class N8nFactoryService:
                 "finished_at": finished,
             }
         )
+        if status == "failed":
+            await notify(
+                self.db,
+                doc["user_id"],
+                kind="factory_failed",
+                title="AI Factory chạy thất bại",
+                body=str(error or doc.get("requirement") or ""),
+                link="/agents/workflows?tab=factory",
+            )
+        elif status != "cancelled":
+            await notify(
+                self.db,
+                doc["user_id"],
+                kind="factory_completed",
+                title="AI Factory đã chạy xong",
+                body=str(doc.get("requirement") or ""),
+                link="/agents/workflows?tab=factory",
+            )
         return self._out(doc)

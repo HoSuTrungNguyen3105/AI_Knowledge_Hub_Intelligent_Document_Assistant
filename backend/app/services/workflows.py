@@ -44,6 +44,7 @@ from app.schemas.workflows import (
 from app.services.agents import AgentLimits, AgentService
 from app.services.ai.base_provider import ProviderError
 from app.services.ai.chat import ChatHTTP
+from app.services.notifications import notify
 from app.services.workflow_files import (
     ArtifactLimits,
     ParsedFile,
@@ -1031,6 +1032,14 @@ class WorkflowService:
                     event_type="workflow_completed",
                     actor_id=str(team.coordinator_agent_id),
                 )
+                await notify(
+                    self.db,
+                    user_id,
+                    kind="workflow_completed",
+                    title="Workflow hoàn thành",
+                    body=workflow.title,
+                    link="/agents/workflows",
+                )
         except TimeoutError:
             await self._fail(user_id, workflow_id, "workflow_timeout")
         except ProviderError as error:
@@ -1209,6 +1218,15 @@ class WorkflowService:
             event_type="workflow_error",
             actor_id="orchestrator",
             payload={"code": code},
+        )
+        failed = await self.repo.get_workflow(user_id, workflow_id)
+        await notify(
+            self.db,
+            user_id,
+            kind="workflow_failed",
+            title="Workflow thất bại",
+            body=f"{failed.title} — {code}" if failed else code,
+            link="/agents/workflows",
         )
 
 
