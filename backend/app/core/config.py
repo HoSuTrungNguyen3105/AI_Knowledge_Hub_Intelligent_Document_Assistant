@@ -36,13 +36,22 @@ class Settings(BaseSettings):
     artifact_max_files: int = Field(default=50, ge=1, le=500)
     artifact_max_file_bytes: int = Field(default=262_144, ge=1024)
     artifact_max_total_bytes: int = Field(default=2_097_152, ge=1024)
-    # MindFlow -> self-hosted n8n bridge (AI Factory page). The backend calls
-    # the webhook of the user's own n8n instance; the default matches the
-    # docker-compose setup in n8n-ai-factory/ (n8n published on port 5678).
+    # MindFlow -> self-hosted n8n bridge (AI Factory page). Runs are
+    # asynchronous: the backend fires the webhook of the user's own n8n
+    # instance (default matches the docker-compose setup in n8n-ai-factory/,
+    # n8n published on port 5678), n8n accepts immediately and executes in
+    # the background, then calls the run's callback URL when finished.
     n8n_webhook_base_url: str = "http://localhost:5678"
-    # A full 7-agent run takes minutes; the call is synchronous by design so
-    # the page can show the finished package in one round trip.
-    n8n_factory_timeout_seconds: int = Field(default=900, ge=30, le=3600)
+    # Bounds only the fire-the-webhook call; workflow 07 answers as soon as
+    # it has accepted the run, so this stays short.
+    n8n_factory_timeout_seconds: int = Field(default=60, ge=10, le=600)
+    # Base URL the n8n CONTAINER uses to call this backend back. Inside the
+    # compose network the backend lives on the host, hence
+    # host.docker.internal; override when the backend is bound elsewhere.
+    n8n_factory_callback_base_url: str = "http://host.docker.internal:8000"
+    # A run with no callback after this long is reported as failed
+    # (run_timed_out) instead of spinning forever.
+    n8n_factory_run_timeout_seconds: int = Field(default=1800, ge=120, le=86400)
 
     @field_validator("credential_encryption_key")
     @classmethod
@@ -75,9 +84,9 @@ class Settings(BaseSettings):
             raise ValueError("MONGODB_URI must start with mongodb:// or mongodb+srv://")
         return value
 
-    @field_validator("n8n_webhook_base_url")
+    @field_validator("n8n_webhook_base_url", "n8n_factory_callback_base_url")
     @classmethod
-    def validate_n8n_webhook_base_url(cls, value: str) -> str:
+    def validate_n8n_base_url(cls, value: str) -> str:
         parsed = urlsplit(value)
         if (
             parsed.scheme not in {"http", "https"}
@@ -88,7 +97,7 @@ class Settings(BaseSettings):
             or parsed.fragment
         ):
             raise ValueError(
-                "N8N_WEBHOOK_BASE_URL must be an HTTP(S) origin without credentials"
+                "n8n base URLs must be HTTP(S) origins without credentials"
             )
         return value.rstrip("/")
 

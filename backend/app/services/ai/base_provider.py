@@ -61,6 +61,8 @@ ERRORS = {
         "The n8n workflow run failed. Open the execution in n8n for details.",
     ),
     "invalid_factory_roles": (422, "Assign agents only to the seven team roles."),
+    "factory_run_not_found": (404, "That AI Factory run does not exist."),
+    "invalid_callback_token": (401, "The AI Factory run callback token is invalid."),
     "validation_error": (422, "The submitted data is invalid."),
     "artifact_no_files": (422, "The agent did not return any valid website files."),
     "artifact_missing_index": (422, "The generated website is missing index.html."),

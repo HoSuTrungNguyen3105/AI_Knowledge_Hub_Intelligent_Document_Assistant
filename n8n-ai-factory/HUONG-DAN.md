@@ -181,17 +181,38 @@ Sau khi đã import bản mới nhất của workflow 07 và bấm Publish/Activ
    vào đúng vai trò theo tên (AI Leader → vai trò Leader, AI Developer →
    Developer…). Bạn đổi Agent cho từng vai trò tuỳ ý, hoặc để trống một
    vai trò để n8n tự chọn model từ registry của nó.
-3. Nhập yêu cầu → bấm **Chạy đội Agent qua n8n**. MindFlow gửi yêu cầu
-   kèm provider/model/system prompt của từng Agent đã gán sang webhook
-   của workflow 07; kết quả (kế hoạch, từng nhiệm vụ, đánh giá Reviewer,
-   bản tổng hợp cuối) hiện ngay trên trang. Một lượt chạy mất vài phút.
+3. Nhập yêu cầu → bấm **Chạy đội Agent qua n8n**. Lượt chạy là **bất đồng
+   bộ**: trang ghi nhận ngay một lượt chạy trong mục "Các lượt chạy" rồi
+   bạn cứ rời trang — n8n chạy nền vài phút, xong thì tự báo kết quả về,
+   trang tự cập nhật khi bạn quay lại (kế hoạch, từng nhiệm vụ, đánh giá
+   Reviewer, bản tổng hợp cuối đều ở trong chi tiết lượt chạy).
 
 Điều kiện: n8n đang chạy (`docker compose up -d`) và backend MindFlow với
 tới được n8n ở `http://localhost:5678` (mặc định; đổi bằng biến môi trường
 `N8N_WEBHOOK_BASE_URL` trong `backend/.env` nếu bạn chạy n8n ở nơi khác).
+Chiều ngược lại cũng phải thông: n8n (trong container Docker) gọi callback
+về backend ở `http://host.docker.internal:8000` — hãy chạy backend bằng
+`uvicorn app.main:app --host 0.0.0.0 --port 8000` (nếu đang chạy
+`--host 127.0.0.1` thì container không gọi vào được, lượt chạy sẽ kết
+thúc bằng lỗi `run_timed_out` sau 30 phút). Đổi địa chỉ callback bằng
+`N8N_FACTORY_CALLBACK_BASE_URL` trong `backend/.env` khi cần.
 Provider của Agent được gán cũng phải có key trong `.env` của n8n — nếu
 chưa có, trang kết quả sẽ ghi rõ vai trò đó bị bỏ qua vì
 `provider_not_configured_in_n8n_env`.
+
+## Bước 9 — Automation theo lịch + thông báo Telegram (tuỳ chọn)
+
+1. Import thêm workflow **08 — Scheduled Research Digest** → bấm
+   **Execute Workflow** để chạy thử ngay: node Format Digest trong
+   execution chứa bản tin nghiên cứu tuần (chủ đề EdTech cho học sinh
+   tiểu học; sửa chủ đề ở hằng số `TOPIC` trong node Build Research
+   Brief, sửa ngày/giờ trong node Weekly Schedule). Ưng ý thì bật
+   **Active** — từ đó nó tự chạy mỗi tuần, không cần mở MindFlow.
+2. Muốn nhận bản tin (và thông báo mỗi khi workflow 07 chạy xong) qua
+   Telegram: tạo bot bằng @BotFather → nhắn cho bot một tin bất kỳ → mở
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` để lấy `chat.id` →
+   điền `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` vào `.env` cạnh
+   docker-compose → `docker compose up -d` để n8n nạp lại biến.
 
 ## Lỗi thường gặp
 
@@ -204,6 +225,7 @@ chưa có, trang kết quả sẽ ghi rõ vai trò đó bị bỏ qua vì
 | Agent báo `model_did_not_return_valid_json` | Model đó không tuân thủ JSON — đổi model cho Agent đó trên Dashboard/node Resolve Agent Config. Lượt lỗi vẫn lưu trong collection `agent_runs` (MongoDB) để xem lại |
 | Chạy lâu bất thường | Xem n8n → Executions để biết đang kẹt ở node nào; xem Dashboard hoặc collection `agent_runs` trong MongoDB để biết Agent nào đang chạy |
 | Trang AI Factory (MindFlow) báo không kết nối được n8n | n8n chưa chạy (`docker compose up -d`), workflow 07 chưa Publish/Active, hoặc backend MindFlow không tới được `localhost:5678` (kiểm tra `N8N_WEBHOOK_BASE_URL` trong `backend/.env`) |
+| Lượt chạy AI Factory kẹt "Đang chạy" rồi kết thúc `run_timed_out` | n8n chạy xong nhưng không gọi callback về được: backend MindFlow đang nghe ở `127.0.0.1` (chạy lại với `--host 0.0.0.0 --port 8000`), tường lửa Windows chặn cổng 8000, hoặc `N8N_FACTORY_CALLBACK_BASE_URL` sai. Kiểm tra thêm Executions trong n8n xem node Callback to MindFlow có lỗi không |
 
 Chi tiết kiến trúc, API của Code Execution Service và các giới hạn an
 toàn: xem **README.md** trong thư mục này.

@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -13,6 +14,18 @@ FACTORY_ROLES = (
     "AI Tester",
     "AI Reviewer",
     "AI Researcher",
+)
+
+# Run lifecycle: queued -> running -> a terminal status. Terminal statuses
+# mirror workflow 07's final-package `status` values; "failed" also covers
+# runs that never produced a package (webhook rejected, or no callback
+# arrived before the run timeout).
+RUN_ACTIVE_STATUSES = ("queued", "running")
+RUN_TERMINAL_STATUSES = (
+    "completed",
+    "completed_with_issues",
+    "needs_configuration",
+    "failed",
 )
 
 
@@ -43,20 +56,48 @@ class FactoryRunRequest(BaseModel):
         return cleaned
 
 
-class FactoryRunOut(BaseModel):
-    # Mirrors the final package of n8n workflow 07. Extra fields pass through
-    # so new workflow outputs reach the page without a backend change.
-    model_config = ConfigDict(extra="allow")
+class FactoryAgentSnapshot(BaseModel):
+    """One role assignment as captured when the run was created."""
 
-    project_id: str | None = None
+    role: str
+    agent_id: UUID
+    name: str
+    provider: str
+    model: str
+
+
+class FactoryRunOut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    requirement: str
+    domain: list[str] = Field(default_factory=list)
+    assignments: list[FactoryAgentSnapshot] = Field(default_factory=list)
     status: str
-    domain: list = Field(default_factory=list)
-    plan: dict | None = None
-    plan_error: str | None = None
-    task_results: list[dict] = Field(default_factory=list)
-    skipped_roles: list[dict] = Field(default_factory=list)
-    review: dict | None = None
-    final: dict | None = None
-    agent_assignments: list[dict] = Field(default_factory=list)
-    agent_assignments_ignored: list[dict] = Field(default_factory=list)
+    # Machine-readable failure detail (e.g. "n8n_unreachable",
+    # "run_timed_out", or the finished package's own error text).
+    error: str | None = None
+    # The workflow-07 final package, stored verbatim once the run finishes.
+    result: dict | None = None
+    created_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None = None
     duration_ms: int | None = None
+
+
+class FactoryRunListOut(BaseModel):
+    items: list[FactoryRunOut]
+    total: int
+
+
+class FactoryCallbackIn(BaseModel):
+    """Body of the n8n -> MindFlow completion callback.
+
+    The caller is authenticated by the run's own callback token in the
+    Authorization header, not by a user session: n8n has no MindFlow
+    session. The package is workflow 07's final package, stored verbatim.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    package: dict
