@@ -65,6 +65,11 @@ ERRORS = {
     "collab_room_not_found": (404, "That collaboration room does not exist."),
     "collab_agent_not_member": (422, "A mentioned agent is not a member of this room."),
     "resource_not_found": (404, "That workforce resource does not exist."),
+    "project_not_found": (404, "That project does not exist."),
+    "analysis_invalid_response": (
+        502,
+        "The AI analysis response could not be understood. Try another model.",
+    ),
     "invalid_callback_token": (401, "The AI Factory run callback token is invalid."),
     "seed_disabled": (403, "Demo seeding is disabled in the production environment."),
     "seed_provider_required": (
