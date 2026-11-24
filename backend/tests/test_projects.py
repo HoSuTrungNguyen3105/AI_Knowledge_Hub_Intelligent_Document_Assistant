@@ -176,6 +176,49 @@ def test_analyze_invalid_response_stores_nothing(owner, mock_llm):
     assert owner.get(f"{BASE}/{created['id']}/analyses").json()["analyses"] == []
 
 
+MESSY_JSON = """{
+  "summary": "Dự án web bán hàng.",
+  "tasks": [
+    {
+      "title": "__LONG_TITLE__",
+      "description": "Trang chủ và danh mục",
+      "skills_required": "React, Node.js",
+      "scopes": "personal-data",
+      "estimated_hours": "8 giờ",
+      "suggested_type": "Human",
+    },
+  ],
+  "risks": "Thiếu nhân lực",
+}"""
+
+
+def test_analyze_tolerates_messy_model_output(owner, mock_llm):
+    # A >200-char title exercises the clamp; the placeholder keeps this
+    # source line short.
+    mock_llm["text"] = MESSY_JSON.replace("__LONG_TITLE__", "Xây dựng giao diện " * 12)
+    created = create_project(owner)
+    response = owner.post(
+        f"{BASE}/{created['id']}/analyze", json={"provider": "openai", "model": MODEL_A}
+    )
+    assert response.status_code == 200, response.text
+    task = response.json()["tasks"][0]
+    assert task["skills_required"] == ["React", "Node.js"]
+    assert task["scopes"] == ["personal-data"]
+    assert task["estimated_hours"] == 8
+    assert task["suggested_type"] == "human"
+    assert len(task["title"]) <= 200
+
+
+def test_analyze_truncated_json_still_fails(owner, mock_llm):
+    mock_llm["text"] = '{"summary": "Dự án", "tasks": [{"title": "Việc 1"'
+    created = create_project(owner)
+    response = owner.post(
+        f"{BASE}/{created['id']}/analyze", json={"provider": "openai", "model": MODEL_A}
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "analysis_invalid_response"
+
+
 def test_analyze_missing_credentials(owner):
     created = create_project(owner)
     response = owner.post(
