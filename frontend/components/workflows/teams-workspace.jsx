@@ -12,7 +12,7 @@ import {
 } from "../../utils/workflows";
 import { ConfirmDialog } from "../confirm-dialog";
 
-const ROLES = ["coordinator", "planner", "architect", "developer", "tester", "reviewer", "researcher", "member"];
+const ROLES = ["coordinator", "planner", "architect", "developer", "tester", "reviewer", "researcher", "evaluator", "member"];
 
 export function TeamsWorkspace() {
   const [agents, setAgents] = useState([]);

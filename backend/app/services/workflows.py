@@ -12,6 +12,7 @@ Design notes
 """
 
 import asyncio
+import json
 import time
 from dataclasses import dataclass
 from uuid import UUID
@@ -100,6 +101,7 @@ ROLE_ORDER = {
     "member": 4,
     "tester": 5,
     "reviewer": 6,
+    "evaluator": 7,
     "coordinator": 0,
 }
 REVIEW_ROLES = {"reviewer", "tester"}
@@ -115,6 +117,7 @@ ROLE_LABELS_VI = {
     "developer": "Phát triển",
     "tester": "Kiểm thử",
     "reviewer": "Đánh giá",
+    "evaluator": "Chấm điểm",
     "member": "Thành viên",
 }
 
@@ -126,6 +129,7 @@ SPECIFIC_ROLES = {
     "tester",
     "reviewer",
     "coordinator",
+    "evaluator",
 }
 
 # Ordered (substring, role) hints used to infer a role from an Agent's name
@@ -133,6 +137,7 @@ SPECIFIC_ROLES = {
 # by hand before roles were assigned, or with every member left as "member").
 _NAME_ROLE_HINTS = (
     ("review", "reviewer"),
+    ("evaluat", "evaluator"),
     ("test", "tester"),
     ("qa", "tester"),
     ("plan", "planner"),
@@ -218,6 +223,8 @@ class WorkflowLimits:
     # own retry count and a half-minute pause between attempts.
     rate_limit_retries: int = 2
     rate_limit_backoff_seconds: float = 30.0
+    # Members of one role tier run concurrently up to this bound.
+    parallel_agents: int = 3
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "WorkflowLimits":
@@ -237,6 +244,58 @@ def longest_prior_result(prior: list[tuple[str, str]]) -> str:
     turn may be a short review note, which would make a poor final answer.
     """
     return max((content for _, content in prior), key=len, default="")
+
+
+EVALUATION_RUBRIC = (
+    "EVALUATION_RUBRIC — You are the Evaluator. Grade the team's results in "
+    "the REFERENCE section against the workflow goal. Rubric: goal alignment "
+    "40%, completeness 30%, correctness and quality 30%. Reply with ONLY a "
+    'JSON object, no markdown fences: {"score": <integer 0-100>, "verdict": '
+    '"pass" or "revise", "summary": "<short overall judgement>", "issues": '
+    '["<concrete fixable problem>", ...]}. Use "revise" only when a concrete, '
+    "fixable problem blocks the goal."
+)
+
+
+def parse_evaluation(content: str) -> dict | None:
+    """Leniently extract an Evaluator JSON verdict from agent output.
+
+    Providers sometimes wrap JSON in prose or fences, so the first "{" to the
+    last "}" is tried before giving up. Returns None when nothing parseable
+    is found — an unparseable evaluation never fails the workflow.
+    """
+    if not content:
+        return None
+    start = content.find("{")
+    end = content.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        raw = json.loads(content[start : end + 1])
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    try:
+        score = int(round(float(raw.get("score"))))
+    except (TypeError, ValueError):
+        return None
+    score = max(0, min(100, score))
+    verdict = str(raw.get("verdict") or "").strip().lower()
+    if verdict not in ("pass", "revise"):
+        verdict = "pass" if score >= 60 else "revise"
+    issues_raw = raw.get("issues") or []
+    issues = (
+        [str(i)[:500] for i in issues_raw if str(i).strip()][:10]
+        if isinstance(issues_raw, list)
+        else []
+    )
+    return {
+        "score": score,
+        "verdict": verdict,
+        "summary": str(raw.get("summary") or "")[:2000],
+        "issues": issues,
+    }
 
 
 def build_context(
@@ -765,19 +824,30 @@ class WorkflowService:
                     prior.append((agent.name if agent else "Agent", t.result))
         try:
             async with asyncio.timeout(self.limits.timeout_seconds):
+                # Members run in role tiers: the plan order groups production
+                # roles first and quality roles last. Members of the SAME tier
+                # are independent of each other (each builds its prompt from
+                # the same prior results), so a tier runs concurrently —
+                # bounded by limits.parallel_agents — while tiers stay
+                # sequential, so later roles still see earlier results.
+                # Outcomes are applied in plan order once a tier's runs
+                # finish, keeping prior/usage accounting identical to the
+                # old strictly-sequential loop.
+                tiers: list[list[dict]] = []
                 for entry in plan:
-                    member = entry["member"]
-                    agent = entry["agent"]
-                    role = entry["role"]
-                    label = entry["label"]
-                    if member.agent_id in done_task_ids:
-                        continue
+                    order = ROLE_ORDER.get(entry["role"], 4)
+                    if tiers and tiers[-1][0]["tier_order"] == order:
+                        tiers[-1].append({**entry, "tier_order": order})
+                    else:
+                        tiers.append([{**entry, "tier_order": order}])
+                semaphore = asyncio.Semaphore(self.limits.parallel_agents)
+                for tier in tiers:
                     if time.monotonic() - started > self.limits.timeout_seconds:
                         raise ProviderError("workflow_timeout")
                     current = await self.repo.get_workflow(user_id, workflow_id)
                     if current is None or current.status == "cancelled":
                         return
-                    if current.status == "waiting":  # paused between steps
+                    if current.status == "waiting":  # paused between tiers
                         await self.repo.add_event(
                             user_id,
                             workflow_id=workflow_id,
@@ -785,70 +855,166 @@ class WorkflowService:
                             actor_id="orchestrator",
                         )
                         return
+                    pending_entries = [
+                        e for e in tier if e["member"].agent_id not in done_task_ids
+                    ]
+                    if not pending_entries:
+                        continue
                     if turns >= workflow.max_steps:
                         raise ProviderError("workflow_step_limit")
-                    task = await self.repo.create_task(
-                        user_id,
-                        workflow_id=workflow_id,
-                        title=f"{role.capitalize()}: {workflow.title}",
-                        description=workflow.goal,
-                        assigned_agent_id=member.agent_id,
-                        created_by_agent_id=team.coordinator_agent_id,
-                    )
-                    await self.repo.add_event(
-                        user_id,
-                        workflow_id=workflow_id,
-                        event_type="task_created",
-                        actor_id=str(team.coordinator_agent_id),
-                        payload={
-                            "task_id": str(task.id),
-                            "role": role,
-                            "effective_role": entry["effective_role"],
-                        },
-                    )
-                    await self._send(
-                        user_id,
-                        workflow_id,
-                        task.id,
-                        team.coordinator_agent_id,
-                        member.agent_id,
-                        "TASK_ASSIGNMENT",
-                        f"Hãy hoàn thành phần việc của {label} cho mục tiêu: {workflow.goal}",
-                    )
-                    claimed_task = await self.repo.transition_task(
-                        user_id, task.id, ["pending"], {"status": "in_progress"}
-                    )
-                    if claimed_task is None:
-                        continue  # already handled elsewhere; never double-process
-                    attempted_count += 1
-                    prompt = build_context(
-                        workflow.goal,
-                        task.title,
-                        task.description,
-                        prior,
-                        self.limits.context_chars_per_result,
-                    )
-                    if agent is None:
-                        await self._mark_task_failed(
-                            user_id, workflow, team, task, member,
-                            agent_name=None, label=label, code="agent_not_found",
+                    chunk = pending_entries[: workflow.max_steps - turns]
+                    # Phase A (sequential): create + claim every task in the
+                    # chunk and build its prompt from the current prior.
+                    run_items: list[dict] = []
+                    for entry in chunk:
+                        member = entry["member"]
+                        agent = entry["agent"]
+                        role = entry["role"]
+                        label = entry["label"]
+                        task = await self.repo.create_task(
+                            user_id,
+                            workflow_id=workflow_id,
+                            title=f"{role.capitalize()}: {workflow.title}",
+                            description=workflow.goal,
+                            assigned_agent_id=member.agent_id,
+                            created_by_agent_id=team.coordinator_agent_id,
                         )
-                        failed_codes.append("agent_not_found")
-                        continue
-                    try:
-                        content, usage = await self._run_agent_resilient(
-                            user_id, member.agent_id, prompt
+                        await self.repo.add_event(
+                            user_id,
+                            workflow_id=workflow_id,
+                            event_type="task_created",
+                            actor_id=str(team.coordinator_agent_id),
+                            payload={
+                                "task_id": str(task.id),
+                                "role": role,
+                                "effective_role": entry["effective_role"],
+                            },
                         )
-                    except ProviderError as error:
-                        # One failed Agent must not kill the whole workflow:
-                        # record the failure honestly, count the spent turn,
-                        # and continue with the next Agent.
+                        await self._send(
+                            user_id,
+                            workflow_id,
+                            task.id,
+                            team.coordinator_agent_id,
+                            member.agent_id,
+                            "TASK_ASSIGNMENT",
+                            f"Hãy hoàn thành phần việc của {label} cho mục tiêu: {workflow.goal}",
+                        )
+                        claimed_task = await self.repo.transition_task(
+                            user_id, task.id, ["pending"], {"status": "in_progress"}
+                        )
+                        if claimed_task is None:
+                            continue  # already handled elsewhere; never double-process
+                        attempted_count += 1
+                        description = EVALUATION_RUBRIC if role == "evaluator" else workflow.goal
+                        prompt = build_context(
+                            workflow.goal,
+                            task.title,
+                            description,
+                            prior,
+                            self.limits.context_chars_per_result,
+                        )
+                        run_items.append({**entry, "task": task, "prompt": prompt})
+                    # Phase B (concurrent): run this tier's agents together.
+                    async def _run_item(item):
+                        async with semaphore:
+                            return await self._run_agent_resilient(
+                                user_id, item["member"].agent_id, item["prompt"]
+                            )
+
+                    outcomes = await asyncio.gather(
+                        *(
+                            _run_item(item)
+                            for item in run_items
+                            if item["agent"] is not None
+                        ),
+                        return_exceptions=True,
+                    )
+                    outcome_iter = iter(outcomes)
+                    # Phase C (sequential, plan order): apply every outcome
+                    # exactly as the sequential loop did.
+                    for item in run_items:
+                        member = item["member"]
+                        agent = item["agent"]
+                        role = item["role"]
+                        label = item["label"]
+                        task = item["task"]
+                        if agent is None:
+                            await self._mark_task_failed(
+                                user_id, workflow, team, task, member,
+                                agent_name=None, label=label, code="agent_not_found",
+                            )
+                            failed_codes.append("agent_not_found")
+                            continue
+                        outcome = next(outcome_iter)
+                        if isinstance(outcome, ProviderError):
+                            # One failed Agent must not kill the whole
+                            # workflow: record it, count the turn, continue.
+                            turns += 1
+                            failed_codes.append(outcome.code)
+                            await self._mark_task_failed(
+                                user_id, workflow, team, task, member,
+                                agent_name=agent.name, label=label, code=outcome.code,
+                            )
+                            await self.repo.update_workflow(
+                                user_id,
+                                workflow_id,
+                                {
+                                    "current_step": turns,
+                                    "usage": {
+                                        "agent_turns": turns,
+                                        "input_tokens": total_in,
+                                        "output_tokens": total_out,
+                                    },
+                                },
+                            )
+                            continue
+                        if isinstance(outcome, BaseException):
+                            raise outcome
+                        content, usage = outcome
                         turns += 1
-                        failed_codes.append(error.code)
-                        await self._mark_task_failed(
-                            user_id, workflow, team, task, member,
-                            agent_name=agent.name, label=label, code=error.code,
+                        total_in += usage.get("input_tokens") or 0
+                        total_out += usage.get("output_tokens") or 0
+                        # Reviewer/tester may demand a revision of the previous result.
+                        if role in REVIEW_ROLES and "REVISION_REQUEST" in content.upper() and prior:
+                            try:
+                                await self._handle_revision(
+                                    user_id, workflow, team, prior, member, content
+                                )
+                                content += "\n(Revision requested and sent to the previous agent.)"
+                            except ProviderError as error:
+                                await self.repo.add_event(
+                                    user_id,
+                                    workflow_id=workflow_id,
+                                    event_type="revision_failed",
+                                    actor_id=str(member.agent_id),
+                                    payload={"task_id": str(task.id), "code": error.code},
+                                )
+                        if role == "evaluator":
+                            content = await self._apply_evaluation(
+                                user_id, workflow, team, prior, member, task, content
+                            )
+                        await self.repo.update_task(
+                            user_id, task.id, {"status": "completed", "result": content}
                         )
+                        completed_count += 1
+                        await self.repo.add_event(
+                            user_id,
+                            workflow_id=workflow_id,
+                            event_type="task_updated",
+                            actor_id=str(member.agent_id),
+                            payload={"task_id": str(task.id), "status": "completed"},
+                        )
+                        mtype = "APPROVAL" if role in REVIEW_ROLES else "RESPONSE"
+                        await self._send(
+                            user_id,
+                            workflow_id,
+                            task.id,
+                            member.agent_id,
+                            team.coordinator_agent_id,
+                            mtype,
+                            content,
+                        )
+                        prior.append((agent.name, content))
                         await self.repo.update_workflow(
                             user_id,
                             workflow_id,
@@ -861,59 +1027,11 @@ class WorkflowService:
                                 },
                             },
                         )
-                        continue
-                    turns += 1
-                    total_in += usage.get("input_tokens") or 0
-                    total_out += usage.get("output_tokens") or 0
-                    # Reviewer/tester may demand a revision of the previous result.
-                    if role in REVIEW_ROLES and "REVISION_REQUEST" in content.upper() and prior:
-                        try:
-                            await self._handle_revision(
-                                user_id, workflow, team, prior, member, content
-                            )
-                            content += "\n(Revision requested and sent to the previous agent.)"
-                        except ProviderError as error:
-                            await self.repo.add_event(
-                                user_id,
-                                workflow_id=workflow_id,
-                                event_type="revision_failed",
-                                actor_id=str(member.agent_id),
-                                payload={"task_id": str(task.id), "code": error.code},
-                            )
-                    await self.repo.update_task(
-                        user_id, task.id, {"status": "completed", "result": content}
-                    )
-                    completed_count += 1
-                    await self.repo.add_event(
-                        user_id,
-                        workflow_id=workflow_id,
-                        event_type="task_updated",
-                        actor_id=str(member.agent_id),
-                        payload={"task_id": str(task.id), "status": "completed"},
-                    )
-                    mtype = "APPROVAL" if role in REVIEW_ROLES else "RESPONSE"
-                    await self._send(
-                        user_id,
-                        workflow_id,
-                        task.id,
-                        member.agent_id,
-                        team.coordinator_agent_id,
-                        mtype,
-                        content,
-                    )
-                    prior.append((agent.name, content))
-                    await self.repo.update_workflow(
-                        user_id,
-                        workflow_id,
-                        {
-                            "current_step": turns,
-                            "usage": {
-                                "agent_turns": turns,
-                                "input_tokens": total_in,
-                                "output_tokens": total_out,
-                            },
-                        },
-                    )
+                    if len(chunk) < len(pending_entries):
+                        # The step budget ran out mid-tier: the remaining
+                        # members never start, exactly like the sequential
+                        # loop hitting the limit at the next member.
+                        raise ProviderError("workflow_step_limit")
                 # Every attempted member failed and nothing was ever completed:
                 # only then is the workflow itself a failure.
                 if attempted_count and failed_codes and completed_count == 0:
@@ -1194,6 +1312,57 @@ class WorkflowService:
         )
         prior.append(("Website artifact", summary))
         return 1, in_tokens, out_tokens
+
+    async def _apply_evaluation(
+        self, user_id, workflow, team, prior, member, task, content
+    ) -> str:
+        """Record an Evaluator verdict as a workflow event.
+
+        A "revise" verdict reuses the QA revision path once (bounded by the
+        same per-task revision limit). An unparseable verdict is recorded
+        honestly and never fails the workflow. Returns the result text to
+        store on the evaluator's task.
+        """
+        parsed = parse_evaluation(content)
+        if parsed is None:
+            await self.repo.add_event(
+                user_id,
+                workflow_id=workflow.id,
+                event_type="evaluation_unparsed",
+                actor_id=str(member.agent_id),
+                payload={"task_id": str(task.id), "excerpt": content[:500]},
+            )
+            return content
+        await self.repo.add_event(
+            user_id,
+            workflow_id=workflow.id,
+            event_type="evaluation_completed",
+            actor_id=str(member.agent_id),
+            payload={"task_id": str(task.id), **parsed},
+        )
+        if parsed["verdict"] == "revise" and prior:
+            feedback = (
+                f"Evaluator verdict: revise (score {parsed['score']}/100). "
+                f"{parsed['summary']}"
+            )
+            if parsed["issues"]:
+                feedback += "\nIssues to fix:\n" + "\n".join(
+                    f"- {issue}" for issue in parsed["issues"]
+                )
+            try:
+                await self._handle_revision(
+                    user_id, workflow, team, prior, member, feedback
+                )
+                content += "\n(Revision requested by the evaluator and sent to the previous agent.)"
+            except ProviderError as error:
+                await self.repo.add_event(
+                    user_id,
+                    workflow_id=workflow.id,
+                    event_type="revision_failed",
+                    actor_id=str(member.agent_id),
+                    payload={"task_id": str(task.id), "code": error.code},
+                )
+        return content
 
     async def _handle_revision(
         self, user_id, workflow, team, prior, reviewer_member, feedback_text=""
