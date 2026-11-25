@@ -8,6 +8,9 @@ export const metadata = { title: "Agent Workflows" };
 // /agents/factory route redirects here.
 export default async function AgentWorkflowsPage({ searchParams }) {
   const params = await searchParams;
-  const initialTab = params?.tab === "factory" ? "factory" : "workflows";
+  const initialTab =
+    params?.tab === "factory" || params?.tab === "schedules"
+      ? params.tab
+      : "workflows";
   return <WorkflowsHub initialTab={initialTab} />;
 }

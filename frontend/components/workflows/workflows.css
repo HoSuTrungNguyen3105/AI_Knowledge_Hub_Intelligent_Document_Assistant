@@ -227,3 +227,34 @@
 .wf-msg-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 6px; font-size: 12px; }
 .wf-msg-actions button { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; display: inline-flex; gap: 4px; align-items: center; padding: 0; }
 .wf-run-task { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 6px 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 12.5px; flex-wrap: wrap; }
+
+/* Workflow schedules (Scheduler phase 1) */
+.wf-sched-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.wf-sched-stats .wf-card { display: flex; flex-direction: column; gap: 2px; padding: 14px 18px; }
+.wf-sched-stats strong { font-size: 22px; color: var(--ink); }
+.wf-sched-stats span { font-size: 12px; color: var(--muted); }
+.wf-sched-toolbar { display: flex; gap: 10px; flex-wrap: wrap; }
+.wf-sched-toolbar input, .wf-sched-toolbar select { border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; font: inherit; font-size: 13px; background: #fff; color: var(--ink); }
+.wf-sched-toolbar input { flex: 1 1 220px; }
+.wf-sched-list { display: flex; flex-direction: column; gap: 14px; }
+.wf-sched-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.wf-sched-status.active { background: #dcfce7; color: #166534; margin-top: 0; }
+.wf-sched-status.paused { background: #fef3c7; color: #92400e; margin-top: 0; }
+.wf-sched-status.completed { background: #e0e7ff; color: #3730a3; margin-top: 0; }
+.wf-sched-status.error { background: #fee2e2; color: #b91c1c; margin-top: 0; }
+.wf-sched-desc { font-size: 13px; font-weight: 600; color: var(--accent-dark); margin-top: 6px; }
+.wf-sched-meta { display: flex; gap: 26px; flex-wrap: wrap; margin: 12px 0 0; }
+.wf-sched-meta dt { font-size: 11px; color: var(--muted); }
+.wf-sched-meta dd { margin: 2px 0 0; font-size: 13px; font-weight: 600; }
+.wf-sched-req { font-size: 12.5px; color: #475569; margin-top: 10px; overflow-wrap: anywhere; }
+.wf-sched-card .wf-actions { margin-top: 14px; }
+.wf-sched-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.wf-sched-row label { flex: 1 1 160px; }
+.wf-sched-roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.wf-sched-day { min-width: 42px; min-height: 36px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: #fff; font-size: 12.5px; font-weight: 650; cursor: pointer; }
+.wf-sched-day.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.wf-sched-checks { display: flex; gap: 22px; flex-wrap: wrap; }
+.wf-sched-checks label { flex-direction: row !important; align-items: center; gap: 8px !important; }
+.wf-sched-preview { background: #f6f7fc; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 13px; }
+.wf-sched-preview ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 3px; }
+.wf-sched-warning { color: #92400e; margin-top: 8px; }
