@@ -88,6 +88,10 @@ ERRORS = {
     "eval_prompt_not_found": (404, "That evaluation prompt does not exist."),
     "code_project_not_found": (404, "That code project does not exist."),
     "code_file_not_found": (404, "That code project file does not exist."),
+    "code_upload_too_large": (413, "The uploaded archive is too large."),
+    "code_upload_invalid": (422, "The uploaded file is not a readable ZIP archive."),
+    "code_upload_empty": (422, "No analyzable source files were found in the archive."),
+    "code_callback_unauthorized": (401, "The code analyzer callback secret is invalid."),
     "eval_no_cases": (422, "The dataset has no test cases to run."),
     "eval_no_targets": (422, "Choose at least one model target to evaluate."),
     "eval_run_too_large": (

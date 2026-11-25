@@ -126,3 +126,135 @@ async def test_private_project_is_owner_scoped(owner, client_factory, register, 
 def test_list_requires_auth(client_factory):
     anon = client_factory()
     assert anon.get(f"{BASE}/projects").status_code == 401
+
+
+def make_zip(files: dict) -> bytes:
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for name, content in files.items():
+            archive.writestr(name, content)
+    return buffer.getvalue()
+
+
+def upload(client, data: bytes, name="repo.zip"):
+    return client.post(
+        f"{BASE}/upload",
+        files={"file": (name, data, "application/zip")},
+    )
+
+
+def test_upload_parses_imports_and_skips_junk(owner):
+    data = make_zip(
+        {
+            "repo-main/app/main.py": "from app import service\n",
+            "repo-main/app/service.py": "from app.db import connect\n",
+            "repo-main/app/db.py": "def connect():\n    return None\n",
+            "repo-main/node_modules/junk/index.js": "import x from 'y'\n",
+            "repo-main/README.md": "# docs\n",
+            "repo-main/logo.png": "not really a png",
+            "repo-main/app/test_service.py": "def test_x():\n    pass\n",
+        }
+    )
+    r = upload(owner, data)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["analysis_dispatch"] == "skipped"
+    project = body["project"]
+    assert project["name"] == "repo"
+    assert project["status"] == "COMPLETED"  # no webhook -> static pass completes
+    assert project["stats"]["analyzed_files"] == 3
+    assert project["stats"]["primary_language"] == "python"
+
+    detail = owner.get(f"{BASE}/projects/{project['id']}").json()
+    by_path = {f["file_path"]: f for f in detail["files"]}
+    assert set(by_path) == {"app/main.py", "app/service.py", "app/db.py"}
+    main = by_path["app/main.py"]
+    assert main["import_count"] == 1
+    service_detail = owner.get(
+        f"{BASE}/projects/{project['id']}/files/{by_path['app/service.py']['id']}"
+    ).json()
+    assert service_detail["imports"][0]["target_file"] == "app/db.py"
+    assert service_detail["imports"][0]["target_id"]
+    db_detail = owner.get(
+        f"{BASE}/projects/{project['id']}/files/{by_path['app/db.py']['id']}"
+    ).json()
+    assert db_detail["imported_by"] == ["app/service.py"]
+
+
+def test_upload_rejects_invalid_and_empty(owner):
+    r = upload(owner, b"this is not a zip")
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "code_upload_invalid"
+    junk = make_zip({"node_modules/x/index.js": "code", "a.png": "img"})
+    r = upload(owner, junk)
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "code_upload_empty"
+
+
+def test_upload_dispatch_failure_still_completes(owner, settings):
+    settings.n8n_code_analyzer_webhook_url = "http://127.0.0.1:9/hook"
+    data = make_zip({"src/a.py": "import os\n"})
+    r = upload(owner, data)
+    assert r.status_code == 201, r.text
+    assert r.json()["analysis_dispatch"] == "failed"
+    assert r.json()["project"]["status"] == "COMPLETED"
+
+
+def test_callback_applies_ai_results(owner):
+    data = make_zip(
+        {
+            "src/main.py": "from src import db\n",
+            "src/db.py": "def connect():\n    return None\n",
+        }
+    )
+    project = upload(owner, data).json()["project"]
+    detail = owner.get(f"{BASE}/projects/{project['id']}").json()
+    main_file = {f["file_path"]: f for f in detail["files"]}["src/main.py"]
+
+    r = owner.post(
+        f"{BASE}/webhook/callback",
+        json={
+            "project_id": project["id"],
+            "status": "completed",
+            "files": [
+                {
+                    "file_id": main_file["id"],
+                    "file_path": "src/main.py",
+                    "ai_summary": "Điểm khởi động, mở kết nối DB.",
+                    "role_tag": "Entry Point",
+                    "imports": [
+                        {
+                            "target_file": "src/db.py",
+                            "relation_label": "Mở kết nối khi khởi động",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"received": True, "updated": 1}
+    fd = owner.get(
+        f"{BASE}/projects/{project['id']}/files/{main_file['id']}"
+    ).json()
+    assert fd["ai_summary"] == "Điểm khởi động, mở kết nối DB."
+    assert fd["imports"][0]["relation_label"] == "Mở kết nối khi khởi động"
+
+
+def test_callback_requires_secret_when_configured(owner, settings):
+    settings.n8n_code_analyzer_webhook_secret = "topsecret"
+    data = make_zip({"src/a.py": "import os\n"})
+    project = upload(owner, data).json()["project"]
+    payload = {"project_id": project["id"], "status": "completed", "files": []}
+    r = owner.post(f"{BASE}/webhook/callback", json=payload)
+    assert r.status_code == 401
+    assert r.json()["detail"]["code"] == "code_callback_unauthorized"
+    r = owner.post(
+        f"{BASE}/webhook/callback",
+        json=payload,
+        headers={"x-mindflow-secret": "topsecret"},
+    )
+    assert r.status_code == 200

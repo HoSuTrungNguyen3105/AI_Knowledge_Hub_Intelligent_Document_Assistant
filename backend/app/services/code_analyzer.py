@@ -10,19 +10,27 @@ which every signed-in user may open read-only.
 
 from uuid import UUID, uuid4
 
+import httpx
+
 from app.models.base import utcnow
 from app.schemas.code_analyzer import (
+    CodeCallbackIn,
+    CodeCallbackOut,
     CodeFileDetail,
     CodeFileSummary,
     CodeProjectDetail,
     CodeProjectSummary,
     SeedDemoOut,
+    UploadOut,
 )
 from app.services.ai.base_provider import ProviderError
+from app.services.code_parser import MAX_ZIP_BYTES, parse_codebase
 
 PROJECTS = "code_projects"
 FILES = "code_project_files"
 CLUSTER_THRESHOLD = 50
+BATCH_SIZE = 12
+CONTENT_EXCERPT_CHARS = 6000
 
 
 def module_group_of(file_path: str) -> str:
@@ -376,3 +384,210 @@ class CodeAnalyzerService:
         if docs:
             await self.db[FILES].insert_many(docs)
         return SeedDemoOut(created=True, project=self._summary(project))
+
+    # --- upload + n8n analysis ------------------------------------------------
+    async def ingest_upload(
+        self,
+        user_id: UUID,
+        filename: str,
+        data: bytes,
+        transport: httpx.BaseTransport | None = None,
+    ) -> UploadOut:
+        if len(data) > MAX_ZIP_BYTES:
+            raise ProviderError("code_upload_too_large")
+        if not data.startswith(b"PK"):
+            raise ProviderError("code_upload_invalid")
+        parsed = parse_codebase(data)
+        if parsed["total_raw_files"] == 0:
+            raise ProviderError("code_upload_invalid")
+        files = parsed["files"]
+        if not files:
+            raise ProviderError("code_upload_empty")
+        now = utcnow()
+        project_id = uuid4()
+        ids = {f["file_path"]: uuid4() for f in files}
+        docs = []
+        for f in files:
+            docs.append(
+                {
+                    "_id": ids[f["file_path"]],
+                    "project_id": str(project_id),
+                    "file_path": f["file_path"],
+                    "file_name": f["file_path"].rsplit("/", 1)[-1],
+                    "module_group": module_group_of(f["file_path"]),
+                    "language": f["language"],
+                    "ai_summary": "",
+                    "role_tag": f["role_tag"],
+                    "imports": [
+                        {
+                            "target_file": target,
+                            "target_id": str(ids[target]),
+                            "relation_label": "",
+                        }
+                        for target in f["targets"]
+                    ],
+                    "imported_by": [],
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+        by_path = {d["file_path"]: d for d in docs}
+        for doc in docs:
+            for imp in doc["imports"]:
+                by_path[imp["target_file"]]["imported_by"].append(doc["file_path"])
+        name = (filename or "codebase.zip").removesuffix(".zip") or "Codebase"
+        project = {
+            "_id": project_id,
+            "user_id": str(user_id),
+            "name": name[:120],
+            "description": "",
+            "is_public_demo": False,
+            "status": "PROCESSING",
+            "stats": {
+                "total_raw_files": parsed["total_raw_files"],
+                "analyzed_files": len(docs),
+                "primary_language": parsed["primary_language"],
+            },
+            "diagram_data": build_diagram(
+                [
+                    {
+                        "id": str(d["_id"]),
+                        "file_name": d["file_name"],
+                        "module_group": d["module_group"],
+                        "role_tag": d["role_tag"],
+                        "imports": d["imports"],
+                    }
+                    for d in docs
+                ]
+            ),
+            "created_at": now,
+            "updated_at": now,
+        }
+        await self.db[PROJECTS].insert_one(project)
+        await self.db[FILES].insert_many(docs)
+        dispatch = await self._dispatch_batches(project_id, files, ids, transport)
+        if dispatch != "sent":
+            # Without the AI pass the static result is still complete and
+            # usable; the project must not spin in PROCESSING forever.
+            await self.db[PROJECTS].update_one(
+                {"_id": project_id},
+                {"$set": {"status": "COMPLETED", "updated_at": utcnow()}},
+            )
+            project["status"] = "COMPLETED"
+        return UploadOut(
+            project=self._summary(project), analysis_dispatch=dispatch
+        )
+
+    async def _dispatch_batches(
+        self, project_id: UUID, files: list[dict], ids: dict, transport
+    ) -> str:
+        url = self.settings.n8n_code_analyzer_webhook_url
+        if not url:
+            return "skipped"
+        hook_secret = self.settings.n8n_code_analyzer_webhook_secret
+        headers = {"Content-Type": "application/json"}
+        if hook_secret:
+            headers["x-mindflow-secret"] = hook_secret
+        batches = [
+            files[i : i + BATCH_SIZE] for i in range(0, len(files), BATCH_SIZE)
+        ]
+        all_ok = True
+        async with httpx.AsyncClient(timeout=30.0, transport=transport) as client:
+            for index, batch in enumerate(batches):
+                payload = {
+                    "event": "code_analysis.batch",
+                    "project_id": str(project_id),
+                    "batch_index": index,
+                    "batch_count": len(batches),
+                    "files": [
+                        {
+                            "file_id": str(ids[f["file_path"]]),
+                            "file_path": f["file_path"],
+                            "language": f["language"],
+                            "imports": f["targets"],
+                            "content_excerpt": f["content"][:CONTENT_EXCERPT_CHARS],
+                        }
+                        for f in batch
+                    ],
+                }
+                try:
+                    response = await client.post(url, json=payload, headers=headers)
+                    ok = (
+                        response.status_code == 200
+                        and response.json().get("received") is True
+                    )
+                except (httpx.HTTPError, ValueError):
+                    ok = False
+                all_ok = all_ok and ok
+        return "sent" if all_ok else "failed"
+
+    async def apply_callback(
+        self, secret: str | None, payload: CodeCallbackIn
+    ) -> CodeCallbackOut:
+        expected = self.settings.n8n_code_analyzer_webhook_secret
+        if expected and secret != expected:
+            raise ProviderError("code_callback_unauthorized")
+        project = await self.db[PROJECTS].find_one({"_id": payload.project_id})
+        if project is None:
+            raise ProviderError("code_project_not_found")
+        updated = 0
+        for item in payload.files:
+            query: dict = {"project_id": str(payload.project_id)}
+            if item.file_id is not None:
+                query["_id"] = item.file_id
+            else:
+                query["file_path"] = item.file_path
+            doc = await self.db[FILES].find_one(query)
+            if doc is None:
+                continue
+            changes: dict = {"updated_at": utcnow()}
+            if item.ai_summary:
+                changes["ai_summary"] = item.ai_summary
+            if item.role_tag:
+                changes["role_tag"] = item.role_tag
+            labels = {
+                i.target_file: i.relation_label
+                for i in item.imports
+                if i.relation_label
+            }
+            if labels:
+                changes["imports"] = [
+                    {
+                        **imp,
+                        "relation_label": labels.get(
+                            imp.get("target_file"), imp.get("relation_label", "")
+                        ),
+                    }
+                    for imp in doc.get("imports", [])
+                ]
+            await self.db[FILES].update_one(
+                {"_id": doc["_id"]}, {"$set": changes}
+            )
+            updated += 1
+        status = {"completed": "COMPLETED", "failed": "FAILED"}.get(payload.status)
+        if status:
+            cursor = self.db[FILES].find({"project_id": str(payload.project_id)})
+            docs = [doc async for doc in cursor]
+            diagram = build_diagram(
+                [
+                    {
+                        "id": str(d["_id"]),
+                        "file_name": d["file_name"],
+                        "module_group": d.get("module_group", ""),
+                        "role_tag": d.get("role_tag", ""),
+                        "imports": d.get("imports") or [],
+                    }
+                    for d in docs
+                ]
+            )
+            await self.db[PROJECTS].update_one(
+                {"_id": payload.project_id},
+                {
+                    "$set": {
+                        "status": status,
+                        "diagram_data": diagram,
+                        "updated_at": utcnow(),
+                    }
+                },
+            )
+        return CodeCallbackOut(received=True, updated=updated)
