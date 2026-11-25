@@ -75,6 +75,24 @@ class Settings(BaseSettings):
     # the AI pass; uploads then complete with static parsing only.
     n8n_code_analyzer_webhook_url: str = ""
     n8n_code_analyzer_webhook_secret: str = ""
+    # n8n Platform (phase 1): management access to the same self-hosted n8n
+    # through its public REST API. The API key is created by the instance
+    # owner inside n8n (Settings -> n8n API) and lives ONLY in this server's
+    # environment: it is never stored in MongoDB, never sent to the browser
+    # and never attached to webhook calls. Empty key = platform disabled;
+    # the status endpoint then reports "not configured" instead of failing.
+    n8n_api_key: SecretStr | None = None
+    # REST API origin of the n8n instance. Empty = derive from
+    # n8n_webhook_base_url (the same instance serves both).
+    n8n_api_base_url: str = ""
+    n8n_api_timeout_seconds: int = Field(default=30, ge=5, le=120)
+
+    @field_validator("n8n_api_key")
+    @classmethod
+    def validate_n8n_api_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None or value.get_secret_value().strip() == "":
+            return None
+        return value
 
     @field_validator("credential_encryption_key")
     @classmethod
@@ -115,9 +133,12 @@ class Settings(BaseSettings):
             raise ValueError("MONGODB_URI must start with mongodb:// or mongodb+srv://")
         return value
 
-    @field_validator("n8n_webhook_base_url", "n8n_factory_callback_base_url")
+    @field_validator("n8n_webhook_base_url", "n8n_factory_callback_base_url", "n8n_api_base_url")
     @classmethod
-    def validate_n8n_base_url(cls, value: str) -> str:
+    def validate_n8n_base_url(cls, value: str, info) -> str:
+        if value == "" and info.field_name == "n8n_api_base_url":
+            # Only n8n_api_base_url may be empty (derive from the webhook base).
+            return value
         parsed = urlsplit(value)
         if (
             parsed.scheme not in {"http", "https"}

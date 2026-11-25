@@ -61,6 +61,19 @@ ERRORS = {
         502,
         "The n8n workflow run failed. Open the execution in n8n for details.",
     ),
+    "n8n_api_not_configured": (
+        503,
+        "The n8n API key is not configured on this server. Create one in n8n (Settings -> n8n API) and set N8N_API_KEY.",
+    ),
+    "n8n_api_unauthorized": (
+        502,
+        "n8n rejected the configured API key. Check N8N_API_KEY on the server.",
+    ),
+    "n8n_api_failed": (
+        502,
+        "The n8n API request failed. Open n8n for details.",
+    ),
+    "n8n_workflow_not_found": (404, "That n8n workflow does not exist."),
     "invalid_factory_roles": (422, "Assign agents only to the seven team roles."),
     "factory_run_not_found": (404, "That AI Factory run does not exist."),
     "schedule_not_found": (404, "That workflow schedule does not exist."),
