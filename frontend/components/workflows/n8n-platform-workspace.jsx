@@ -2,9 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Braces,
   ExternalLink,
+  FileJson,
   Loader2,
   Network,
+  Plus,
   Power,
   RefreshCw,
   Save,
@@ -12,6 +15,33 @@ import {
   Workflow as WorkflowIcon,
   X,
 } from "lucide-react";
+
+const SAMPLE_WORKFLOW_JSON = `{
+  "name": "Workflow mẫu từ MindFlow",
+  "nodes": [
+    {
+      "parameters": { "path": "xin-chao", "httpMethod": "POST" },
+      "id": "11111111-1111-4111-8111-111111111111",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "22222222-2222-4222-8222-222222222222"
+    },
+    {
+      "parameters": { "jsCode": "return [{ json: { message: 'Xin chào từ MindFlow' } }];" },
+      "id": "33333333-3333-4333-8333-333333333333",
+      "name": "Trả lời",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [260, 0]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Trả lời", "type": "main", "index": 0 }]] }
+  },
+  "settings": {}
+}`;
 import {
   getN8nPlatformError,
   getN8nStatusText,
@@ -48,7 +78,139 @@ export function N8nPlatformWorkspace() {
   const [edits, setEdits] = useState({});
   const [saving, setSaving] = useState(false);
   const [saveNote, setSaveNote] = useState("");
+  const [jsonText, setJsonText] = useState("");
+  const [jsonNote, setJsonNote] = useState("");
+  const [createName, setCreateName] = useState("");
+  const [createJson, setCreateJson] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createNote, setCreateNote] = useState("");
   const abortRef = useRef(null);
+
+  // Fill the parameter form from a pasted JSON object shaped
+  // { "Node name": { "param.path": value, ... }, ... }. Only parameters
+  // that already exist (and match the kind) are filled; the rest are
+  // reported as skipped so nothing is silently dropped.
+  function applyJsonToForm() {
+    if (!detail) return;
+    setJsonNote("");
+    setError("");
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      setJsonNote("JSON không hợp lệ — hãy kiểm tra lại cú pháp.");
+      return;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      setJsonNote('JSON phải là một object dạng { "Tên node": { "đường.tham.số": giá trị } }.');
+      return;
+    }
+    const next = { ...edits };
+    let applied = 0;
+    const skipped = [];
+    for (const [nodeName, params] of Object.entries(parsed)) {
+      const node = detail.nodes.find((item) => item.name === nodeName);
+      if (!node || !params || typeof params !== "object" || Array.isArray(params)) {
+        skipped.push(nodeName);
+        continue;
+      }
+      for (const [paramPath, rawValue] of Object.entries(params)) {
+        const param = node.parameters.find((item) => item.path === paramPath);
+        if (!param) {
+          skipped.push(`${nodeName}.${paramPath}`);
+          continue;
+        }
+        if (param.kind === "boolean") {
+          if (typeof rawValue !== "boolean") {
+            skipped.push(`${nodeName}.${paramPath}`);
+            continue;
+          }
+          next[editKey(nodeName, paramPath)] = rawValue;
+        } else if (param.kind === "number") {
+          const num = typeof rawValue === "number" ? rawValue : Number(rawValue);
+          if (typeof rawValue === "boolean" || Number.isNaN(num)) {
+            skipped.push(`${nodeName}.${paramPath}`);
+            continue;
+          }
+          next[editKey(nodeName, paramPath)] = String(num);
+        } else {
+          if (typeof rawValue !== "string") {
+            skipped.push(`${nodeName}.${paramPath}`);
+            continue;
+          }
+          next[editKey(nodeName, paramPath)] = rawValue;
+        }
+        applied += 1;
+      }
+    }
+    setEdits(next);
+    setJsonNote(
+      `Đã đổ ${applied} tham số vào form.` +
+        (skipped.length
+          ? ` Bỏ qua ${skipped.length} mục không khớp node/tham số/kiểu: ${skipped.join(", ")}`
+          : "") +
+        " Kiểm tra lại rồi bấm Cập nhật sang n8n.",
+    );
+  }
+
+  // Export the form's current values as the same JSON shape, so the user
+  // can copy, tweak in an editor and paste back.
+  function exportFormToJson() {
+    if (!detail) return;
+    const out = {};
+    for (const node of detail.nodes) {
+      const params = {};
+      for (const param of node.parameters) {
+        const value = edits[editKey(node.name, param.path)];
+        if (value === undefined) continue;
+        params[param.path] =
+          param.kind === "number" ? Number(value) : param.kind === "boolean" ? Boolean(value) : value;
+      }
+      if (Object.keys(params).length) out[node.name] = params;
+    }
+    setJsonText(JSON.stringify(out, null, 2));
+    setJsonNote("Đã xuất giá trị hiện tại của form vào ô JSON.");
+  }
+
+  async function createWorkflow() {
+    setCreateNote("");
+    setError("");
+    let parsed;
+    try {
+      parsed = JSON.parse(createJson);
+    } catch {
+      setCreateNote("JSON không hợp lệ — hãy kiểm tra lại cú pháp.");
+      return;
+    }
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.nodes)) {
+      setCreateNote("JSON cần có mảng nodes (định dạng workflow của n8n). Hãy bấm Chèn JSON mẫu để xem khuôn.");
+      return;
+    }
+    const name = createName.trim() || (typeof parsed.name === "string" ? parsed.name : "");
+    if (!name) {
+      setCreateNote("Hãy nhập tên workflow (hoặc để field name trong JSON).");
+      return;
+    }
+    setCreating(true);
+    try {
+      const created = await n8nPlatformService.createWorkflow({
+        name,
+        nodes: parsed.nodes,
+        connections: parsed.connections || {},
+        settings: parsed.settings || {},
+      });
+      setCreateNote(
+        `Đã tạo workflow "${created.name}" trong n8n (đang tắt). Mở n8n để gắn credential và Publish khi sẵn sàng.`,
+      );
+      setCreateName("");
+      setCreateJson("");
+      load();
+    } catch (err) {
+      setError(getN8nPlatformError(err, "Không tạo được workflow. Hãy thử lại."));
+    } finally {
+      setCreating(false);
+    }
+  }
 
   function editKey(nodeName, paramPath) {
     return `${nodeName}::${paramPath}`;
@@ -57,6 +219,8 @@ export function N8nPlatformWorkspace() {
   async function openEditor(workflow) {
     setDetailLoading(true);
     setSaveNote("");
+    setJsonText("");
+    setJsonNote("");
     setError("");
     try {
       const data = await n8nPlatformService.getWorkflow(workflow.id);
@@ -80,6 +244,8 @@ export function N8nPlatformWorkspace() {
     setDetail(null);
     setEdits({});
     setSaveNote("");
+    setJsonText("");
+    setJsonNote("");
   }
 
   async function saveEditor() {
@@ -329,6 +495,28 @@ export function N8nPlatformWorkspace() {
             Chỉ sửa được giá trị tham số có sẵn (chuỗi, số, bật/tắt). Thêm/bớt node, nối dây và
             credential vẫn làm trong n8n. Bấm Cập nhật là backend ghi thẳng sang n8n qua REST API.
           </p>
+          <div className="n8n-node">
+            <h3>
+              <Braces size={15} /> Nhập JSON để đổ nhanh vào form
+              <span style={{ marginLeft: "auto" }} className="fx-actions">
+                <button type="button" className="fx-btn" onClick={exportFormToJson}>
+                  <FileJson size={15} /> Xuất JSON từ form
+                </button>
+                <button type="button" className="fx-btn" onClick={applyJsonToForm}>
+                  <Braces size={15} /> Đổ JSON vào form
+                </button>
+              </span>
+            </h3>
+            <textarea
+              className="fx-textarea n8n-json"
+              rows={7}
+              value={jsonText}
+              onChange={(event) => setJsonText(event.target.value)}
+              placeholder={'{\n  "Tên node": { "path": "ai-team/start", "options.timeout": 60 }\n}'}
+              spellCheck={false}
+            />
+            {jsonNote ? <p className="fx-run-meta">{jsonNote}</p> : null}
+          </div>
           {saveNote ? <div className="fx-chip-row"><span className="fx-chip">{saveNote}</span></div> : null}
           {detail.nodes.map((node) => (
             <div key={node.name} className="n8n-node">
@@ -389,6 +577,55 @@ export function N8nPlatformWorkspace() {
           ))}
         </section>
       ) : null}
+
+      <section className="fx-card">
+        <h2>
+          <Plus size={17} /> Tạo workflow mới trong n8n
+        </h2>
+        <p className="fx-run-meta">
+          Dán định dạng workflow của n8n (nodes + connections) hoặc sửa từ JSON mẫu. Workflow được
+          tạo ở trạng thái tắt — gắn credential và Publish trong n8n khi sẵn sàng. Đừng dán key thật
+          vào JSON; credential trong n8n được tham chiếu bằng id, không chứa key.
+        </p>
+        <label className="fx-field">
+          Tên workflow
+          <input
+            className="fx-input"
+            type="text"
+            value={createName}
+            onChange={(event) => setCreateName(event.target.value)}
+            placeholder="Để trống sẽ lấy field name trong JSON"
+          />
+        </label>
+        <textarea
+          className="fx-textarea n8n-json"
+          rows={10}
+          value={createJson}
+          onChange={(event) => setCreateJson(event.target.value)}
+          placeholder="Dán JSON workflow tại đây…"
+          spellCheck={false}
+        />
+        {createNote ? <p className="fx-run-meta">{createNote}</p> : null}
+        <div className="fx-actions">
+          <button
+            type="button"
+            className="fx-btn"
+            onClick={() => setCreateJson(SAMPLE_WORKFLOW_JSON)}
+          >
+            <FileJson size={15} /> Chèn JSON mẫu
+          </button>
+          <button
+            type="button"
+            className="fx-btn primary"
+            onClick={createWorkflow}
+            disabled={creating || !healthy}
+            title={healthy ? "" : "Cần kết nối được n8n trước"}
+          >
+            {creating ? <Loader2 size={15} className="spin" /> : <Plus size={15} />}
+            Tạo workflow trong n8n
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
