@@ -7,7 +7,10 @@ import {
   Network,
   Power,
   RefreshCw,
+  Save,
+  SlidersHorizontal,
   Workflow as WorkflowIcon,
+  X,
 } from "lucide-react";
 import {
   getN8nPlatformError,
@@ -40,7 +43,92 @@ export function N8nPlatformWorkspace() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toggling, setToggling] = useState("");
+  const [detail, setDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [edits, setEdits] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [saveNote, setSaveNote] = useState("");
   const abortRef = useRef(null);
+
+  function editKey(nodeName, paramPath) {
+    return `${nodeName}::${paramPath}`;
+  }
+
+  async function openEditor(workflow) {
+    setDetailLoading(true);
+    setSaveNote("");
+    setError("");
+    try {
+      const data = await n8nPlatformService.getWorkflow(workflow.id);
+      const initial = {};
+      for (const node of data.nodes) {
+        for (const param of node.parameters) {
+          initial[editKey(node.name, param.path)] =
+            param.kind === "boolean" ? Boolean(param.value) : String(param.value ?? "");
+        }
+      }
+      setEdits(initial);
+      setDetail(data);
+    } catch (err) {
+      setError(getN8nPlatformError(err, "Không tải được cấu hình workflow. Hãy thử lại."));
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  function closeEditor() {
+    setDetail(null);
+    setEdits({});
+    setSaveNote("");
+  }
+
+  async function saveEditor() {
+    if (!detail) return;
+    const updates = [];
+    for (const node of detail.nodes) {
+      for (const param of node.parameters) {
+        const key = editKey(node.name, param.path);
+        const edited = edits[key];
+        if (edited === undefined) continue;
+        const original = param.kind === "boolean" ? Boolean(param.value) : String(param.value ?? "");
+        if (edited === original) continue;
+        let value = edited;
+        if (param.kind === "number") {
+          value = Number(edited);
+          if (Number.isNaN(value)) {
+            setError(`Tham số ${param.path} của node ${node.name} phải là số.`);
+            return;
+          }
+        }
+        updates.push({ node: node.name, path: param.path, value });
+      }
+    }
+    if (updates.length === 0) {
+      setSaveNote("Chưa có thay đổi nào.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setSaveNote("");
+    try {
+      const data = await n8nPlatformService.updateParameters(detail.id, updates);
+      const initial = {};
+      for (const node of data.nodes) {
+        for (const param of node.parameters) {
+          initial[editKey(node.name, param.path)] =
+            param.kind === "boolean" ? Boolean(param.value) : String(param.value ?? "");
+        }
+      }
+      setEdits(initial);
+      setDetail(data);
+      setSaveNote(`Đã cập nhật ${updates.length} tham số sang n8n.`);
+      load();
+    } catch (err) {
+      setError(getN8nPlatformError(err, "Không cập nhật được tham số. Hãy thử lại."));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const load = useCallback(async () => {
     abortRef.current?.abort();
@@ -194,6 +282,15 @@ export function N8nPlatformWorkspace() {
                     )}
                     {workflow.active ? "Tắt" : "Bật"}
                   </button>
+                  <button
+                    type="button"
+                    className="fx-btn"
+                    onClick={() => openEditor(workflow)}
+                    disabled={!healthy || detailLoading}
+                    title={healthy ? "Sửa nhanh tham số các node" : "Cần kết nối được n8n trước"}
+                  >
+                    <SlidersHorizontal size={15} /> Cấu hình
+                  </button>
                   <a
                     className="fx-btn"
                     href={workflow.editor_url}
@@ -208,6 +305,90 @@ export function N8nPlatformWorkspace() {
           </div>
         ) : null}
       </section>
+
+      {detail ? (
+        <section className="fx-card">
+          <h2>
+            <SlidersHorizontal size={17} /> Cấu hình nhanh — {detail.name}
+            <span style={{ marginLeft: "auto" }} className="fx-actions">
+              <button type="button" className="fx-btn" onClick={closeEditor} disabled={saving}>
+                <X size={15} /> Đóng
+              </button>
+              <button
+                type="button"
+                className="fx-btn primary"
+                onClick={saveEditor}
+                disabled={saving}
+              >
+                {saving ? <Loader2 size={15} className="spin" /> : <Save size={15} />}
+                Cập nhật sang n8n
+              </button>
+            </span>
+          </h2>
+          <p className="fx-run-meta">
+            Chỉ sửa được giá trị tham số có sẵn (chuỗi, số, bật/tắt). Thêm/bớt node, nối dây và
+            credential vẫn làm trong n8n. Bấm Cập nhật là backend ghi thẳng sang n8n qua REST API.
+          </p>
+          {saveNote ? <div className="fx-chip-row"><span className="fx-chip">{saveNote}</span></div> : null}
+          {detail.nodes.map((node) => (
+            <div key={node.name} className="n8n-node">
+              <h3>
+                {node.name || "(node chưa đặt tên)"}
+                <span className="fx-run-meta">{node.type}</span>
+              </h3>
+              {node.parameters.length === 0 ? (
+                <p className="fx-run-meta">Node này không có tham số dạng giá trị đơn.</p>
+              ) : (
+                node.parameters.map((param) => {
+                  const key = editKey(node.name, param.path);
+                  const value = edits[key];
+                  return (
+                    <label key={param.path} className="n8n-param">
+                      <span className="n8n-param-name">{param.path}</span>
+                      {param.kind === "boolean" ? (
+                        <input
+                          type="checkbox"
+                          checked={Boolean(value)}
+                          onChange={(event) =>
+                            setEdits((current) => ({ ...current, [key]: event.target.checked }))
+                          }
+                        />
+                      ) : param.kind === "number" ? (
+                        <input
+                          className="fx-input"
+                          type="number"
+                          value={value ?? ""}
+                          onChange={(event) =>
+                            setEdits((current) => ({ ...current, [key]: event.target.value }))
+                          }
+                        />
+                      ) : typeof value === "string" && (value.length > 100 || value.includes("\n")) ? (
+                        <textarea
+                          className="fx-textarea"
+                          rows={4}
+                          value={value ?? ""}
+                          onChange={(event) =>
+                            setEdits((current) => ({ ...current, [key]: event.target.value }))
+                          }
+                        />
+                      ) : (
+                        <input
+                          className="fx-input"
+                          type="text"
+                          value={value ?? ""}
+                          onChange={(event) =>
+                            setEdits((current) => ({ ...current, [key]: event.target.value }))
+                          }
+                        />
+                      )}
+                    </label>
+                  );
+                })
+              )}
+            </div>
+          ))}
+        </section>
+      ) : null}
     </div>
   );
 }
