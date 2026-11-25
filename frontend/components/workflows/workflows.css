@@ -258,3 +258,12 @@
 .wf-sched-preview { background: #f6f7fc; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 13px; }
 .wf-sched-preview ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 3px; }
 .wf-sched-warning { color: #92400e; margin-top: 8px; }
+
+.wf-sched-status.running { background: #dbeafe; color: #1d4ed8; margin-top: 0; }
+.wf-sched-status.success { background: #dcfce7; color: #166534; margin-top: 0; }
+.wf-sched-status.failed { background: #fee2e2; color: #b91c1c; margin-top: 0; }
+.wf-sched-status.skipped { background: #fef3c7; color: #92400e; margin-top: 0; }
+.wf-sched-history { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.wf-sched-history ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.wf-sched-history li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+.wf-sched-history-error { color: #b91c1c; font-size: 12px; }
