@@ -25,6 +25,19 @@ export const codeAnalyzerService = {
     );
     return data;
   },
+  async regenerate(id, provider, model) {
+    const form = new FormData();
+    if (provider && model) {
+      form.append("provider", provider);
+      form.append("model", model);
+    }
+    const { data } = await api.post(
+      `${projectPath(id)}/report`,
+      form,
+      { timeout: 300000 },
+    );
+    return data;
+  },
   async upload(file, provider, model) {
     const form = new FormData();
     form.append("file", file);
