@@ -74,6 +74,10 @@ ERRORS = {
         "The n8n API request failed. Open n8n for details.",
     ),
     "n8n_workflow_not_found": (404, "That n8n workflow does not exist."),
+    "n8n_parameter_not_found": (
+        422,
+        "That node or parameter does not exist in the workflow.",
+    ),
     "invalid_factory_roles": (422, "Assign agents only to the seven team roles."),
     "factory_run_not_found": (404, "That AI Factory run does not exist."),
     "schedule_not_found": (404, "That workflow schedule does not exist."),

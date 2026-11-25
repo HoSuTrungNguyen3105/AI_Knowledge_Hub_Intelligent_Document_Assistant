@@ -51,14 +51,30 @@ class FakeN8nApi:
         self.status = status
         self.gets = []
         self.posts = []
+        self.patches = []
 
     async def get_json(self, url, api_key, timeout_seconds):
         self.gets.append({"url": url, "api_key": api_key})
         if self.status != 200:
             return self.status, {"message": "nope"}
+        if "/workflows/" in url and "limit" not in url:
+            workflow_id = url.rsplit("/workflows/", 1)[1]
+            for raw in self.workflows:
+                if raw["id"] == workflow_id:
+                    import copy
+
+                    return 200, copy.deepcopy(raw)
+            return 404, {"message": "not found"}
         if "limit=1" in url:
             return 200, {"data": self.workflows[:1], "nextCursor": None}
         return 200, {"data": list(self.workflows), "nextCursor": None}
+
+    async def patch_json(self, url, api_key, payload, timeout_seconds):
+        self.patches.append({"url": url, "api_key": api_key, "payload": payload})
+        if self.status != 200:
+            return self.status, {"message": "nope"}
+        workflow_id = url.rsplit("/workflows/", 1)[1]
+        return 200, {**payload, "id": workflow_id, "active": True, "tags": []}
 
     async def post_json(self, url, api_key, timeout_seconds):
         self.posts.append({"url": url, "api_key": api_key})
@@ -180,6 +196,79 @@ async def test_activate_unconfigured_is_503(owner, settings):
     response = owner.post(f"{BASE}/workflows/wf07abc/activate")
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "n8n_api_not_configured"
+
+
+async def test_workflow_detail_lists_scalar_params(owner, fake_api):
+    response = owner.get(f"{BASE}/workflows/wf07abc")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["name"] == WORKFLOW_07["name"]
+    assert len(body["nodes"]) == 3
+    webhook_node = body["nodes"][0]
+    params = {p["path"]: p for p in webhook_node["parameters"]}
+    assert params["path"] == {"path": "path", "value": "ai-team/start", "kind": "string"}
+
+
+async def test_update_parameters_changes_value(owner, fake_api):
+    fake_api.workflows = [
+        {
+            **WORKFLOW_07,
+            "nodes": [
+                {
+                    "name": "Start",
+                    "type": "n8n-nodes-base.webhook",
+                    "parameters": {"path": "ai-team/start", "options": {"timeout": 30}},
+                }
+            ],
+        }
+    ]
+    response = owner.post(
+        f"{BASE}/workflows/wf07abc/parameters",
+        json={"updates": [{"node": "Start", "path": "options.timeout", "value": 60}]},
+    )
+    assert response.status_code == 200, response.text
+    assert len(fake_api.patches) == 1
+    patch = fake_api.patches[0]
+    assert patch["url"].endswith("/api/v1/workflows/wf07abc")
+    sent_node = patch["payload"]["nodes"][0]
+    assert sent_node["parameters"]["options"]["timeout"] == 60
+    assert sent_node["parameters"]["path"] == "ai-team/start"
+    params = {p["path"]: p["value"] for p in response.json()["nodes"][0]["parameters"]}
+    assert params["options.timeout"] == 60
+
+
+async def test_update_parameters_rejects_unknown_and_type_mismatch(owner, fake_api):
+    fake_api.workflows = [
+        {
+            **WORKFLOW_07,
+            "nodes": [
+                {
+                    "name": "Start",
+                    "type": "n8n-nodes-base.webhook",
+                    "parameters": {"path": "ai-team/start"},
+                }
+            ],
+        }
+    ]
+    unknown = owner.post(
+        f"{BASE}/workflows/wf07abc/parameters",
+        json={"updates": [{"node": "Start", "path": "missing", "value": "x"}]},
+    )
+    assert unknown.status_code == 422
+    assert unknown.json()["detail"]["code"] == "n8n_parameter_not_found"
+    mismatch = owner.post(
+        f"{BASE}/workflows/wf07abc/parameters",
+        json={"updates": [{"node": "Start", "path": "path", "value": 42}]},
+    )
+    assert mismatch.status_code == 422
+    # Nothing was PATCHed for rejected updates.
+    assert fake_api.patches == []
+
+
+async def test_workflow_detail_unknown_is_404(owner, fake_api):
+    response = owner.get(f"{BASE}/workflows/nope")
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "n8n_workflow_not_found"
 
 
 def test_parse_workflow_shape():

@@ -3,7 +3,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from app.api.dependencies import AppSettings, CurrentUser, Database
-from app.schemas.n8n_platform import N8nStatusOut, N8nWorkflowListOut, N8nWorkflowOut
+from app.schemas.n8n_platform import (
+    N8nParamUpdatesIn,
+    N8nStatusOut,
+    N8nWorkflowDetailOut,
+    N8nWorkflowListOut,
+    N8nWorkflowOut,
+)
 from app.services.n8n_platform import N8nApiHTTP, N8nPlatformService
 
 router = APIRouter(prefix="/ai/n8n-platform", tags=["n8n platform"])
@@ -40,6 +46,35 @@ async def list_n8n_workflows(
     """The instance's workflows, refreshed from the n8n REST API. When the
     refresh fails the last mirrored list is returned with `sync_error` set."""
     return await N8nPlatformService(db, settings, http).list_workflows()
+
+
+@router.get("/workflows/{workflow_id}", response_model=N8nWorkflowDetailOut)
+async def get_n8n_workflow_detail(
+    workflow_id: str,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> N8nWorkflowDetailOut:
+    """One workflow with every node's editable (scalar) parameters."""
+    return await N8nPlatformService(db, settings, http).get_workflow_detail(workflow_id)
+
+
+@router.post("/workflows/{workflow_id}/parameters", response_model=N8nWorkflowDetailOut)
+async def update_n8n_workflow_parameters(
+    workflow_id: str,
+    payload: N8nParamUpdatesIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> N8nWorkflowDetailOut:
+    """Quick-edit node parameter values; the backend PATCHes the workflow
+    in n8n. Only existing scalar values change — structure, connections and
+    credentials are never touched from MindFlow."""
+    return await N8nPlatformService(db, settings, http).update_parameters(
+        workflow_id, payload.updates
+    )
 
 
 @router.post("/workflows/{workflow_id}/activate", response_model=N8nWorkflowOut)
