@@ -54,3 +54,13 @@
   .fx-role-row { grid-template-columns: 1fr; gap: 5px; }
   .fx-role-meta { white-space: normal; }
 }
+
+/* n8n Platform tab (phase 1): connection dot + workflow rows. */
+.n8n-dot { width: 10px; height: 10px; border-radius: 999px; background: #cbd5e1; display: inline-block; }
+.n8n-dot.ok { background: #22c55e; }
+.n8n-dot.bad { background: #ef4444; }
+.n8n-rows { display: flex; flex-direction: column; gap: 8px; }
+.n8n-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; border: 1px solid var(--line); background: #fff; border-radius: 12px; padding: 10px 14px; }
+.n8n-row-main { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.spin { animation: n8n-spin 1s linear infinite; }
+@keyframes n8n-spin { to { transform: rotate(360deg); } }

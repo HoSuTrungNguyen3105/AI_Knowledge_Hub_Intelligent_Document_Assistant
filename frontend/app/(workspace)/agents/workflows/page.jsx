@@ -9,7 +9,7 @@ export const metadata = { title: "Agent Workflows" };
 export default async function AgentWorkflowsPage({ searchParams }) {
   const params = await searchParams;
   const initialTab =
-    params?.tab === "factory" || params?.tab === "schedules"
+    params?.tab === "factory" || params?.tab === "schedules" || params?.tab === "n8n"
       ? params.tab
       : "workflows";
   return <WorkflowsHub initialTab={initialTab} />;

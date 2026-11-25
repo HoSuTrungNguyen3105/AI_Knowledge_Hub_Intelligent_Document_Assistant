@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { CalendarClock, Factory, GitBranch } from "lucide-react";
+import { CalendarClock, Factory, GitBranch, Network } from "lucide-react";
 import { FactoryWorkspace } from "../agents/factory-workspace";
 import { WorkflowsList } from "./workflows-list";
 import { SchedulesWorkspace } from "./schedules-workspace";
+import { N8nPlatformWorkspace } from "./n8n-platform-workspace";
 import "../agents/factory.css";
 
 // One page for the two ways the same agent team can run: inside MindFlow
@@ -13,7 +14,7 @@ import "../agents/factory.css";
 // tabs instead of living on two separate pages.
 export function WorkflowsHub({ initialTab = "workflows" }) {
   const [tab, setTab] = useState(
-    ["factory", "schedules"].includes(initialTab) ? initialTab : "workflows",
+    ["factory", "schedules", "n8n"].includes(initialTab) ? initialTab : "workflows",
   );
   return <div>
     <div className="wf-hub-tabs" role="tablist" aria-label="Cách chạy đội Agent">
@@ -44,13 +45,24 @@ export function WorkflowsHub({ initialTab = "workflows" }) {
       >
         <CalendarClock size={16} /> Lịch chạy — tự động theo giờ
       </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab === "n8n"}
+        className={`wf-hub-tab${tab === "n8n" ? " active" : ""}`}
+        onClick={() => setTab("n8n")}
+      >
+        <Network size={16} /> n8n Platform — quản lý workflow
+      </button>
     </div>
     {tab === "workflows" ? (
       <WorkflowsList />
     ) : tab === "factory" ? (
       <FactoryWorkspace />
-    ) : (
+    ) : tab === "schedules" ? (
       <SchedulesWorkspace />
+    ) : (
+      <N8nPlatformWorkspace />
     )}
   </div>;
 }
