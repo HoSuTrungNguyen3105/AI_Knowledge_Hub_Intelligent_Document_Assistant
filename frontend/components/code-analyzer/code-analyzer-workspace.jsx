@@ -523,6 +523,117 @@ export default function CodeAnalyzerWorkspace() {
         </section>
       ) : null}
 
+      {view === "data" && detail ? (
+        <div className="ca-detail">
+          <div className="ca-detail-head">
+            <button
+              type="button"
+              className="wf-btn"
+              onClick={() => setView("detail")}
+            >
+              ← Về chi tiết dự án
+            </button>
+            <h3 className="ca-detail-name">Dữ liệu dự án — {detail.name}</h3>
+            <span className="ca-detail-meta">
+              {detail.files?.length ?? 0} file ·{" "}
+              {(detail.files || []).reduce(
+                (sum, f) => sum + (f.import_count || 0),
+                0,
+              )}{" "}
+              quan hệ import
+            </span>
+            <button type="button" className="wf-btn" onClick={onDownloadCsv}>
+              Tải CSV
+            </button>
+          </div>
+          <div className="ca-data-tools">
+            <input
+              className="ca-search"
+              placeholder="Lọc theo đường dẫn, ngôn ngữ, vai trò, nhóm..."
+              value={dataQuery}
+              onChange={(e) => setDataQuery(e.target.value)}
+              aria-label="Lọc bảng dữ liệu"
+            />
+            <select
+              value={dataSort}
+              onChange={(e) => setDataSort(e.target.value)}
+              aria-label="Sắp xếp bảng dữ liệu"
+            >
+              <option value="imported">Được import nhiều nhất</option>
+              <option value="imports">Import nhiều nhất</option>
+              <option value="path">Đường dẫn A–Z</option>
+            </select>
+            <span className="ca-detail-meta">
+              Hiện {dataRows.length} / {detail.files?.length ?? 0} file — bấm
+              vào một dòng để xem file đó trên sơ đồ.
+            </span>
+          </div>
+          <div className="ca-table-wrap">
+            <table className="ca-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Đường dẫn file</th>
+                  <th>Ngôn ngữ</th>
+                  <th>Vai trò</th>
+                  <th>Nhóm</th>
+                  <th>Import các file</th>
+                  <th>Được import bởi</th>
+                  <th>Tóm tắt AI</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dataRows.map((f, index) => (
+                  <tr
+                    key={f.id}
+                    onClick={() => {
+                      setSelectedId(f.id);
+                      setView("detail");
+                    }}
+                  >
+                    <td>{index + 1}</td>
+                    <td className="ca-path">{f.file_path}</td>
+                    <td>{f.language || "—"}</td>
+                    <td>{f.role_tag || "—"}</td>
+                    <td>{f.module_group || "—"}</td>
+                    <td>
+                      {(f.imports || []).length ? (
+                        <div className="ca-cell-list">
+                          {(f.imports || []).map((imp, i) => (
+                            <div key={i}>{imp.target_file}</div>
+                          ))}
+                        </div>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td>
+                      {(f.imported_by || []).length ? (
+                        <div className="ca-cell-list">
+                          {(f.imported_by || []).map((path, i) => (
+                            <div key={i}>{path}</div>
+                          ))}
+                        </div>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="ca-summary">{f.ai_summary || "—"}</td>
+                  </tr>
+                ))}
+                {dataRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="ca-note">
+                      Không có file nào khớp bộ lọc.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
       {view === "detail" && detail ? (
         <div className="ca-detail">
           <div className="ca-detail-head">
@@ -542,6 +653,13 @@ export default function CodeAnalyzerWorkspace() {
                 ? ` · Ngôn ngữ chính: ${detail.stats.primary_language}`
                 : ""}
             </span>
+            <button
+              type="button"
+              className="wf-btn"
+              onClick={() => setView("data")}
+            >
+              Bảng dữ liệu đầy đủ
+            </button>
           </div>
 
           <section className="ca-report">
