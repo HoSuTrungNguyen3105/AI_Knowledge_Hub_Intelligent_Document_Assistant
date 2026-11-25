@@ -294,3 +294,230 @@ async def test_long_room_transcript_still_answers(owner, mock_agent):
     reply = posted.json()["messages"][1]
     assert reply["status"] == "done"
     assert reply["content"] == "Xin chào từ Agent"
+
+
+def create_room_full(client, payload):
+    response = client.post(BASE, json=payload)
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def test_directed_post_records_run_and_tasks(owner, mock_agent):
+    client, _ = owner
+    agent = create_agent(client)
+    room = create_room(client, [agent["id"]])
+    posted = client.post(
+        f"{BASE}/{room['id']}/messages",
+        json={"content": "Làm việc A đi", "mention_agent_ids": [agent["id"]]},
+    )
+    assert posted.status_code == 201, posted.text
+    body = posted.json()
+    run = body["run"]
+    assert run["mode"] == "directed"
+    assert run["status"] == "completed"
+    assert run["turn_count"] == 1
+    assert body["messages"][0]["run_id"] == run["id"]
+    assert body["messages"][1]["run_id"] == run["id"]
+
+    detail = client.get(f"/api/v1/ai/collab/runs/{run['id']}")
+    assert detail.status_code == 200, detail.text
+    tasks = detail.json()["tasks"]
+    assert len(tasks) == 1
+    assert tasks[0]["status"] == "completed"
+    assert tasks[0]["assigned_by"] == "user"
+    assert tasks[0]["output_message_id"] == body["messages"][1]["id"]
+
+    runs = client.get(f"{BASE}/{room['id']}/runs").json()["runs"]
+    assert [r["id"] for r in runs] == [run["id"]]
+
+
+async def test_auto_mode_discusses_and_moderator_summarizes(owner, mock_agent, db, settings):
+    client, owner_id = owner
+    await seed(db, settings, owner_id, model_id=MODEL_B)
+    prompts = []
+
+    def handler(request):
+        import json
+
+        body = json.loads(request.content)
+        prompt = body["messages"][-1]["content"]
+        prompts.append(prompt)
+        if "Moderator của phòng" in prompt:
+            return httpx.Response(200, text=sse(chunk("Tổng hợp cuối cùng của phòng"), "[DONE]"))
+        if body["model"] == MODEL_B:
+            return httpx.Response(
+                200, text=sse(chunk("[KẾT LUẬN] Đã đủ rõ, chốt phương án A"), "[DONE]")
+            )
+        return httpx.Response(200, text=sse(chunk("Phân tích kiến trúc ban đầu"), "[DONE]"))
+
+    mock_agent(handler)
+    architect = create_agent(client, "AI Architect")
+    reviewer = create_agent(client, "AI Reviewer", model=MODEL_B)
+    leader = create_agent(client, "AI Leader")
+    room = create_room_full(
+        client,
+        {
+            "title": "Phòng tự động",
+            "agent_ids": [architect["id"], reviewer["id"], leader["id"]],
+            "mode": "auto",
+            "moderator_agent_id": leader["id"],
+            "max_turns": 4,
+        },
+    )
+    assert room["mode"] == "auto"
+    assert room["moderator_agent_id"] == leader["id"]
+
+    posted = client.post(
+        f"{BASE}/{room['id']}/messages",
+        json={"content": "Hãy bàn về kiến trúc hệ thống mới", "mention_agent_ids": []},
+    )
+    assert posted.status_code == 201, posted.text
+    body = posted.json()
+    run = body["run"]
+    assert run["status"] == "completed"
+    assert run["stop_reason"] == "agent_concluded"
+    contents = [m["content"] for m in body["messages"]]
+    assert "Phân tích kiến trúc ban đầu" in contents
+    assert "Đủ rõ, chốt phương án A".lower() in " ".join(contents).lower()
+    assert not any(c.startswith("[KẾT LUẬN]") for c in contents)  # marker stripped
+    assert "Phân tích kiến trúc ban đầu" in prompts[1]  # Reviewer read Architect first
+    summaries = [m for m in body["messages"] if m["is_summary"]]
+    assert len(summaries) == 1
+    assert summaries[0]["agent_name"] == "AI Leader"
+    assert run["final_message_id"] == summaries[0]["id"]
+    detail = client.get(f"/api/v1/ai/collab/runs/{run['id']}").json()
+    assert [t["status"] for t in detail["tasks"]] == ["completed"] * 3
+    assert detail["tasks"][2]["assigned_by"] == "moderator"
+
+
+async def test_retry_failed_task(owner, mock_agent):
+    client, _ = owner
+    state = {"fail": True}
+
+    def handler(request):
+        if state["fail"]:
+            return httpx.Response(500, text="boom")
+        return httpx.Response(200, text=sse(chunk("Đã chạy lại thành công"), "[DONE]"))
+
+    mock_agent(handler)
+    agent = create_agent(client)
+    room = create_room(client, [agent["id"]])
+    posted = client.post(
+        f"{BASE}/{room['id']}/messages",
+        json={"content": "Thử việc khó", "mention_agent_ids": [agent["id"]]},
+    )
+    run = posted.json()["run"]
+    assert run["status"] == "failed"
+    assert run["stop_reason"] == "all_agents_failed"
+
+    state["fail"] = False
+    retried = client.post(f"/api/v1/ai/collab/runs/{run['id']}/retry")
+    assert retried.status_code == 200, retried.text
+    detail = retried.json()
+    assert detail["run"]["status"] == "completed"
+    assert detail["tasks"][0]["status"] == "completed"
+    assert detail["tasks"][0]["attempt"] == 2
+    messages = client.get(f"{BASE}/{room['id']}/messages").json()["messages"]
+    assert messages[-1]["content"] == "Đã chạy lại thành công"
+
+    again = client.post(f"/api/v1/ai/collab/runs/{run['id']}/retry")
+    assert again.status_code == 422
+    assert again.json()["detail"]["code"] == "collab_nothing_to_retry"
+
+    missing = client.get("/api/v1/ai/collab/runs/00000000-0000-0000-0000-000000000000")
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["code"] == "collab_run_not_found"
+
+
+async def test_summarize_endpoint(owner, mock_agent):
+    client, _ = owner
+    agent = create_agent(client)
+    room = create_room(client, [agent["id"]])
+    client.post(f"{BASE}/{room['id']}/messages", json={"content": "Nội dung cần tổng hợp"})
+    response = client.post(f"{BASE}/{room['id']}/summarize", json={})
+    assert response.status_code == 201, response.text
+    message = response.json()
+    assert message["is_summary"] is True
+    assert message["sender_type"] == "agent"
+    assert message["content"] == "Xin chào từ Agent"
+
+    empty = create_room(client, [])
+    response = client.post(f"{BASE}/{empty['id']}/summarize", json={})
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "collab_no_agents"
+
+
+async def test_export_builds_report_json_and_zip(owner, mock_agent):
+    import hashlib
+    import io
+    import zipfile
+
+    client, _ = owner
+    agent = create_agent(client)
+    room = create_room(client, [agent["id"]])
+    client.post(
+        f"{BASE}/{room['id']}/messages",
+        json={"content": "Hãy đề xuất kiến trúc", "mention_agent_ids": [agent["id"]]},
+    )
+    response = client.post(
+        f"{BASE}/{room['id']}/export", json={"formats": ["md", "json", "zip"]}
+    )
+    assert response.status_code == 201, response.text
+    artifacts = {a["kind"]: a for a in response.json()["artifacts"]}
+    assert set(artifacts) == {"report", "transcript", "results", "package"}
+
+    report = client.get(f"/api/v1/ai/collab/artifacts/{artifacts['report']['id']}/download")
+    assert report.status_code == 200
+    assert report.headers["content-disposition"].endswith('filename="FINAL-REPORT.md"')
+    text = report.content.decode("utf-8")
+    assert "Phòng dự án" in text
+    assert hashlib.sha256(report.content).hexdigest() == artifacts["report"]["checksum"]
+    assert artifacts["report"]["size"] == len(report.content)
+
+    package = client.get(f"/api/v1/ai/collab/artifacts/{artifacts['package']['id']}/download")
+    assert package.status_code == 200
+    archive = zipfile.ZipFile(io.BytesIO(package.content))
+    names = set(archive.namelist())
+    assert {
+        "README.md",
+        "FINAL-REPORT.md",
+        "discussion-transcript.md",
+        "results.json",
+        "manifest.json",
+        "agent-results/agent-a.md",
+    } <= names
+    import json as jsonlib
+
+    manifest = jsonlib.loads(archive.read("manifest.json"))
+    for entry in manifest["files"]:
+        data = archive.read(entry["name"])
+        assert entry["size"] == len(data)
+        assert entry["sha256"] == hashlib.sha256(data).hexdigest()
+    transcript = archive.read("discussion-transcript.md").decode("utf-8")
+    assert "Xin chào từ Agent" in transcript
+    assert "api_key" not in archive.read("results.json").decode("utf-8").lower()
+
+    listed = client.get(f"{BASE}/{room['id']}/artifacts").json()["artifacts"]
+    assert len(listed) == 4
+    assert client.delete(
+        f"/api/v1/ai/collab/artifacts/{artifacts['results']['id']}"
+    ).status_code == 204
+    listed = client.get(f"{BASE}/{room['id']}/artifacts").json()["artifacts"]
+    assert len(listed) == 3
+
+
+async def test_artifacts_are_owner_scoped(owner, mock_agent, client_factory, register):
+    client, _ = owner
+    room = create_room(client, [])
+    client.post(f"{BASE}/{room['id']}/messages", json={"content": "Ghi chú riêng"})
+    created = client.post(f"{BASE}/{room['id']}/export", json={"formats": ["json"]})
+    artifact_id = created.json()["artifacts"][0]["id"]
+
+    stranger = client_factory()
+    assert register(stranger, email="stranger9@example.com").status_code == 201
+    assert (
+        stranger.get(f"/api/v1/ai/collab/artifacts/{artifact_id}/download").status_code
+        == 404
+    )
+    assert stranger.delete(f"/api/v1/ai/collab/artifacts/{artifact_id}").status_code == 404
+    assert stranger.get(f"{BASE}/{room['id']}/artifacts").status_code == 404
