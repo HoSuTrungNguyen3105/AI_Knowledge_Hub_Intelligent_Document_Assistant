@@ -340,3 +340,37 @@ def test_callback_requires_secret_when_configured(owner, settings):
         headers={"x-mindflow-secret": "topsecret"},
     )
     assert r.status_code == 200
+
+def failing_handler(request):
+    return httpx.Response(
+        400,
+        json={"error": {
+            "message": "max_tokens exceeds the model context window",
+            "code": "context_length_exceeded",
+        }},
+    )
+
+
+@pytest.fixture
+def mock_ai_failing(app):
+    app.dependency_overrides[analyzer_http] = lambda: ChatHTTP(
+        transport=httpx.MockTransport(failing_handler)
+    )
+
+
+async def test_upload_ai_failure_surfaces_error_code(
+    owner, mock_ai_failing, db, settings, owner_id
+):
+    # A provider that rejects every report call (e.g. a small-context
+    # model asked for too many output tokens) must surface its
+    # classified error code instead of silently degrading to "static"
+    # behind a misleading no-provider message.
+    await seed(db, settings, owner_id)
+    data = make_zip({"app/db.py": "def connect():\n    return None\n"})
+    r = upload(owner, data)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["analysis_dispatch"] == "static"
+    assert body["ai_error"] == "provider_request_rejected"
+    detail = owner.get(f"{BASE}/projects/{body['project']['id']}").json()
+    assert detail["report_markdown"] == ""

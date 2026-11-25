@@ -10,6 +10,7 @@ which every signed-in user may open read-only.
 """
 
 import asyncio
+import logging
 import time
 from uuid import UUID, uuid4
 
@@ -43,6 +44,13 @@ REPORT_FILE_LIMIT = 400
 REPORT_EXCERPT_FILES = 20
 REPORT_EXCERPT_CHARS = 1800
 REPORT_TIMEOUT_SECONDS = 240
+# Output-token ladder for the report call: start generous for models
+# with large context windows, then step down so small-context models
+# (e.g. a 4K-context model asked for 8192 output tokens is rejected
+# outright by the provider) still get a report that fits.
+REPORT_TOKEN_LADDER = (8192, 4096, 2048, 1024)
+
+logger = logging.getLogger(__name__)
 
 
 def module_group_of(file_path: str) -> str:
@@ -572,7 +580,7 @@ class CodeAnalyzerService:
         await self.db[PROJECTS].insert_one(project)
         await self.db[FILES].insert_many(docs)
         contents = {f["file_path"]: f["content"] for f in files}
-        reported = await self._generate_report(
+        reported, ai_error = await self._generate_report(
             user_id, project_id, name, docs, contents, prepared
         )
         await self._refresh_diagram(project_id, status="COMPLETED")
@@ -581,6 +589,7 @@ class CodeAnalyzerService:
             project=self._summary(project),
             analysis_dispatch="ai" if reported else "static",
             ai_analyzed=len(docs) if reported else 0,
+            ai_error=ai_error,
         )
 
     async def regenerate_report(
@@ -604,7 +613,7 @@ class CodeAnalyzerService:
         docs = [d async for d in cursor]
         contents = {d["file_path"]: d.get("content_excerpt", "") for d in docs}
         prepared = await self._prepare_ai(user_id, provider, model)
-        reported = await self._generate_report(
+        reported, ai_error = await self._generate_report(
             user_id, project_id, doc["name"], docs, contents, prepared
         )
         fresh = await self.db[PROJECTS].find_one({"_id": project_id})
@@ -612,6 +621,7 @@ class CodeAnalyzerService:
             project=self._summary(fresh or doc),
             analysis_dispatch="ai" if reported else "static",
             ai_analyzed=len(docs) if reported else 0,
+            ai_error=ai_error,
         )
 
     async def _prepare_ai(self, user_id, provider, model_id):
@@ -648,35 +658,56 @@ class CodeAnalyzerService:
 
     async def _generate_report(
         self, user_id, project_id, project_name, docs, contents, prepared
-    ) -> bool:
+    ) -> tuple[bool, str]:
         # One LLM call writes the whole-project Markdown report. Any
-        # failure degrades to no report (the static data still stands).
+        # failure degrades to no report (the static data still stands),
+        # but the classified error code travels back so the caller can
+        # tell the user why — a silent "static" hid a provider rejecting
+        # max_tokens=8192 on a 4K-context model behind a misleading
+        # "no provider available" message.
         if prepared is None:
-            return False
+            return False, ""
         provider, model_id, key = prepared
         adapter = create_provider(provider, chat_http=self.chat_http)
         prompt = _report_prompt(project_name, docs, contents)
-        text, status, in_tok, out_tok, latency = await self._call_model(
-            adapter, key, model_id, prompt,
-            max_output_tokens=8192, timeout=REPORT_TIMEOUT_SECONDS,
-        )
-        await self.requests.record_request(
-            user_id,
-            provider=provider,
-            model=model_id,
-            status=status,
-            input_tokens=in_tok,
-            output_tokens=out_tok,
-            latency_ms=latency,
-        )
-        report = _clean_markdown(text) if status == "success" else ""
-        if not report:
-            return False
-        await self.db[PROJECTS].update_one(
-            {"_id": project_id},
-            {"$set": {"report_markdown": report, "updated_at": utcnow()}},
-        )
-        return True
+        last_error = ""
+        for budget in REPORT_TOKEN_LADDER:
+            text, status, in_tok, out_tok, latency, error_code = (
+                await self._call_model(
+                    adapter, key, model_id, prompt,
+                    max_output_tokens=budget,
+                    timeout=REPORT_TIMEOUT_SECONDS,
+                )
+            )
+            await self.requests.record_request(
+                user_id,
+                provider=provider,
+                model=model_id,
+                status=status,
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+                latency_ms=latency,
+            )
+            if status == "success":
+                report = _clean_markdown(text)
+                if report:
+                    await self.db[PROJECTS].update_one(
+                        {"_id": project_id},
+                        {"$set": {
+                            "report_markdown": report,
+                            "updated_at": utcnow(),
+                        }},
+                    )
+                    return True, ""
+                last_error = "generation_failed"
+            else:
+                last_error = error_code
+            logger.warning(
+                "code report attempt failed project=%s model=%s "
+                "budget=%s error=%s",
+                project_id, model_id, budget, last_error,
+            )
+        return False, last_error
 
     async def _call_model(
         self, adapter, key, model_id, prompt,
@@ -703,12 +734,20 @@ class CodeAnalyzerService:
                     if event.output_tokens is not None:
                         output_tokens = event.output_tokens
 
+        error_code = ""
         try:
             await asyncio.wait_for(collect(), timeout=timeout)
-        except Exception:
+        except ProviderError as exc:
             status = "error"
+            error_code = exc.code
+        except Exception:  # timeout or transport failure
+            status = "error"
+            error_code = "generation_failed"
         latency_ms = int((time.monotonic() - started) * 1000)
-        return "".join(parts), status, input_tokens, output_tokens, latency_ms
+        return (
+            "".join(parts), status, input_tokens, output_tokens,
+            latency_ms, error_code,
+        )
 
     async def _apply_items(self, project_id, items, allowed=None) -> int:
         """Write AI results (summary, role, relation labels) onto file docs."""

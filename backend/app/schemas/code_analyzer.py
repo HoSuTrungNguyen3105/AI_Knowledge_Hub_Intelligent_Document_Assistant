@@ -87,6 +87,10 @@ class UploadOut(BaseModel):
     # only. ai_analyzed counts the files the report was based on.
     analysis_dispatch: str = "static"
     ai_analyzed: int = 0
+    # Classified provider error code when a target was prepared but the
+    # report call failed ("" when no call was made or it succeeded), so
+    # the UI can say WHY there is no report instead of guessing.
+    ai_error: str = ""
 
 
 class CodeCallbackFileIn(BaseModel):
