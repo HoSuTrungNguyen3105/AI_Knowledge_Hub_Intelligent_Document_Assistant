@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { codeAnalyzerService, getCodeError } from "../../services/code-analyzer";
+import {
+  codeAnalyzerService,
+  codeErrorMessage,
+  getCodeError,
+} from "../../services/code-analyzer";
 import { providerService } from "../../services/providers";
 
 const STATUS_LABELS = {
@@ -303,11 +307,17 @@ export default function CodeAnalyzerWorkspace() {
     setNotice("");
     try {
       const result = await codeAnalyzerService.upload(file, providerId, modelId);
-      setNotice(
-        result.analysis_dispatch === "ai"
-          ? `Đã phân tích xong "${result.project.name}" — AI đã viết báo cáo phân tích dựa trên ${result.ai_analyzed} file.`
-          : `Đã phân tích xong "${result.project.name}". ${STATIC_NOTE}`,
-      );
+      if (result.analysis_dispatch === "ai") {
+        setNotice(
+          `Đã phân tích xong "${result.project.name}" — AI đã viết báo cáo phân tích dựa trên ${result.ai_analyzed} file.`,
+        );
+      } else if (result.ai_error) {
+        setError(
+          `Đã phân tích xong "${result.project.name}" nhưng chưa viết được báo cáo: ${codeErrorMessage(result.ai_error) || result.ai_error} Hãy thử model có context lớn hơn (ví dụ gpt-oss-120b) — model context ngắn như allam-2-7b (4K) không đủ chỗ cho báo cáo dài.`,
+        );
+      } else {
+        setNotice(`Đã phân tích xong "${result.project.name}". ${STATIC_NOTE}`);
+      }
       await loadProjects();
       enterProject(result.project.id);
     } catch (err) {
@@ -328,11 +338,15 @@ export default function CodeAnalyzerWorkspace() {
         providerId,
         modelId,
       );
-      setNotice(
-        result.analysis_dispatch === "ai"
-          ? "Đã tạo lại báo cáo phân tích bằng AI."
-          : STATIC_NOTE,
-      );
+      if (result.analysis_dispatch === "ai") {
+        setNotice("Đã tạo lại báo cáo phân tích bằng AI.");
+      } else if (result.ai_error) {
+        setError(
+          `Chưa viết được báo cáo: ${codeErrorMessage(result.ai_error) || result.ai_error} Hãy thử model có context lớn hơn (ví dụ gpt-oss-120b) — model context ngắn như allam-2-7b (4K) không đủ chỗ cho báo cáo dài.`,
+        );
+      } else {
+        setNotice(STATIC_NOTE);
+      }
       await openProject(detail.id);
       await loadProjects();
     } catch (err) {

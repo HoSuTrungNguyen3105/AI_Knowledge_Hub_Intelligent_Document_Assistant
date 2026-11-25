@@ -65,7 +65,7 @@ function SidebarContent({ pathname, onNavigate, mobile = false }) {
   return <><div className="sidebar-brand"><Link href="/dashboard" onClick={onNavigate} aria-label={`${APP_NAME} — Tổng quan`}><Brand /></Link>{mobile && <button className="icon-button" onClick={onNavigate} aria-label="Đóng menu"><PanelLeftClose size={20} /></button>}</div>
     <div className="workspace-label"><span className="workspace-icon">K</span><div>Không gian cá nhân<small>Chỉ bạn có quyền truy cập</small></div></div>
     <nav aria-label={mobile ? "Điều hướng trên điện thoại" : "Điều hướng chính"} className="main-nav">{navigationGroups.map((group) => <div className="nav-group" key={group.label}><p className="nav-group-label">{group.label}</p>{group.items.map(({ href, label, icon: Icon, upcoming }) => <Link key={href} href={href} onClick={onNavigate} className={`nav-item ${isActivePath(pathname, href) ? "active" : ""}`} aria-current={isActivePath(pathname, href) ? "page" : undefined}><Icon size={19} strokeWidth={1.7} /><span>{label}</span>{upcoming && <span className="nav-dot" title="Giai đoạn tiếp theo" aria-label="Chưa triển khai" />}</Link>)}</div>)}</nav>
-    <div className="sidebar-bottom"><div className="build-note"><span className="status-dot" /><span>{APP_STAGE}</span></div><p>Nền tảng hôm nay.<br />Tri thức kết nối ngày mai.</p></div>
+    {/* <div className="sidebar-bottom"><div className="build-note"><span className="status-dot" /><span>{APP_STAGE}</span></div><p>Nền tảng hôm nay.<br />Tri thức kết nối ngày mai.</p></div> */}
   </>;
 }
 

@@ -61,7 +61,14 @@ const ERROR_MESSAGES = {
   provider_disabled: "Provider đã chọn đang bị tắt.",
   model_not_synced: "Model đã chọn chưa được đồng bộ cho provider này.",
   seed_disabled: "Môi trường production không cho phép tạo dự án mẫu.",
+  provider_request_rejected:
+    "Provider từ chối yêu cầu tạo báo cáo (model bị giới hạn context/token hoặc vượt hạn mức).",
+  generation_failed: "AI không trả về được nội dung báo cáo.",
 };
+
+export function codeErrorMessage(code) {
+  return ERROR_MESSAGES[code] || "";
+}
 
 export function getCodeError(error, fallback = "Đã xảy ra lỗi. Hãy thử lại.") {
   const detail = error?.response?.data?.detail;
