@@ -9,6 +9,10 @@ export const authService = {
     const { data } = await api.post("/auth/login", values, { skipAuthRefresh: true });
     return data.user;
   },
+  async updateProfile(values) {
+    const { data } = await api.patch("/auth/me", values);
+    return data;
+  },
   async me() {
     const { data } = await api.get("/auth/me");
     return data;

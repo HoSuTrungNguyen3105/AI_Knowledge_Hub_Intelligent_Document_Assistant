@@ -36,6 +36,14 @@ class AuthRepository:
         stored = await self.users.find_one({"_id": user_id})
         return User(**stored)
 
+    async def update_name(self, user_id: UUID, name: str) -> User | None:
+        doc = await self.users.find_one_and_update(
+            {"_id": user_id},
+            {"$set": {"name": name}},
+            return_document=True,
+        )
+        return User(**doc) if doc else None
+
     async def create_session(
         self, user_id: UUID, token_hash: str, expires_at: datetime
     ) -> RefreshToken:
