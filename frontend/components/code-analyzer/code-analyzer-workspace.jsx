@@ -489,6 +489,10 @@ export default function CodeAnalyzerWorkspace() {
           />
         </div>
       </header>
+      <p className="ca-hint">
+        Ưu tiên model groq · openai/gpt-oss-120b để nhận trải nghiệm tốt
+        hơn.
+      </p>
       {error ? <p className="wf-error">{error}</p> : null}
       {notice ? <p className="wf-success">{notice}</p> : null}
 
