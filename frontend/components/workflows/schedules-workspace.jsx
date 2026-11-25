@@ -4,11 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import {
   CalendarClock,
   Eye,
+  History,
   Pause,
   Pencil,
   Play,
   Plus,
   Trash2,
+  Zap,
 } from "lucide-react";
 import { ConfirmDialog } from "../confirm-dialog";
 import { agentsService } from "../../services/agents";
@@ -53,6 +55,13 @@ const TIMEZONES = [
   "Europe/London",
   "America/New_York",
 ];
+
+const EXECUTION_STATUS = {
+  running: "Đang chạy",
+  success: "Thành công",
+  failed: "Thất bại",
+  skipped: "Bị bỏ qua",
+};
 
 const WEEKDAYS = [
   [1, "T2"],
@@ -195,6 +204,9 @@ export function SchedulesWorkspace() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [deletion, setDeletion] = useState(null);
+  const [historyId, setHistoryId] = useState(null);
+  const [executions, setExecutions] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const load = useCallback(async (signal) => {
     try {
@@ -309,6 +321,47 @@ export function SchedulesWorkspace() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const runNow = async (schedule) => {
+    setBusy(true);
+    try {
+      const execution = await workflowSchedulesService.runNow(schedule.id);
+      if (execution.status === "skipped") {
+        showNotice("Lịch đang có lượt chạy chưa xong nên lần này bị bỏ qua.");
+      } else if (execution.status === "failed") {
+        showNotice("Không kích hoạt được — kiểm tra n8n ở máy của bạn.");
+      } else {
+        showNotice("Đã kích hoạt chạy ngay — xem tiến trình ở tab AI Factory.");
+      }
+      await load();
+      if (historyId === schedule.id) await loadExecutions(schedule.id);
+    } catch (e) {
+      setError(getScheduleError(e, "Không chạy ngay được lịch này."));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadExecutions = async (scheduleId) => {
+    setHistoryLoading(true);
+    try {
+      const data = await workflowSchedulesService.listExecutions(scheduleId);
+      setExecutions(data.items || []);
+    } catch (e) {
+      setError(getScheduleError(e, "Không tải được lịch sử chạy."));
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const toggleHistory = (schedule) => {
+    if (historyId === schedule.id) {
+      setHistoryId(null);
+      return;
+    }
+    setHistoryId(schedule.id);
+    loadExecutions(schedule.id);
   };
 
   const confirmDeletion = async () => {
@@ -742,6 +795,23 @@ export function SchedulesWorkspace() {
                     <Play size={15} /> Kích hoạt lại
                   </button>
                 )}
+                {schedule.status !== "completed" && (
+                  <button
+                    type="button"
+                    className="wf-btn"
+                    disabled={busy}
+                    onClick={() => runNow(schedule)}
+                  >
+                    <Zap size={15} /> Chạy ngay
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="wf-btn"
+                  onClick={() => toggleHistory(schedule)}
+                >
+                  <History size={15} /> Lịch sử
+                </button>
                 <button
                   type="button"
                   className="wf-btn"
@@ -761,6 +831,39 @@ export function SchedulesWorkspace() {
                   <Trash2 size={15} /> Xóa
                 </button>
               </div>
+              {historyId === schedule.id && (
+                <div className="wf-sched-history">
+                  {historyLoading ? (
+                    <p className="wf-empty">Đang tải lịch sử…</p>
+                  ) : !executions.length ? (
+                    <p className="wf-empty">Chưa có lượt chạy nào.</p>
+                  ) : (
+                    <ul>
+                      {executions.map((execution) => (
+                        <li key={execution.id}>
+                          <span>
+                            {formatTime(execution.started_at)} ·{" "}
+                            {execution.trigger_type === "manual"
+                              ? "Chạy thủ công"
+                              : "Theo lịch"}
+                          </span>
+                          <span
+                            className={`wf-badge wf-sched-status ${execution.status}`}
+                          >
+                            {EXECUTION_STATUS[execution.status] ||
+                              execution.status}
+                          </span>
+                          {execution.error && (
+                            <span className="wf-sched-history-error">
+                              {execution.error}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </article>
           ))}
         </div>
