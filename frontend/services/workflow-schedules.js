@@ -32,6 +32,14 @@ export const workflowSchedulesService = {
     const { data } = await api.post(`${path}/${id}/resume`, {}, { signal });
     return data;
   },
+  async runNow(id, signal) {
+    const { data } = await api.post(`${path}/${id}/run-now`, {}, { signal });
+    return data;
+  },
+  async listExecutions(id, signal) {
+    const { data } = await api.get(`${path}/${id}/executions`, { signal });
+    return data;
+  },
   async preview(payload, signal) {
     const { data } = await api.post(`${path}/preview`, payload, { signal });
     return data;
