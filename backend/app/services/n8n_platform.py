@@ -22,6 +22,7 @@ from app.schemas.n8n_platform import (
     N8nNodeParamOut,
     N8nParamUpdateIn,
     N8nStatusOut,
+    N8nWorkflowCreateIn,
     N8nWorkflowDetailOut,
     N8nWorkflowListOut,
     N8nWorkflowOut,
@@ -121,6 +122,26 @@ class N8nApiHTTP:
 
     async def post_json(self, url: str, api_key: str, timeout_seconds: float):
         return await self._request("POST", url, api_key, timeout_seconds)
+
+    async def post_json_body(self, url: str, api_key: str, payload: dict, timeout_seconds: float):
+        headers = {"Accept": "application/json"}
+        if api_key:
+            headers["X-N8N-API-KEY"] = api_key
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout_seconds),
+                follow_redirects=False,
+                trust_env=False,
+                headers=headers,
+            ) as client:
+                response = await client.post(url, json=payload)
+        except (httpx.TimeoutException, httpx.RequestError):
+            raise ProviderError("n8n_unreachable") from None
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        return response.status_code, data
 
     async def patch_json(self, url: str, api_key: str, payload: dict, timeout_seconds: float):
         headers = {"Accept": "application/json"}
@@ -421,6 +442,45 @@ class N8nPlatformService:
         if status >= 400 or not isinstance(data, dict):
             raise ProviderError("n8n_api_failed")
         return data
+
+    async def create_workflow(self, payload_in: N8nWorkflowCreateIn) -> N8nWorkflowOut:
+        """Create a workflow in n8n from a user-supplied definition.
+
+        The definition is validated structurally (every node needs a name
+        and a type) and forwarded as-is otherwise. n8n creates it inactive;
+        the user reviews, wires credentials and activates it in n8n.
+        """
+        for node in payload_in.nodes:
+            if (
+                not isinstance(node, dict)
+                or not isinstance(node.get("name"), str)
+                or not node.get("name")
+                or not isinstance(node.get("type"), str)
+                or not node.get("type")
+            ):
+                raise ProviderError("n8n_workflow_invalid")
+        key = self._require_key()
+        payload = {
+            "name": payload_in.name,
+            "nodes": payload_in.nodes,
+            "connections": payload_in.connections,
+            "settings": payload_in.settings,
+        }
+        status, data = await self.http.post_json_body(
+            f"{self.base_url}/api/v1/workflows",
+            key,
+            payload,
+            self.settings.n8n_api_timeout_seconds,
+        )
+        if status == 400:
+            raise ProviderError("n8n_workflow_invalid")
+        if status in (401, 403):
+            raise ProviderError("n8n_api_unauthorized")
+        if status >= 400 or not isinstance(data, dict) or data.get("id") is None:
+            raise ProviderError("n8n_api_failed")
+        item = parse_workflow(data, self.base_url)
+        await self._store(item, _utcnow())
+        return item
 
     async def get_workflow_detail(self, workflow_id: str) -> N8nWorkflowDetailOut:
         raw = await self._get_raw_workflow(workflow_id)

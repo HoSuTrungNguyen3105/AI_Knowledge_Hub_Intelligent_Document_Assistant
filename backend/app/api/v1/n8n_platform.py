@@ -6,6 +6,7 @@ from app.api.dependencies import AppSettings, CurrentUser, Database
 from app.schemas.n8n_platform import (
     N8nParamUpdatesIn,
     N8nStatusOut,
+    N8nWorkflowCreateIn,
     N8nWorkflowDetailOut,
     N8nWorkflowListOut,
     N8nWorkflowOut,
@@ -46,6 +47,19 @@ async def list_n8n_workflows(
     """The instance's workflows, refreshed from the n8n REST API. When the
     refresh fails the last mirrored list is returned with `sync_error` set."""
     return await N8nPlatformService(db, settings, http).list_workflows()
+
+
+@router.post("/workflows", response_model=N8nWorkflowOut, status_code=201)
+async def create_n8n_workflow(
+    payload: N8nWorkflowCreateIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> N8nWorkflowOut:
+    """Create a workflow in the user's n8n from a pasted/built definition.
+    It is created inactive; credentials and activation stay in n8n."""
+    return await N8nPlatformService(db, settings, http).create_workflow(payload)
 
 
 @router.get("/workflows/{workflow_id}", response_model=N8nWorkflowDetailOut)

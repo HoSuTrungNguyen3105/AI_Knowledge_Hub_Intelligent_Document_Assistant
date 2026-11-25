@@ -69,6 +69,12 @@ class FakeN8nApi:
             return 200, {"data": self.workflows[:1], "nextCursor": None}
         return 200, {"data": list(self.workflows), "nextCursor": None}
 
+    async def post_json_body(self, url, api_key, payload, timeout_seconds):
+        self.posts.append({"url": url, "api_key": api_key, "payload": payload})
+        if self.status != 200:
+            return self.status, {"message": "nope"}
+        return 201, {**payload, "id": "newid123", "active": False, "tags": []}
+
     async def patch_json(self, url, api_key, payload, timeout_seconds):
         self.patches.append({"url": url, "api_key": api_key, "payload": payload})
         if self.status != 200:
@@ -269,6 +275,47 @@ async def test_workflow_detail_unknown_is_404(owner, fake_api):
     response = owner.get(f"{BASE}/workflows/nope")
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "n8n_workflow_not_found"
+
+
+CREATE_BODY = {
+    "name": "My new workflow",
+    "nodes": [
+        {
+            "name": "Start",
+            "type": "n8n-nodes-base.webhook",
+            "parameters": {"path": "my-hook"},
+        }
+    ],
+    "connections": {},
+}
+
+
+async def test_create_workflow(owner, fake_api):
+    response = owner.post(f"{BASE}/workflows", json=CREATE_BODY)
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["id"] == "newid123"
+    assert body["name"] == "My new workflow"
+    assert body["active"] is False
+    assert body["triggers"] == ["webhook"]
+    assert len(fake_api.posts) == 1
+    assert fake_api.posts[0]["url"].endswith("/api/v1/workflows")
+    assert fake_api.posts[0]["payload"]["nodes"][0]["name"] == "Start"
+
+
+async def test_create_workflow_rejects_nameless_node(owner, fake_api):
+    bad = {**CREATE_BODY, "nodes": [{"type": "n8n-nodes-base.code", "parameters": {}}]}
+    response = owner.post(f"{BASE}/workflows", json=bad)
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "n8n_workflow_invalid"
+    assert fake_api.posts == []
+
+
+async def test_create_workflow_unconfigured_is_503(owner, settings):
+    settings.n8n_api_key = None
+    response = owner.post(f"{BASE}/workflows", json=CREATE_BODY)
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "n8n_api_not_configured"
 
 
 def test_parse_workflow_shape():
