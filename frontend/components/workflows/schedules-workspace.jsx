@@ -387,7 +387,7 @@ export function SchedulesWorkspace() {
           </h1>
           <p className="muted">
             Đặt lịch để AI Factory tự chạy qua n8n — cấu hình một lần, hệ thống
-            kích hoạt đúng giờ (kích hoạt tự động thuộc giai đoạn 2).
+            tự kích hoạt đúng giờ và báo kết quả qua chuông thông báo.
           </p>
         </div>
         <div className="wf-actions">
