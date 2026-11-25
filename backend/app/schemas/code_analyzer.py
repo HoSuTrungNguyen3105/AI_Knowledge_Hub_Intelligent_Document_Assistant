@@ -29,6 +29,7 @@ class CodeProjectSummary(BaseModel):
     description: str = ""
     is_public_demo: bool = False
     status: str = "PROCESSING"
+    has_report: bool = False
     stats: CodeProjectStats = Field(default_factory=CodeProjectStats)
     created_at: datetime
     updated_at: datetime
