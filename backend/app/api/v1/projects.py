@@ -13,6 +13,17 @@ from app.schemas.allocations import (
     ReassignIn,
     RecommendIn,
 )
+from app.schemas.discussion import (
+    ConvertTaskIn,
+    ConvertTaskOut,
+    DecisionIn,
+    DecisionList,
+    DecisionOut,
+    DecisionPatch,
+    DiscussionList,
+    DiscussionMessageIn,
+    DiscussionPostOut,
+)
 from app.schemas.projects import (
     AnalysisList,
     AnalysisOut,
@@ -25,6 +36,7 @@ from app.schemas.projects import (
 from app.services.ai.base_provider import ProviderError
 from app.services.ai.chat import ChatHTTP
 from app.services.allocations import AllocationService
+from app.services.discussion import DiscussionService
 from app.services.projects import ProjectService
 
 router = APIRouter(tags=["Workforce Projects"])
@@ -229,4 +241,120 @@ async def decide_allocation(
     """Approve (project moves to approved) or reject the proposed team."""
     return await _allocations(db, settings).decide(
         user.id, project_id, allocation_id, payload
+    )
+
+
+# --- Project Discussion (Project_Discussion.md) ------------------------------
+# Chat with the owner's AI Agents inside one project: @mentions carry
+# real Agent IDs, replies are grounded in the project context (latest
+# analysis, its tasks, approved decisions), decisions are kept with a
+# status history, and a message can be converted into an analysis task.
+
+
+def _discussion(db, settings, http=None) -> DiscussionService:
+    return DiscussionService(db, settings, http)
+
+
+@router.get(
+    "/ai/projects/{project_id}/discussion", response_model=DiscussionList
+)
+async def list_discussion_messages(
+    project_id: UUID, user: CurrentUser, db: Database, settings: AppSettings
+) -> DiscussionList:
+    return await _discussion(db, settings).list_messages(user.id, project_id)
+
+
+@router.post(
+    "/ai/projects/{project_id}/discussion",
+    response_model=DiscussionPostOut,
+    status_code=201,
+)
+async def post_discussion_message(
+    project_id: UUID,
+    payload: DiscussionMessageIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: AgentHTTPDep,
+) -> DiscussionPostOut:
+    return await _discussion(db, settings, http).post_message(
+        user.id, project_id, payload
+    )
+
+
+@router.post(
+    "/ai/projects/{project_id}/discussion/{message_id}/retry",
+    response_model=DiscussionPostOut,
+)
+async def retry_discussion_message(
+    project_id: UUID,
+    message_id: UUID,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: AgentHTTPDep,
+) -> DiscussionPostOut:
+    """Re-run only the Agents whose reply failed for that user message."""
+    return await _discussion(db, settings, http).retry_message(
+        user.id, project_id, message_id
+    )
+
+
+@router.post(
+    "/ai/projects/{project_id}/discussion/{message_id}/convert-task",
+    response_model=ConvertTaskOut,
+    status_code=201,
+)
+async def convert_discussion_message(
+    project_id: UUID,
+    message_id: UUID,
+    payload: ConvertTaskIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+) -> ConvertTaskOut:
+    """Append the message as a task on the project's latest analysis."""
+    return await _discussion(db, settings).convert_to_task(
+        user.id, project_id, message_id, payload
+    )
+
+
+@router.get("/ai/projects/{project_id}/decisions", response_model=DecisionList)
+async def list_decisions(
+    project_id: UUID, user: CurrentUser, db: Database, settings: AppSettings
+) -> DecisionList:
+    return await _discussion(db, settings).list_decisions(user.id, project_id)
+
+
+@router.post(
+    "/ai/projects/{project_id}/decisions",
+    response_model=DecisionOut,
+    status_code=201,
+)
+async def create_decision(
+    project_id: UUID,
+    payload: DecisionIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+) -> DecisionOut:
+    return await _discussion(db, settings).create_decision(
+        user.id, project_id, payload
+    )
+
+
+@router.patch(
+    "/ai/projects/{project_id}/decisions/{decision_id}",
+    response_model=DecisionOut,
+)
+async def patch_decision(
+    project_id: UUID,
+    decision_id: UUID,
+    payload: DecisionPatch,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+) -> DecisionOut:
+    return await _discussion(db, settings).patch_decision(
+        user.id, project_id, decision_id, payload
     )

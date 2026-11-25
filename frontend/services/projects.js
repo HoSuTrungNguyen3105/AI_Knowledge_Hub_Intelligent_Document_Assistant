@@ -68,6 +68,48 @@ export const projectsService = {
     );
     return data;
   },
+  // --- Discussion & decisions (Project_Discussion.md) ---
+  async discussion(id, signal) {
+    const { data } = await api.get(`${projectPath(id)}/discussion`, { signal });
+    return data.messages;
+  },
+  async postDiscussion(id, payload) {
+    // Agent replies run synchronously server-side; allow minutes.
+    const { data } = await api.post(`${projectPath(id)}/discussion`, payload, {
+      timeout: 240000,
+    });
+    return data.messages;
+  },
+  async retryDiscussion(id, messageId) {
+    const { data } = await api.post(
+      `${projectPath(id)}/discussion/${encodeURIComponent(messageId)}/retry`,
+      null,
+      { timeout: 240000 },
+    );
+    return data.messages;
+  },
+  async convertTask(id, messageId, payload) {
+    const { data } = await api.post(
+      `${projectPath(id)}/discussion/${encodeURIComponent(messageId)}/convert-task`,
+      payload,
+    );
+    return data;
+  },
+  async decisions(id, signal) {
+    const { data } = await api.get(`${projectPath(id)}/decisions`, { signal });
+    return data.decisions;
+  },
+  async createDecision(id, payload) {
+    const { data } = await api.post(`${projectPath(id)}/decisions`, payload);
+    return data;
+  },
+  async patchDecision(id, decisionId, payload) {
+    const { data } = await api.patch(
+      `${projectPath(id)}/decisions/${encodeURIComponent(decisionId)}`,
+      payload,
+    );
+    return data;
+  },
 };
 
 const ERROR_MESSAGES = {
@@ -88,6 +130,10 @@ const ERROR_MESSAGES = {
   provider_disabled: "Provider này đang tắt. Hãy bật lại ở trang Providers.",
   model_not_synced: "Model chưa được đồng bộ cho provider này.",
   model_not_chat_capable: "Model này không hỗ trợ chat.",
+  agent_not_found: "Không tìm thấy Agent này (có thể đã bị xoá).",
+  discussion_message_not_found: "Không tìm thấy tin nhắn này trong phần thảo luận.",
+  decision_not_found: "Không tìm thấy quyết định này.",
+  discussion_nothing_to_retry: "Không có câu trả lời lỗi nào để thử lại.",
 };
 
 export function projectErrorByCode(code, fallback = "Đã xảy ra lỗi.") {

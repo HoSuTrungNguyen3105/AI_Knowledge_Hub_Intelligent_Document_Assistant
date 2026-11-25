@@ -207,3 +207,15 @@
 .wf-plan-list { margin: 6px 0 0 18px; padding: 0; font-size: 13px; }
 .wf-plan-list li { margin: 2px 0; }
 .wf-plan-warning { display: flex; gap: 6px; align-items: flex-start; margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: #fef3c7; color: #92400e; font-size: 12.5px; }
+.wf-disc { margin-top: 26px; }
+.wf-disc-messages { display: grid; gap: 12px; margin-bottom: 14px; }
+.wf-disc-msg { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; background: var(--panel, #fff); min-width: 0; }
+.wf-disc-msg.user { background: #eef2ff; }
+.wf-disc-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; margin-top: 6px; }
+.wf-disc-error { margin-top: 6px; padding: 10px 12px; border-radius: 10px; background: #fee2e2; color: #b91c1c; font-size: 13px; }
+.wf-disc-composer { position: relative; display: grid; gap: 8px; }
+.wf-disc-composer textarea { width: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font: inherit; font-size: 13.5px; resize: vertical; }
+.wf-disc-picker { position: absolute; bottom: 100%; left: 0; z-index: 5; display: grid; min-width: 260px; margin-bottom: 6px; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgb(76 29 149 / 14%); overflow: hidden; }
+.wf-disc-picker button { display: flex; justify-content: space-between; gap: 12px; padding: 9px 12px; border: 0; background: #fff; font-size: 13px; font-weight: 600; color: var(--ink); cursor: pointer; text-align: left; }
+.wf-disc-picker button:hover { background: #f5f3ff; }
+.wf-disc-picker button span { font-weight: 400; color: var(--muted); font-size: 12px; }

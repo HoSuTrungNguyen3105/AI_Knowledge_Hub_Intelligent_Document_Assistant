@@ -120,6 +120,9 @@ class AnalysisTask(BaseModel):
     scopes: list[str] = Field(default_factory=list, max_length=10)
     estimated_hours: float | None = Field(default=None, ge=0)
     suggested_type: str = "either"
+    # Set when a task is converted from a project discussion message;
+    # LLM-drafted tasks leave it empty.
+    acceptance_criteria: str = Field(default="", max_length=2000)
 
     @field_validator("title", mode="before")
     @classmethod
