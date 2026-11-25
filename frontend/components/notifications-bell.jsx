@@ -74,7 +74,9 @@ export function NotificationsBell() {
       {unread > 0 && <span className="notif-badge">{unread > 99 ? "99+" : unread}</span>}
     </button>
     {open && <div className="notif-panel" role="menu" aria-label="Danh sách thông báo">
-      <div className="notif-head"><strong>Thông báo</strong>
+      <div className="notif-head">
+        <strong>Thông báo</strong>
+        <button className="notif-close" onClick={toggle} aria-label="Đóng thông báo">×</button>
         {unread > 0 && <button className="notif-readall" onClick={readAll}><CheckCheck size={14} /> Đánh dấu đã đọc hết</button>}
       </div>
       {items.length ? <ul className="notif-list">
