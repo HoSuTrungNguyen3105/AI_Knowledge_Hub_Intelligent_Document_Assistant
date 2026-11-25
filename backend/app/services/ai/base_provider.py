@@ -83,6 +83,23 @@ ERRORS = {
         422,
         "There is no failed agent reply to retry.",
     ),
+    "eval_dataset_not_found": (404, "That evaluation dataset does not exist."),
+    "eval_run_not_found": (404, "That evaluation run does not exist."),
+    "eval_prompt_not_found": (404, "That evaluation prompt does not exist."),
+    "eval_no_cases": (422, "The dataset has no test cases to run."),
+    "eval_no_targets": (422, "Choose at least one model target to evaluate."),
+    "eval_run_too_large": (
+        422,
+        "The run is too large (cases x targets). Split the dataset or reduce targets.",
+    ),
+    "eval_import_invalid": (
+        422,
+        "The import content could not be parsed into evaluation cases.",
+    ),
+    "eval_prompt_template_invalid": (
+        422,
+        "The prompt template must contain the {input} placeholder.",
+    ),
     "analysis_invalid_response": (
         502,
         "The AI analysis response could not be understood. Try another model.",
