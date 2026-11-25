@@ -327,6 +327,7 @@ class CodeAnalyzerService:
             description=doc.get("description", ""),
             is_public_demo=bool(doc.get("is_public_demo")),
             status=doc.get("status", "PROCESSING"),
+            has_report=bool(doc.get("report_markdown")),
             stats=doc.get("stats") or {},
             created_at=doc["created_at"],
             updated_at=doc["updated_at"],
