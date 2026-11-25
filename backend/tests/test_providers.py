@@ -339,3 +339,78 @@ def test_csrf_no_store_and_cors_for_new_mutations(owner):
         )
         assert response.status_code == 200
         assert method in response.headers["access-control-allow-methods"]
+
+@pytest.fixture
+def mock_chat(app):
+    from app.api.v1.providers import provider_chat_http
+    from app.services.ai.chat import ChatHTTP
+
+    def configure(handler):
+        app.dependency_overrides[provider_chat_http] = lambda: ChatHTTP(
+            transport=httpx.MockTransport(handler)
+        )
+
+    return configure
+
+
+def _sync_model(owner, mock_http, model_id):
+    mock_http(lambda _: httpx.Response(
+        200, json={"object": "list", "data": [dict(MODEL, id=model_id)]}
+    ))
+    assert owner.post(f"{BASE}/openai/test").status_code == 200
+
+
+def test_models_carry_reference_pricing_and_empty_health(owner, mock_http):
+    saved(owner)
+    _sync_model(owner, mock_http, "gpt-4o-mini")
+    models = owner.get(f"{BASE}/openai/models").json()["models"]
+    assert len(models) == 1
+    pricing = models[0]["pricing"]
+    assert pricing["tier"] == "priced"
+    assert pricing["source"] == "reference"
+    assert pricing["input_per_million"] == pytest.approx(0.15)
+    assert pricing["output_per_million"] == pytest.approx(0.60)
+    assert models[0]["health_status"] is None
+
+
+def test_check_model_ok_persists_health(owner, mock_http, mock_chat):
+    saved(owner)
+    _sync_model(owner, mock_http, "gpt-4o-mini")
+    sse = 'data: {"choices": [{"delta": {"content": "pong"}}]}\n\ndata: [DONE]\n\n'
+    mock_chat(lambda _: httpx.Response(
+        200, text=sse, headers={"content-type": "text/event-stream"}
+    ))
+    result = owner.post(f"{BASE}/openai/models/gpt-4o-mini/check")
+    assert result.status_code == 200, result.text
+    body = result.json()
+    assert body["status"] == "ok" and body["error_code"] is None
+    model = owner.get(f"{BASE}/openai/models").json()["models"][0]
+    assert model["health_status"] == "ok"
+    assert model["health_checked_at"] is not None
+
+
+def test_check_model_records_provider_error(owner, mock_http, mock_chat):
+    saved(owner)
+    _sync_model(owner, mock_http, "gpt-4o-mini")
+    mock_chat(lambda _: httpx.Response(503, json={"error": {"message": "busy"}}))
+    result = owner.post(f"{BASE}/openai/models/gpt-4o-mini/check")
+    assert result.status_code == 200, result.text
+    body = result.json()
+    assert body["status"] == "error"
+    assert body["error_code"] == "provider_unavailable"
+    model = owner.get(f"{BASE}/openai/models").json()["models"][0]
+    assert model["health_status"] == "error"
+    assert model["health_error_code"] == "provider_unavailable"
+
+
+def test_check_model_requires_synced_model(owner, mock_http):
+    assert_error(
+        owner.post(f"{BASE}/openai/models/gpt-4o-mini/check"),
+        409, "credentials_missing",
+    )
+    saved(owner)
+    _sync_model(owner, mock_http, "gpt-4o-mini")
+    assert_error(
+        owner.post(f"{BASE}/openai/models/other-model/check"),
+        409, "model_not_synced",
+    )

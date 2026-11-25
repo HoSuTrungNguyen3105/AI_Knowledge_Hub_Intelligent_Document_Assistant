@@ -52,6 +52,21 @@ class ModelCapabilities(BaseModel):
     embeddings: bool | None = None
 
 
+class ModelPricing(BaseModel):
+    """Display-only billing classification; never a confirmed charge.
+
+    "priced" means a published per-token list price exists (from the
+    provider listing itself or a curated reference table). Whether the
+    user's own key is actually billed depends on their account tier —
+    free tiers may cover a priced model within limits.
+    """
+
+    tier: Literal["priced", "subscription", "unknown"] = "unknown"
+    input_per_million: float | None = None
+    output_per_million: float | None = None
+    source: Literal["provider", "reference", "provider_plan"] | None = None
+
+
 class ProviderModel(BaseModel):
     id: str
     display_name: str
@@ -64,6 +79,21 @@ class ProviderModel(BaseModel):
     # ESTIMATED cost; never a provider-confirmed charge.
     input_price_per_token: float | None = None
     output_price_per_token: float | None = None
+    pricing: ModelPricing | None = None
+    # Result of the last explicit per-model generation check ("Kiểm tra"
+    # button); None until the user runs one. A fresh sync clears it.
+    health_status: Literal["ok", "error"] | None = None
+    health_error_code: str | None = None
+    health_checked_at: datetime | None = None
+
+
+class ModelCheckResult(BaseModel):
+    provider: str
+    model_id: str
+    status: Literal["ok", "error"]
+    error_code: str | None = None
+    latency_ms: int
+    checked_at: datetime
 
 
 class ProviderMetadata(BaseModel):
