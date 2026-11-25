@@ -5,6 +5,7 @@ import Link from "next/link";
 import { LoaderCircle, Save, Settings2 } from "lucide-react";
 import { useChatProviders } from "../../hooks/use-chat-providers";
 import { toolCapability } from "../../utils/agents";
+import { modelOptionLabel } from "../../utils/model-info";
 
 export function AgentEditor({ agent, tools, busy, onSave, onCancel, reloadTools }) {
   const providers = useChatProviders(agent?.provider ?? "");
@@ -48,7 +49,7 @@ export function AgentEditor({ agent, tools, busy, onSave, onCancel, reloadTools 
     <textarea id="agent-description" value={description} onChange={(event) => setDescription(event.target.value)} rows={2} maxLength={2000} disabled={busy} />
     <div className="config-grid">
       <div><label className="field-label" htmlFor="agent-provider">Provider</label><select id="agent-provider" value={providerId} onChange={(event) => setProviderId(event.target.value)} disabled={busy}>{available.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
-      <div><label className="field-label" htmlFor="agent-model">Model đã đồng bộ</label><select id="agent-model" value={model} onChange={(event) => setModelChoice({ provider: providerId, id: event.target.value })} disabled={busy || modelsLoading || !models.length}><option value="">{modelsLoading ? "Đang tải model…" : "Chọn model"}</option>{models.map((item) => <option key={item.id} value={item.id}>{item.display_name || item.id}</option>)}</select></div>
+      <div><label className="field-label" htmlFor="agent-model">Model đã đồng bộ</label><select id="agent-model" value={model} onChange={(event) => setModelChoice({ provider: providerId, id: event.target.value })} disabled={busy || modelsLoading || !models.length}><option value="">{modelsLoading ? "Đang tải model…" : "Chọn model"}</option>{models.map((item) => <option key={item.id} value={item.id}>{modelOptionLabel(item)}</option>)}</select></div>
     </div>
     {agent && agent.provider !== providerId && <p className="setup-note">Provider đang chọn khác cấu hình đã lưu ({agent.provider}). Kiểm tra provider và model trước khi lưu.</p>}
     {modelsError && <p className="composer-error" role="alert">{modelsError}</p>}

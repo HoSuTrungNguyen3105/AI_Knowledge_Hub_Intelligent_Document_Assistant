@@ -13,6 +13,7 @@ export function useProviders() {
   const [modelRevision, setModelRevision] = useState(0);
   const [catalogRevision, setCatalogRevision] = useState(0);
   const [busy, setBusy] = useState("");
+  const [checking, setChecking] = useState("");
   const [keyError, setKeyError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const inFlight = useRef(false);
@@ -87,6 +88,24 @@ export function useProviders() {
       if (mounted.current) refreshModels();
     }, "Đã kiểm tra API danh sách model. Chưa thực hiện yêu cầu tạo nội dung AI.");
   }
+  async function checkModel(modelId) {
+    if (checking) return;
+    setChecking(modelId);
+    try {
+      const result = await providerService.checkModel(selectedId, modelId);
+      show(
+        result.status === "ok"
+          ? `Model ${modelId} hoạt động tốt (${result.latency_ms} ms).`
+          : `Model ${modelId} chưa chạy được: ${result.error_code || "lỗi không rõ"}.`,
+        result.status === "ok" ? undefined : "error"
+      );
+      refreshModels();
+    } catch (error) {
+      show(getProviderError(error), "error");
+    } finally {
+      setChecking("");
+    }
+  }
   async function setEnabled(enabled) {
     await run("toggle", async () => replaceProvider(await providerService.update(selectedId, { enabled })), enabled ? "Đã bật provider cho các tính năng AI sắp triển khai." : "Đã tắt provider. API key vẫn được lưu mã hóa.");
   }
@@ -114,5 +133,5 @@ export function useProviders() {
     setCatalogRevision((value) => value + 1);
     refreshModels();
   }
-  return { catalog, provider, selectedId, selectProvider, modelState, modelsLoading: implemented && modelState.provider !== selectedId, busy, keyError, saveKey, testConnection, setEnabled, saveDefaultModel, confirmDelete, setConfirmDelete, disconnect, reload };
+  return { catalog, provider, selectedId, selectProvider, modelState, modelsLoading: implemented && modelState.provider !== selectedId, busy, checking, checkModel, keyError, saveKey, testConnection, setEnabled, saveDefaultModel, confirmDelete, setConfirmDelete, disconnect, reload };
 }

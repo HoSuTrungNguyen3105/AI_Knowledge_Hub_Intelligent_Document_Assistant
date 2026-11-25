@@ -12,6 +12,8 @@ const errorLabels = {
   provider_not_implemented: "Provider này chưa được tích hợp trong phiên bản hiện tại.",
   configuration_changed: "Cấu hình đã thay đổi trong lúc kiểm tra. Vui lòng tải lại và thử lại.",
   invalid_default_model: "Model mặc định phải thuộc danh sách đã đồng bộ của provider này.",
+  chat_not_supported: "Model này không hỗ trợ tạo nội dung chat (theo metadata của provider).",
+  provider_disabled: "Provider đang tắt. Bật lại provider để dùng model của nó.",
 };
 
 export function getProviderError(error) {

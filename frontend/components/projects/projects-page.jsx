@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ConfirmDialog } from "../confirm-dialog";
 import ProjectDiscussion from "./project-discussion";
 import { providerService } from "../../services/providers";
+import { modelOptionLabel } from "../../utils/model-info";
 import { getProjectError, projectErrorByCode, projectsService } from "../../services/projects";
 
 const PROJECT_STATUS = {
@@ -364,7 +365,7 @@ export default function ProjectsPage() {
               <select value={modelId} onChange={(event) => setModelId(event.target.value)}>
                 {models.map((model) => (
                   <option key={model.id} value={model.id}>
-                    {model.display_name || model.id}
+                    {modelOptionLabel(model)}
                   </option>
                 ))}
               </select>
@@ -480,7 +481,7 @@ export default function ProjectsPage() {
                   <select value={modelId} onChange={(event) => setModelId(event.target.value)}>
                     {models.map((model) => (
                       <option key={model.id} value={model.id}>
-                        {model.display_name || model.id}
+                        {modelOptionLabel(model)}
                       </option>
                     ))}
                   </select>

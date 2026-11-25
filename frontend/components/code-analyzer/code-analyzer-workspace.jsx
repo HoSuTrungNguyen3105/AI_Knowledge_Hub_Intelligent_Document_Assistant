@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { codeAnalyzerService, getCodeError } from "../../services/code-analyzer";
 import { providerService } from "../../services/providers";
+import { modelOptionLabel } from "../../utils/model-info";
 
 const STATUS_LABELS = {
   PROCESSING: "Đang xử lý",
@@ -454,7 +455,7 @@ export default function CodeAnalyzerWorkspace() {
           >
             {models.map((model) => (
               <option key={model.id} value={model.id}>
-                {model.name || model.id}
+                {modelOptionLabel(model)}
               </option>
             ))}
           </select>
