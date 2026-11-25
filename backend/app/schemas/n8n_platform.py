@@ -89,6 +89,37 @@ class N8nParamUpdatesIn(BaseModel):
     updates: list[N8nParamUpdateIn] = Field(min_length=1, max_length=50)
 
 
+class N8nRunCreateIn(BaseModel):
+    workflow_id: str = Field(min_length=1, max_length=100)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class N8nNodeStatusOut(BaseModel):
+    name: str
+    status: str  # success | error | pending
+    duration_ms: int | None = None
+    error: str | None = None
+
+
+class N8nRunOut(BaseModel):
+    id: str
+    workflow_id: str
+    workflow_name: str
+    status: str  # running | success | error | stopped
+    input: dict[str, Any] = Field(default_factory=dict)
+    n8n_execution_id: str | None = None
+    error: str | None = None
+    retry_of: str | None = None
+    node_statuses: list[N8nNodeStatusOut] = Field(default_factory=list)
+    started_at: datetime
+    finished_at: datetime | None = None
+
+
+class N8nRunListOut(BaseModel):
+    items: list[N8nRunOut]
+    total: int
+
+
 class N8nWorkflowCreateIn(BaseModel):
     """A whole workflow definition pasted/built by the user.
 
