@@ -1,0 +1,41 @@
+.pf-shell { display: grid; gap: 18px; max-width: 880px; }
+.pf-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 22px;
+}
+.pf-card h3 { margin: 0 0 16px; font-size: 16px; }
+.pf-head { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.pf-avatar {
+  width: 72px; height: 72px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent); color: #fff;
+  font-size: 26px; font-weight: 700; flex: none;
+}
+.pf-head-info { flex: 1; min-width: 220px; }
+.pf-head-info h2 { margin: 0 0 6px; font-size: 22px; }
+.pf-head-info p {
+  margin: 3px 0; color: var(--muted); font-size: 13.5px;
+  display: flex; align-items: center; gap: 6px;
+}
+.pf-stats {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.pf-stat { display: grid; gap: 5px; padding: 16px 18px; color: var(--accent-dark); }
+.pf-stat strong { font-size: 22px; color: var(--ink); }
+.pf-stat span { font-size: 12.5px; color: var(--muted); }
+.pf-form { display: grid; gap: 14px; max-width: 520px; }
+.pf-form label { display: grid; gap: 6px; font-size: 13px; font-weight: 600; }
+.pf-form input {
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+  font: inherit; font-weight: 400; background: var(--surface); color: var(--ink);
+}
+.pf-form input:disabled { background: var(--bg); color: var(--muted); }
+.pf-mono { font-family: ui-monospace, monospace; font-size: 12px; }
+.pf-note { margin: 16px 0 0; font-size: 13px; color: var(--muted); }
+.pf-note a { color: var(--accent-dark); font-weight: 600; }
+@media (max-width: 760px) {
+  .pf-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

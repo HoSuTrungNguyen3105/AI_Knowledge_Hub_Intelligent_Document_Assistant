@@ -258,3 +258,28 @@ def test_logout_without_valid_session_is_idempotent(client):
     client.cookies.set(ACCESS_COOKIE, "bad", path="/api/v1")
     client.cookies.set(REFRESH_COOKIE, "bad", path="/api/v1/auth")
     assert client.post("/api/v1/auth/logout").status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_update_profile_renames_and_persists(client, register, db):
+    register(client)
+    response = client.patch("/api/v1/auth/me", json={"name": "  Tên Mới  "})
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "Tên Mới"
+    me = client.get("/api/v1/auth/me")
+    assert me.json()["name"] == "Tên Mới"
+    stored = await db.users.find_one({"_id": UUID(response.json()["id"])})
+    assert stored["name"] == "Tên Mới"
+
+
+@pytest.mark.asyncio
+async def test_update_profile_rejects_blank_name(client, register):
+    register(client)
+    response = client.patch("/api/v1/auth/me", json={"name": "   "})
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_update_profile_requires_login(client):
+    response = client.patch("/api/v1/auth/me", json={"name": "Ẩn Danh"})
+    assert response.status_code == 401

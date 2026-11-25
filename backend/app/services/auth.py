@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from uuid import UUID
 from datetime import timedelta
 
 from fastapi import HTTPException, status
@@ -17,7 +18,11 @@ from app.core.security import (
 from app.models import RefreshToken, User
 from app.models.base import utcnow
 from app.repositories.auth import AuthRepository
-from app.schemas.auth import LoginRequest, RegisterRequest
+from app.schemas.auth import (
+    LoginRequest,
+    RegisterRequest,
+    UpdateProfileRequest,
+)
 
 
 @dataclass(frozen=True)
@@ -65,6 +70,19 @@ class AuthService:
                         status.HTTP_409_CONFLICT, "Email is already registered"
                     ) from None
             raise
+
+    async def update_profile(
+        self, user_id: UUID, payload: UpdateProfileRequest
+    ) -> User:
+        user = await self.repository.update_name(user_id, payload.name)
+        if user is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, "User no longer exists"
+            )
+        await self.repository.record_activity(
+            user.id, "auth.profile_update", "Profile name updated"
+        )
+        return user
 
     async def login(self, payload: LoginRequest) -> AuthResult:
         user = await self.repository.user_by_email(str(payload.email))

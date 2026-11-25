@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { LayoutDashboard, LibraryBig, MessagesSquare, Bot, NotebookPen, Settings2, Menu, X, LogOut, ChevronRight, PanelLeftClose, ShieldCheck, Columns2, Users, GitBranch, Search, Bell, Building2, Handshake, CheckCircle2, Briefcase, ClipboardList, Network } from "lucide-react";
+import { LayoutDashboard, LibraryBig, MessagesSquare, Bot, NotebookPen, Settings2, Menu, X, LogOut, ChevronRight, PanelLeftClose, ShieldCheck, Columns2, Users, GitBranch, Search, Bell, Building2, Handshake, CheckCircle2, Briefcase, ClipboardList, Network, UserRound,
+} from "lucide-react";
 import { Brand } from "./brand";
 import { useSession } from "../stores/session";
 import { useLogout } from "../hooks/use-logout";
@@ -53,6 +54,7 @@ const navigationGroups = [
     label: "Administration",
     items: [
       { href: "/settings", label: "Cài đặt AI", icon: Settings2 },
+      { href: "/profile", label: "Hồ sơ cá nhân", icon: UserRound },
     ],
   },
 ];
@@ -93,7 +95,7 @@ export function AppShell({ children }) {
     <a className="skip-link" href="#main-content">Chuyển đến nội dung</a>
     <aside className="sidebar"><SidebarContent pathname={pathname} /></aside>
     <dialog ref={dialog} className="mobile-drawer" aria-label="Menu điều hướng" onCancel={() => setMenuOpen(false)} onClick={(event) => { if (event.target === event.currentTarget) setMenuOpen(false); }}><div className="drawer-content"><SidebarContent pathname={pathname} onNavigate={() => setMenuOpen(false)} mobile /></div></dialog>
-    <div className="workspace-main"><header className="topbar"><div className="breadcrumbs"><button className="icon-button mobile-menu" aria-label="Mở menu điều hướng" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>{menuOpen ? <X size={22} /> : <Menu size={22} />}</button><span className="breadcrumb-parent">Không gian làm việc</span><ChevronRight size={14} className="breadcrumb-parent" /><span>{title}</span></div><div className="topbar-search"><Search size={16} /><input aria-label="Tìm nhanh trang" placeholder="Search anything... (Ctrl + K)" value={query} onChange={(event) => setQuery(event.target.value)} />{searchResults.length > 0 && <div className="topbar-search-results">{searchResults.map((item) => <Link key={item.href} href={item.href} onClick={() => setQuery("")}>{item.label}</Link>)}</div>}</div><div className="topbar-account"><span className="system-status"><span className="status-dot" style={online === false ? { background: "#dc2626" } : undefined} />{online === null ? "System …" : online ? "System Online" : "System Offline"}</span><NotificationsBell /><span className="private-label"><ShieldCheck size={15} />Riêng tư</span><span className="avatar" title={user?.name} aria-label={`Tài khoản ${user?.name}`}>{initials(user?.name)}</span><button className="icon-button logout-button" onClick={logout} disabled={busy} aria-label={busy ? "Đang đăng xuất" : "Đăng xuất"} title="Đăng xuất"><LogOut size={18} /></button></div></header>
+    <div className="workspace-main"><header className="topbar"><div className="breadcrumbs"><button className="icon-button mobile-menu" aria-label="Mở menu điều hướng" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>{menuOpen ? <X size={22} /> : <Menu size={22} />}</button><span className="breadcrumb-parent">Không gian làm việc</span><ChevronRight size={14} className="breadcrumb-parent" /><span>{title}</span></div><div className="topbar-search"><Search size={16} /><input aria-label="Tìm nhanh trang" placeholder="Search anything... (Ctrl + K)" value={query} onChange={(event) => setQuery(event.target.value)} />{searchResults.length > 0 && <div className="topbar-search-results">{searchResults.map((item) => <Link key={item.href} href={item.href} onClick={() => setQuery("")}>{item.label}</Link>)}</div>}</div><div className="topbar-account"><span className="system-status"><span className="status-dot" style={online === false ? { background: "#dc2626" } : undefined} />{online === null ? "System …" : online ? "System Online" : "System Offline"}</span><NotificationsBell /><span className="private-label"><ShieldCheck size={15} />Riêng tư</span><Link href="/profile" className="avatar" title={user?.name} aria-label={`Tài khoản ${user?.name}`}>{initials(user?.name)}</Link><button className="icon-button logout-button" onClick={logout} disabled={busy} aria-label={busy ? "Đang đăng xuất" : "Đăng xuất"} title="Đăng xuất"><LogOut size={18} /></button></div></header>
       <main id="main-content" className="page-content">{children}</main>
       {/* <footer className="app-footer"><span>{APP_NAME}</span><span>{APP_STAGE}</span></footer> */}
     </div>

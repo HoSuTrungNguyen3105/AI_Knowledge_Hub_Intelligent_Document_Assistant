@@ -7,7 +7,13 @@ from app.core.security import (
     clear_auth_cookies,
     set_auth_cookies,
 )
-from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest, UserResponse
+from app.schemas.auth import (
+    AuthResponse,
+    LoginRequest,
+    RegisterRequest,
+    UpdateProfileRequest,
+    UserResponse,
+)
 from app.services.auth import AuthService
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -53,3 +59,14 @@ async def logout(request: Request, db: Database, settings: AppSettings) -> Respo
 @router.get("/me", response_model=UserResponse)
 async def me(user: CurrentUser) -> UserResponse:
     return UserResponse.model_validate(user)
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_me(
+    payload: UpdateProfileRequest,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+) -> UserResponse:
+    updated = await AuthService(db, settings).update_profile(user.id, payload)
+    return UserResponse.model_validate(updated)
