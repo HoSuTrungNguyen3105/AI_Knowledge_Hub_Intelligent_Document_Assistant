@@ -5,16 +5,27 @@ import {
   Braces,
   ExternalLink,
   FileJson,
+  History,
   Loader2,
   Network,
+  Ban,
+  Play,
   Plus,
   Power,
   RefreshCw,
+  RotateCcw,
   Save,
   SlidersHorizontal,
   Workflow as WorkflowIcon,
   X,
 } from "lucide-react";
+
+const RUN_STATUS_TEXT = {
+  running: "Đang chạy",
+  success: "Thành công",
+  error: "Lỗi",
+  stopped: "Đã dừng",
+};
 
 const SAMPLE_WORKFLOW_JSON = `{
   "name": "Workflow mẫu từ MindFlow",
@@ -84,7 +95,83 @@ export function N8nPlatformWorkspace() {
   const [createJson, setCreateJson] = useState("");
   const [creating, setCreating] = useState(false);
   const [createNote, setCreateNote] = useState("");
+  const [runs, setRuns] = useState([]);
+  const [runFor, setRunFor] = useState(null); // workflow being prepared to run
+  const [runPayload, setRunPayload] = useState("{}");
+  const [runNote, setRunNote] = useState("");
+  const [starting, setStarting] = useState(false);
+  const [openRunId, setOpenRunId] = useState(null);
+  const [runBusy, setRunBusy] = useState("");
   const abortRef = useRef(null);
+
+  const loadRuns = useCallback(async () => {
+    try {
+      const data = await n8nPlatformService.listRuns();
+      setRuns(data.items || []);
+    } catch {
+      // The runs list is secondary; keep the last known list on failure.
+    }
+  }, []);
+
+  useEffect(() => {
+    loadRuns();
+  }, [loadRuns]);
+
+  const hasRunning = runs.some((run) => run.status === "running");
+  useEffect(() => {
+    if (!hasRunning) return undefined;
+    const timer = setInterval(loadRuns, 4000);
+    return () => clearInterval(timer);
+  }, [hasRunning, loadRuns]);
+
+  async function startRun() {
+    if (!runFor) return;
+    setRunNote("");
+    setError("");
+    let payload;
+    try {
+      payload = JSON.parse(runPayload || "{}");
+    } catch {
+      setRunNote("Payload phải là JSON hợp lệ, ví dụ {\"topic\": \"...\"}.");
+      return;
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      setRunNote("Payload phải là một object JSON.");
+      return;
+    }
+    setStarting(true);
+    try {
+      const run = await n8nPlatformService.startRun({ workflow_id: runFor.id, payload });
+      setRunNote(
+        run.status === "error"
+          ? `Không chạy được: ${run.error || "webhook không trả lời"}.`
+          : `Đã kích hoạt "${runFor.name}" — xem tiến trình ở mục Lượt chạy n8n bên dưới.`,
+      );
+      setOpenRunId(run.id);
+      loadRuns();
+    } catch (err) {
+      setError(getN8nPlatformError(err, "Không chạy được workflow. Hãy thử lại."));
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  async function actOnRun(run, action) {
+    setRunBusy(run.id);
+    setError("");
+    try {
+      if (action === "stop") await n8nPlatformService.stopRun(run.id);
+      if (action === "retry") {
+        const fresh = await n8nPlatformService.retryRun(run.id);
+        setOpenRunId(fresh.id);
+      }
+      loadRuns();
+    } catch (err) {
+      setError(getN8nPlatformError(err, "Thao tác chưa xong. Hãy thử lại."));
+    } finally {
+      setRunBusy("");
+    }
+  }
 
   // Fill the parameter form from a pasted JSON object shaped
   // { "Node name": { "param.path": value, ... }, ... }. Only parameters
@@ -448,6 +535,19 @@ export function N8nPlatformWorkspace() {
                     )}
                     {workflow.active ? "Tắt" : "Bật"}
                   </button>
+                  {workflow.active && workflow.webhook_paths?.length ? (
+                    <button
+                      type="button"
+                      className="fx-btn"
+                      onClick={() => {
+                        setRunFor(workflow);
+                        setRunPayload("{}");
+                        setRunNote("");
+                      }}
+                    >
+                      <Play size={15} /> Chạy
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="fx-btn"
@@ -577,6 +677,129 @@ export function N8nPlatformWorkspace() {
           ))}
         </section>
       ) : null}
+
+      {runFor ? (
+        <section className="fx-card">
+          <h2>
+            <Play size={17} /> Chạy workflow — {runFor.name}
+            <span style={{ marginLeft: "auto" }}>
+              <button type="button" className="fx-btn" onClick={() => setRunFor(null)}>
+                <X size={15} /> Đóng
+              </button>
+            </span>
+          </h2>
+          <p className="fx-run-meta">
+            Webhook: POST /{runFor.webhook_paths?.[0]}. Payload JSON dưới đây được gửi nguyên văn
+            tới webhook; tiến trình và kết quả lấy từ Executions thật của n8n.
+          </p>
+          <textarea
+            className="fx-textarea n8n-json"
+            rows={5}
+            value={runPayload}
+            onChange={(event) => setRunPayload(event.target.value)}
+            spellCheck={false}
+          />
+          {runNote ? <p className="fx-run-meta">{runNote}</p> : null}
+          <div className="fx-actions">
+            <button
+              type="button"
+              className="fx-btn primary"
+              onClick={startRun}
+              disabled={starting}
+            >
+              {starting ? <Loader2 size={15} className="spin" /> : <Play size={15} />}
+              Chạy ngay
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      <section className="fx-card">
+        <h2>
+          <History size={17} /> Lượt chạy n8n
+          <span style={{ marginLeft: "auto" }}>
+            <button type="button" className="fx-btn" onClick={loadRuns}>
+              <RefreshCw size={15} /> Làm mới
+            </button>
+          </span>
+        </h2>
+        {runs.length === 0 ? (
+          <p className="fx-run-meta">
+            Chưa có lượt chạy nào từ MindFlow. Bấm Chạy ở một workflow đang bật có Webhook trigger.
+          </p>
+        ) : (
+          runs.map((run) => (
+            <div key={run.id} className="n8n-node">
+              <h3>
+                <span className={`n8n-run-status ${run.status}`}>
+                  {RUN_STATUS_TEXT[run.status] || run.status}
+                </span>{" "}
+                {run.workflow_name}
+                <span style={{ marginLeft: "auto" }} className="fx-actions">
+                  {run.status === "running" ? (
+                    <button
+                      type="button"
+                      className="fx-btn"
+                      onClick={() => actOnRun(run, "stop")}
+                      disabled={runBusy === run.id}
+                    >
+                      <Ban size={15} /> Dừng
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="fx-btn"
+                      onClick={() => actOnRun(run, "retry")}
+                      disabled={runBusy === run.id}
+                    >
+                      <RotateCcw size={15} /> Chạy lại
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="fx-btn"
+                    onClick={() => setOpenRunId(openRunId === run.id ? null : run.id)}
+                  >
+                    {openRunId === run.id ? "Thu gọn" : "Chi tiết"}
+                  </button>
+                </span>
+              </h3>
+              <p className="fx-run-meta">
+                Bắt đầu {formatTime(run.started_at)}
+                {run.finished_at ? ` · Kết thúc ${formatTime(run.finished_at)}` : ""}
+                {run.n8n_execution_id ? ` · Execution #${run.n8n_execution_id}` : ""}
+                {run.retry_of ? " · Chạy lại từ lượt trước" : ""}
+                {run.error ? ` · Lỗi: ${run.error}` : ""}
+              </p>
+              {openRunId === run.id ? (
+                run.node_statuses?.length ? (
+                  <ul className="n8n-node-list">
+                    {run.node_statuses.map((node) => (
+                      <li key={node.name}>
+                        <span className={`n8n-run-status ${node.status}`}>
+                          {node.status === "success"
+                            ? "Xong"
+                            : node.status === "error"
+                              ? "Lỗi"
+                              : "Chờ"}
+                        </span>{" "}
+                        <strong>{node.name}</strong>
+                        {node.duration_ms != null ? ` · ${node.duration_ms} ms` : ""}
+                        {node.error ? ` · ${node.error}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="fx-run-meta">
+                    Chưa có dữ liệu theo node — n8n chưa trả execution hoặc workflow chưa chạy tới
+                    node nào. Bấm Làm mới sau ít giây.
+                  </p>
+                )
+              ) : null}
+            </div>
+          ))
+        )}
+      </section>
 
       <section className="fx-card">
         <h2>

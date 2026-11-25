@@ -31,6 +31,22 @@ export const n8nPlatformService = {
     const { data } = await api.post(`${path}/workflows`, payload, { signal });
     return data;
   },
+  async startRun(payload, signal) {
+    const { data } = await api.post(`${path}/runs`, payload, { signal });
+    return data;
+  },
+  async listRuns(signal) {
+    const { data } = await api.get(`${path}/runs`, { signal });
+    return data;
+  },
+  async stopRun(id, signal) {
+    const { data } = await api.post(`${path}/runs/${id}/stop`, {}, { signal });
+    return data;
+  },
+  async retryRun(id, signal) {
+    const { data } = await api.post(`${path}/runs/${id}/retry`, {}, { signal });
+    return data;
+  },
 };
 
 // Human-readable text for the machine-readable status/sync error codes.
@@ -53,6 +69,15 @@ export function getN8nStatusText(code) {
   }
   if (code === "n8n_workflow_not_found") {
     return "Workflow không còn tồn tại trong n8n. Hãy bấm Làm mới để đồng bộ lại danh sách.";
+  }
+  if (code === "n8n_workflow_inactive") {
+    return "Workflow đang tắt trong n8n. Hãy Bật (Publish) workflow trước khi chạy.";
+  }
+  if (code === "n8n_workflow_no_webhook") {
+    return "Workflow này không có Webhook trigger nên chưa chạy được từ MindFlow. Hãy mở n8n và thêm Webhook trigger.";
+  }
+  if (code === "n8n_run_not_found") {
+    return "Không tìm thấy lượt chạy này. Hãy tải lại danh sách.";
   }
   if (code === "n8n_workflow_invalid") {
     return "Định nghĩa workflow chưa hợp lệ: cần có tên và ít nhất một node có đủ name + type (và đúng định dạng mà n8n chấp nhận). Hãy kiểm tra lại JSON.";
