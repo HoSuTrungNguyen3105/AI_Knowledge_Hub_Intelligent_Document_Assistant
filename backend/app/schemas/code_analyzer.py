@@ -29,6 +29,7 @@ class CodeProjectSummary(BaseModel):
     description: str = ""
     is_public_demo: bool = False
     status: str = "PROCESSING"
+    has_report: bool = False
     stats: CodeProjectStats = Field(default_factory=CodeProjectStats)
     created_at: datetime
     updated_at: datetime
@@ -47,6 +48,9 @@ class CodeFileSummary(BaseModel):
     role_tag: str = ""
     import_count: int = 0
     imported_by_count: int = 0
+    ai_summary: str = ""
+    imports: list[CodeImport] = Field(default_factory=list)
+    imported_by: list[str] = Field(default_factory=list)
 
 
 class CodeProjectDetail(CodeProjectSummary):

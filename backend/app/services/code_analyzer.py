@@ -327,6 +327,7 @@ class CodeAnalyzerService:
             description=doc.get("description", ""),
             is_public_demo=bool(doc.get("is_public_demo")),
             status=doc.get("status", "PROCESSING"),
+            has_report=bool(doc.get("report_markdown")),
             stats=doc.get("stats") or {},
             created_at=doc["created_at"],
             updated_at=doc["updated_at"],
@@ -343,6 +344,9 @@ class CodeAnalyzerService:
             role_tag=doc.get("role_tag", ""),
             import_count=len(doc.get("imports", [])),
             imported_by_count=len(doc.get("imported_by", [])),
+            ai_summary=doc.get("ai_summary", ""),
+            imports=doc.get("imports") or [],
+            imported_by=doc.get("imported_by") or [],
         )
 
     async def _require_project(self, user_id: UUID, project_id: UUID) -> dict:
