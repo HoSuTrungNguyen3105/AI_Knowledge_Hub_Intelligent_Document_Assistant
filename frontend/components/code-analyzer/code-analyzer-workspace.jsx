@@ -127,12 +127,15 @@ function layoutGraph(nodes, edges) {
 
 /* ------------------------------------------------------------ workspace */
 export default function CodeAnalyzerWorkspace() {
+  const [view, setView] = useState("list");
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState("");
   const [detail, setDetail] = useState(null);
   const [selectedId, setSelectedId] = useState("");
   const [cluster, setCluster] = useState(null);
   const [query, setQuery] = useState("");
+  const [dataQuery, setDataQuery] = useState("");
+  const [dataSort, setDataSort] = useState("imported");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -183,10 +186,7 @@ export default function CodeAnalyzerWorkspace() {
             /* production: seeding disabled, show the empty state */
           }
         }
-        if (!cancelled && list.length) {
-          setProjectId(list[0].id);
-          await openProject(list[0].id);
-        }
+        if (!cancelled) setProjects(list);
       } catch (err) {
         if (!cancelled) setError(getCodeError(err));
       }
@@ -194,7 +194,7 @@ export default function CodeAnalyzerWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [loadProjects, openProject]);
+  }, [loadProjects]);
 
   useEffect(() => {
     let cancelled = false;
@@ -282,6 +282,18 @@ export default function CodeAnalyzerWorkspace() {
     setSelectedId(node.id);
   }
 
+  function enterProject(id) {
+    setProjectId(id);
+    setView("detail");
+    openProject(id);
+  }
+
+  function backToList() {
+    setView("list");
+    setDetail(null);
+    loadProjects().catch(() => {});
+  }
+
   async function onUpload(event) {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -293,12 +305,11 @@ export default function CodeAnalyzerWorkspace() {
       const result = await codeAnalyzerService.upload(file, providerId, modelId);
       setNotice(
         result.analysis_dispatch === "ai"
-          ? `Đã phân tích xong "${result.project.name}" — AI đã viết báo cáo phân tích dựa trên ${result.ai_analyzed} file, xem ở mục Báo cáo bên dưới.`
+          ? `Đã phân tích xong "${result.project.name}" — AI đã viết báo cáo phân tích dựa trên ${result.ai_analyzed} file.`
           : `Đã phân tích xong "${result.project.name}". ${STATIC_NOTE}`,
       );
       await loadProjects();
-      setProjectId(result.project.id);
-      await openProject(result.project.id);
+      enterProject(result.project.id);
     } catch (err) {
       setError(getCodeError(err));
     } finally {
@@ -323,6 +334,7 @@ export default function CodeAnalyzerWorkspace() {
           : STATIC_NOTE,
       );
       await openProject(detail.id);
+      await loadProjects();
     } catch (err) {
       setError(getCodeError(err));
     } finally {
@@ -343,6 +355,37 @@ export default function CodeAnalyzerWorkspace() {
     URL.revokeObjectURL(url);
   }
 
+  function onDownloadCsv() {
+    if (!detail) return;
+    const esc = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const header = [
+      "file_path", "language", "role_tag", "module_group",
+      "imports", "imported_by", "ai_summary",
+    ];
+    const lines = dataRows.map((f) =>
+      [
+        f.file_path,
+        f.language,
+        f.role_tag,
+        f.module_group,
+        (f.imports || []).map((i) => i.target_file).join("; "),
+        (f.imported_by || []).join("; "),
+        f.ai_summary || "",
+      ]
+        .map(esc)
+        .join(","),
+    );
+    const blob = new Blob([[header.join(","), ...lines].join("\n")], {
+      type: "text/csv;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${(detail.name || "codebase").replace(/[^\w-]+/g, "-")}-du-lieu.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   const tree = useMemo(() => buildTree(detail?.files || []), [detail]);
   const visibleFiles = useMemo(() => {
     const all = detail?.files || [];
@@ -350,6 +393,31 @@ export default function CodeAnalyzerWorkspace() {
     const q = query.trim().toLowerCase();
     return all.filter((f) => f.file_path.toLowerCase().includes(q));
   }, [detail, query]);
+
+  const dataRows = useMemo(() => {
+    const all = [...(detail?.files || [])];
+    const q = dataQuery.trim().toLowerCase();
+    const filtered = q
+      ? all.filter((f) =>
+          [f.file_path, f.language, f.role_tag, f.module_group]
+            .join(" ")
+            .toLowerCase()
+            .includes(q),
+        )
+      : all;
+    if (dataSort === "path") {
+      filtered.sort((a, b) => a.file_path.localeCompare(b.file_path));
+    } else if (dataSort === "imports") {
+      filtered.sort(
+        (a, b) => (b.import_count || 0) - (a.import_count || 0),
+      );
+    } else {
+      filtered.sort(
+        (a, b) => (b.imported_by_count || 0) - (a.imported_by_count || 0),
+      );
+    }
+    return filtered;
+  }, [detail, dataQuery, dataSort]);
 
   const project = projects.find((p) => p.id === projectId);
 
@@ -390,22 +458,6 @@ export default function CodeAnalyzerWorkspace() {
               </option>
             ))}
           </select>
-          <select
-            value={projectId}
-            onChange={(e) => {
-              setProjectId(e.target.value);
-              openProject(e.target.value);
-            }}
-            aria-label="Chọn dự án"
-          >
-            <option value="">— Chọn dự án —</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-                {p.is_public_demo ? " (mẫu)" : ""}
-              </option>
-            ))}
-          </select>
           <button
             type="button"
             className="wf-btn primary"
@@ -425,176 +477,349 @@ export default function CodeAnalyzerWorkspace() {
       </header>
       {error ? <p className="wf-error">{error}</p> : null}
       {notice ? <p className="wf-success">{notice}</p> : null}
-      {project ? (
-        <p className="ca-stats">
-          <span className="wf-badge">{STATUS_LABELS[project.status] || project.status}</span>
-          {project.stats?.analyzed_files ?? 0} file đã phân tích /{" "}
-          {project.stats?.total_raw_files ?? 0} file gốc
-          {project.stats?.primary_language
-            ? ` · Ngôn ngữ chính: ${project.stats.primary_language}`
-            : ""}
-          {detail?.diagram_data?.mode === "clusters" && !cluster
-            ? " · Repo lớn: đồ thị đang gom theo cụm thư mục, bấm vào một cụm để mở rộng"
-            : ""}
-        </p>
+
+      {view === "list" ? (
+        <section>
+          <div className="ca-cards">
+            {projects.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className="ca-card"
+                onClick={() => enterProject(p.id)}
+              >
+                <span className="ca-card-top">
+                  <strong>{p.name}</strong>
+                  {p.is_public_demo ? <span className="wf-chip">Mẫu</span> : null}
+                </span>
+                <span className="ca-card-meta">
+                  {p.stats?.analyzed_files ?? 0} file đã phân tích
+                  {p.stats?.primary_language
+                    ? ` · ${p.stats.primary_language}`
+                    : ""}
+                </span>
+                <span className="ca-card-row">
+                  <span className="wf-badge">
+                    {STATUS_LABELS[p.status] || p.status}
+                  </span>
+                  {p.has_report ? (
+                    <span className="ca-chip-ai">Đã có báo cáo AI</span>
+                  ) : (
+                    <span className="ca-chip-none">Chưa có báo cáo</span>
+                  )}
+                </span>
+                <span className="ca-card-date">
+                  Cập nhật {new Date(p.updated_at).toLocaleDateString("vi-VN")}
+                </span>
+              </button>
+            ))}
+          </div>
+          {projects.length === 0 && !busy ? (
+            <p className="ca-empty">
+              Chưa có dự án nào. Hãy upload file ZIP mã nguồn để bắt đầu
+              phân tích — dự án sẽ hiện ở đây, bấm vào để xem báo cáo.
+            </p>
+          ) : null}
+        </section>
       ) : null}
-      {!detail && !busy ? (
-        <p className="ca-empty">
-          Chưa có dự án nào. Hãy upload file ZIP mã nguồn để bắt đầu phân tích.
-        </p>
-      ) : null}
-      {detail ? (
-        <div className="ca-panes">
-          <aside className="ca-pane ca-explorer">
+
+      {view === "data" && detail ? (
+        <div className="ca-detail">
+          <div className="ca-detail-head">
+            <button
+              type="button"
+              className="wf-btn"
+              onClick={() => setView("detail")}
+            >
+              ← Về chi tiết dự án
+            </button>
+            <h3 className="ca-detail-name">Dữ liệu dự án — {detail.name}</h3>
+            <span className="ca-detail-meta">
+              {detail.files?.length ?? 0} file ·{" "}
+              {(detail.files || []).reduce(
+                (sum, f) => sum + (f.import_count || 0),
+                0,
+              )}{" "}
+              quan hệ import
+            </span>
+            <button type="button" className="wf-btn" onClick={onDownloadCsv}>
+              Tải CSV
+            </button>
+          </div>
+          <div className="ca-data-tools">
             <input
               className="ca-search"
-              placeholder="Tìm file..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              aria-label="Tìm file"
+              placeholder="Lọc theo đường dẫn, ngôn ngữ, vai trò, nhóm..."
+              value={dataQuery}
+              onChange={(e) => setDataQuery(e.target.value)}
+              aria-label="Lọc bảng dữ liệu"
             />
-            {visibleFiles ? (
-              <div>
-                {visibleFiles.map((file) => (
-                  <button
-                    key={file.id}
-                    type="button"
-                    className={`ca-tree-file ${selectedId === file.id ? "active" : ""}`}
-                    onClick={() => setSelectedId(file.id)}
-                    title={file.file_path}
+            <select
+              value={dataSort}
+              onChange={(e) => setDataSort(e.target.value)}
+              aria-label="Sắp xếp bảng dữ liệu"
+            >
+              <option value="imported">Được import nhiều nhất</option>
+              <option value="imports">Import nhiều nhất</option>
+              <option value="path">Đường dẫn A–Z</option>
+            </select>
+            <span className="ca-detail-meta">
+              Hiện {dataRows.length} / {detail.files?.length ?? 0} file — bấm
+              vào một dòng để xem file đó trên sơ đồ.
+            </span>
+          </div>
+          <div className="ca-table-wrap">
+            <table className="ca-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Đường dẫn file</th>
+                  <th>Ngôn ngữ</th>
+                  <th>Vai trò</th>
+                  <th>Nhóm</th>
+                  <th>Import các file</th>
+                  <th>Được import bởi</th>
+                  <th>Tóm tắt AI</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dataRows.map((f, index) => (
+                  <tr
+                    key={f.id}
+                    onClick={() => {
+                      setSelectedId(f.id);
+                      setView("detail");
+                    }}
                   >
-                    {file.file_path}
-                  </button>
+                    <td>{index + 1}</td>
+                    <td className="ca-path">{f.file_path}</td>
+                    <td>{f.language || "—"}</td>
+                    <td>{f.role_tag || "—"}</td>
+                    <td>{f.module_group || "—"}</td>
+                    <td>
+                      {(f.imports || []).length ? (
+                        <div className="ca-cell-list">
+                          {(f.imports || []).map((imp, i) => (
+                            <div key={i}>{imp.target_file}</div>
+                          ))}
+                        </div>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td>
+                      {(f.imported_by || []).length ? (
+                        <div className="ca-cell-list">
+                          {(f.imported_by || []).map((path, i) => (
+                            <div key={i}>{path}</div>
+                          ))}
+                        </div>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="ca-summary">{f.ai_summary || "—"}</td>
+                  </tr>
                 ))}
-                {visibleFiles.length === 0 ? (
-                  <p className="ca-note">Không có file nào khớp.</p>
+                {dataRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="ca-note">
+                      Không có file nào khớp bộ lọc.
+                    </td>
+                  </tr>
                 ) : null}
-              </div>
-            ) : (
-              <TreeNode
-                node={tree}
-                depth={0}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-              />
-            )}
-          </aside>
-          <section className="ca-pane ca-graph">
-            {cluster ? (
-              <button
-                type="button"
-                className="wf-btn"
-                onClick={() => setCluster(null)}
-              >
-                ← Tất cả cụm thư mục
-              </button>
-            ) : null}
-            <div className="ca-graph-scroll">
-              <svg
-                width={layout.width}
-                height={layout.height}
-                className="ca-svg"
-                role="img"
-                aria-label="Sơ đồ kiến trúc"
-              >
-                <defs>
-                  <marker
-                    id="ca-arrow"
-                    viewBox="0 0 10 10"
-                    refX="9"
-                    refY="5"
-                    markerWidth="7"
-                    markerHeight="7"
-                    orient="auto-start-reverse"
-                  >
-                    <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
-                  </marker>
-                </defs>
-                {graph.edges.map((edge, i) => {
-                  const from = layout.positions.get(edge.source);
-                  const to = layout.positions.get(edge.target);
-                  if (!from || !to) return null;
-                  return (
-                    <line
-                      key={`${edge.source}-${edge.target}-${i}`}
-                      x1={from.x + NODE_W}
-                      y1={from.y + NODE_H / 2}
-                      x2={to.x}
-                      y2={to.y + NODE_H / 2}
-                      className="ca-edge"
-                      markerEnd="url(#ca-arrow)"
-                    />
-                  );
-                })}
-                {graph.nodes.map((node) => {
-                  const pos = layout.positions.get(node.id);
-                  if (!pos) return null;
-                  const active = selectedId === node.id;
-                  return (
-                    <g
-                      key={node.id}
-                      transform={`translate(${pos.x}, ${pos.y})`}
-                      className={`ca-node ${active ? "active" : ""}`}
-                      onClick={() => onNodeClick(node)}
-                    >
-                      <rect width={NODE_W} height={NODE_H} rx="8" />
-                      <text x="10" y="20" className="ca-node-title">
-                        {node.label.length > 22
-                          ? `${node.label.slice(0, 21)}…`
-                          : node.label}
-                      </text>
-                      <text x="10" y="36" className="ca-node-sub">
-                        {node.kind === "cluster"
-                          ? `${node.file_count} file`
-                          : node.role_tag || node.group || ""}
-                      </text>
-                    </g>
-                  );
-                })}
-              </svg>
-            </div>
-          </section>
+              </tbody>
+            </table>
+          </div>
         </div>
       ) : null}
-      {detail ? (
-        <section className="ca-report">
-          <div className="ca-report-head">
-            <h3>Báo cáo phân tích AI</h3>
-            <div className="ca-report-actions">
-              <button
-                type="button"
-                className="wf-btn"
-                disabled={reportBusy || busy}
-                onClick={onRegenerate}
-              >
-                {reportBusy ? "Đang viết báo cáo..." : "Tạo lại báo cáo"}
-              </button>
-              {detail.report_markdown ? (
+
+      {view === "detail" && detail ? (
+        <div className="ca-detail">
+          <div className="ca-detail-head">
+            <button type="button" className="wf-btn" onClick={backToList}>
+              ← Tất cả dự án
+            </button>
+            <h3 className="ca-detail-name">{detail.name}</h3>
+            {project ? (
+              <span className="wf-badge">
+                {STATUS_LABELS[project.status] || project.status}
+              </span>
+            ) : null}
+            <span className="ca-detail-meta">
+              {detail.stats?.analyzed_files ?? 0} file đã phân tích /{" "}
+              {detail.stats?.total_raw_files ?? 0} file gốc
+              {detail.stats?.primary_language
+                ? ` · Ngôn ngữ chính: ${detail.stats.primary_language}`
+                : ""}
+            </span>
+            <button
+              type="button"
+              className="wf-btn"
+              onClick={() => setView("data")}
+            >
+              Bảng dữ liệu đầy đủ
+            </button>
+          </div>
+
+          <section className="ca-report">
+            <div className="ca-report-head">
+              <h3>Báo cáo phân tích AI</h3>
+              <div className="ca-report-actions">
                 <button
                   type="button"
                   className="wf-btn"
-                  onClick={onDownloadReport}
+                  disabled={reportBusy || busy}
+                  onClick={onRegenerate}
                 >
-                  Tải file .md
+                  {reportBusy ? "Đang viết báo cáo..." : "Tạo lại báo cáo"}
+                </button>
+                {detail.report_markdown ? (
+                  <button
+                    type="button"
+                    className="wf-btn"
+                    onClick={onDownloadReport}
+                  >
+                    Tải file .md
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            {detail.report_markdown ? (
+              <div className="ca-md">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {detail.report_markdown}
+                </ReactMarkdown>
+              </div>
+            ) : (
+              <p className="ca-note">
+                Dự án này chưa có báo cáo AI (được tạo trước khi có tính
+                năng này, hoặc lần upload đó chưa có provider khả dụng).
+                Bấm "Tạo lại báo cáo" để AI viết báo cáo tổng: phần nào
+                thuộc file nào, mỗi trang/tính năng gồm những file nào.
+              </p>
+            )}
+          </section>
+
+          <h3 className="ca-section-title">Cấu trúc & sơ đồ kiến trúc</h3>
+          <div className="ca-panes">
+            <aside className="ca-pane ca-explorer">
+              <input
+                className="ca-search"
+                placeholder="Tìm file..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                aria-label="Tìm file"
+              />
+              {visibleFiles ? (
+                <div>
+                  {visibleFiles.map((file) => (
+                    <button
+                      key={file.id}
+                      type="button"
+                      className={`ca-tree-file ${selectedId === file.id ? "active" : ""}`}
+                      onClick={() => setSelectedId(file.id)}
+                      title={file.file_path}
+                    >
+                      {file.file_path}
+                    </button>
+                  ))}
+                  {visibleFiles.length === 0 ? (
+                    <p className="ca-note">Không có file nào khớp.</p>
+                  ) : null}
+                </div>
+              ) : (
+                <TreeNode
+                  node={tree}
+                  depth={0}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                />
+              )}
+            </aside>
+            <section className="ca-pane ca-graph">
+              {cluster ? (
+                <button
+                  type="button"
+                  className="wf-btn"
+                  onClick={() => setCluster(null)}
+                >
+                  ← Tất cả cụm thư mục
                 </button>
               ) : null}
-            </div>
+              {detail.diagram_data?.mode === "clusters" && !cluster ? (
+                <p className="ca-note">
+                  Repo lớn: đồ thị đang gom theo cụm thư mục, bấm vào một
+                  cụm để mở rộng.
+                </p>
+              ) : null}
+              <div className="ca-graph-scroll">
+                <svg
+                  width={layout.width}
+                  height={layout.height}
+                  className="ca-svg"
+                  role="img"
+                  aria-label="Sơ đồ kiến trúc"
+                >
+                  <defs>
+                    <marker
+                      id="ca-arrow"
+                      viewBox="0 0 10 10"
+                      refX="9"
+                      refY="5"
+                      markerWidth="7"
+                      markerHeight="7"
+                      orient="auto-start-reverse"
+                    >
+                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
+                    </marker>
+                  </defs>
+                  {graph.edges.map((edge, i) => {
+                    const from = layout.positions.get(edge.source);
+                    const to = layout.positions.get(edge.target);
+                    if (!from || !to) return null;
+                    return (
+                      <line
+                        key={`${edge.source}-${edge.target}-${i}`}
+                        x1={from.x + NODE_W}
+                        y1={from.y + NODE_H / 2}
+                        x2={to.x}
+                        y2={to.y + NODE_H / 2}
+                        className="ca-edge"
+                        markerEnd="url(#ca-arrow)"
+                      />
+                    );
+                  })}
+                  {graph.nodes.map((node) => {
+                    const pos = layout.positions.get(node.id);
+                    if (!pos) return null;
+                    const active = selectedId === node.id;
+                    return (
+                      <g
+                        key={node.id}
+                        transform={`translate(${pos.x}, ${pos.y})`}
+                        className={`ca-node ${active ? "active" : ""}`}
+                        onClick={() => onNodeClick(node)}
+                      >
+                        <rect width={NODE_W} height={NODE_H} rx="8" />
+                        <text x="10" y="20" className="ca-node-title">
+                          {node.label.length > 22
+                            ? `${node.label.slice(0, 21)}…`
+                            : node.label}
+                        </text>
+                        <text x="10" y="36" className="ca-node-sub">
+                          {node.kind === "cluster"
+                            ? `${node.file_count} file`
+                            : node.role_tag || node.group || ""}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </svg>
+              </div>
+            </section>
           </div>
-          {detail.report_markdown ? (
-            <div className="ca-md">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {detail.report_markdown}
-              </ReactMarkdown>
-            </div>
-          ) : (
-            <p className="ca-note">
-              Dự án này chưa có báo cáo AI (được tạo trước khi có tính năng
-              này, hoặc lần upload đó chưa có provider khả dụng). Bấm "Tạo
-              lại báo cáo" để AI viết báo cáo tổng: phần nào thuộc file
-              nào, mỗi trang/tính năng gồm những file nào.
-            </p>
-          )}
-        </section>
+        </div>
       ) : null}
     </div>
   );
