@@ -79,6 +79,8 @@ async def init_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.seed_registry.create_index("key", unique=True)
     await db.collab_messages.create_index([("room_id", 1), ("created_at", 1)])
     await db.collab_messages.create_index([("user_id", 1), ("room_id", 1)])
+    await db.collab_runs.create_index([("room_id", 1), ("created_at", -1)])
+    await db.collab_tasks.create_index([("run_id", 1), ("status", 1)])
     await db.resources.create_index([("user_id", 1), ("type", 1)])
     await db.resources.create_index([("user_id", 1), ("updated_at", -1)])
     await db.resources.create_index([("user_id", 1), ("skills.name", 1)])
