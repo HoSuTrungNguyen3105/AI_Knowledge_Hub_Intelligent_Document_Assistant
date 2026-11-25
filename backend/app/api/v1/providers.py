@@ -4,12 +4,14 @@ from fastapi import APIRouter, Depends, Response
 
 from app.api.dependencies import AppSettings, CurrentUser, Database
 from app.schemas.providers import (
+    ModelCheckResult,
     ProviderCatalog,
     ProviderMetadata,
     ProviderModels,
     ProviderPatch,
     ProviderTestResult,
 )
+from app.services.ai.chat import ChatHTTP
 from app.services.ai.http import ModelListingHTTP
 from app.services.providers import ProviderService
 
@@ -22,6 +24,14 @@ def provider_http() -> ModelListingHTTP:
 
 
 ProviderHTTP = Annotated[ModelListingHTTP, Depends(provider_http)]
+
+
+def provider_chat_http() -> ChatHTTP:
+    # Dependency override is exclusively for contract tests, never a runtime fallback.
+    return ChatHTTP()
+
+
+ProviderChatHTTP = Annotated[ChatHTTP, Depends(provider_chat_http)]
 
 
 @router.get("", response_model=ProviderCatalog)
@@ -59,6 +69,21 @@ async def provider_models(
     settings: AppSettings,
 ) -> ProviderModels:
     return await ProviderService(db, settings).models(user.id, provider)
+
+
+@router.post(
+    "/{provider}/models/{model_id:path}/check", response_model=ModelCheckResult
+)
+async def check_model(
+    provider: str,
+    model_id: str,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    chat_http: ProviderChatHTTP,
+) -> ModelCheckResult:
+    service = ProviderService(db, settings, chat_http=chat_http)
+    return await service.check_model(user.id, provider, model_id)
 
 
 @router.delete("/{provider}", status_code=204)

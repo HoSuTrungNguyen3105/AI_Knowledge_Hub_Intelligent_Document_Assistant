@@ -15,6 +15,12 @@ export const providerService = {
     const { data } = await api.patch(providerPath(id), values);
     return data;
   },
+  async checkModel(id, modelId) {
+    const { data } = await api.post(
+      `${providerPath(id)}/models/${modelId}/check`, {}, { timeout: 130000 }
+    );
+    return data;
+  },
   async test(id) {
     const { data } = await api.post(`${providerPath(id)}/test`, {}, { timeout: 45000 });
     return data;

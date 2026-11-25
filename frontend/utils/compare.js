@@ -15,7 +15,7 @@ const compareErrorLabels = {
   provider_authentication_failed: "Provider từ chối API key. Hãy kiểm tra key trong Cài đặt AI.",
   provider_rate_limited: "Provider đang giới hạn yêu cầu. Vui lòng chờ rồi thử lại.",
   provider_timeout: "Provider phản hồi quá lâu. Hãy thử lại sau.",
-  provider_unavailable: "Chưa kết nối được provider. Kiểm tra mạng rồi thử lại.",
+  provider_unavailable: "Provider đang gặp sự cố hoặc quá tải phía nhà cung cấp (không phải lỗi mạng của bạn). Thử lại sau ít phút hoặc đổi model khác.",
   encryption_unavailable: "Backend chưa có khóa mã hóa hợp lệ. Hãy cấu hình CREDENTIAL_ENCRYPTION_KEY.",
 };
 

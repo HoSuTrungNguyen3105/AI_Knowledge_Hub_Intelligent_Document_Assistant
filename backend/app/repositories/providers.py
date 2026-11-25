@@ -57,6 +57,26 @@ class ProviderRepository:
         )
         return AIModel(**doc) if doc else None
 
+    async def set_model_health(
+        self,
+        credential_id: UUID,
+        model_id: str,
+        *,
+        status: str,
+        error_code: str | None,
+        checked_at,
+    ) -> None:
+        await self.ai_models.update_one(
+            {"credential_id": credential_id, "model_id": model_id},
+            {
+                "$set": {
+                    "health_status": status,
+                    "health_error_code": error_code,
+                    "health_checked_at": checked_at,
+                }
+            },
+        )
+
     async def compare_update(
         self, version: CredentialVersion, values: dict
     ) -> UserProviderCredential | None:
