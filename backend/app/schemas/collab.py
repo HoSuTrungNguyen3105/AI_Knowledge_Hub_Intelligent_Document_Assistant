@@ -60,6 +60,7 @@ class MessageIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     content: str = Field(min_length=1, max_length=8000)
     mention_agent_ids: list[UUID] = Field(default_factory=list, max_length=3)
+    reply_to_message_id: UUID | None = None
 
     @field_validator("content")
     @classmethod
@@ -73,8 +74,13 @@ class CollabMessageOut(BaseModel):
     sender_type: str  # user|agent
     agent_id: UUID | None = None
     agent_name: str | None = None
+    provider: str | None = None
+    model: str | None = None
     content: str
     mentions: list[str] = Field(default_factory=list)
+    sequence: int = 0
+    reply_to_message_id: UUID | None = None
+    context_message_ids: list[str] = Field(default_factory=list)
     input_tokens: int | None = None
     output_tokens: int | None = None
     status: str = "done"  # done|error

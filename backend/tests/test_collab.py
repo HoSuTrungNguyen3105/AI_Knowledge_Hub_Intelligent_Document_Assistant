@@ -13,7 +13,7 @@ import httpx
 import pytest
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
-from test_compare import MODEL_A, chunk, seed, sse
+from test_compare import MODEL_A, MODEL_B, chunk, seed, sse
 
 from app.api.v1.agents import agent_http
 from app.services.ai.chat import ChatHTTP
@@ -47,13 +47,13 @@ def mock_agent(app):
     return configure
 
 
-def create_agent(client, name="Agent A"):
+def create_agent(client, name="Agent A", model=MODEL_A):
     response = client.post(
         AGENTS,
         json={
             "name": name,
             "provider": "openai",
-            "model": MODEL_A,
+            "model": model,
             "system_prompt": "Help.",
             "tools": [],
         },
@@ -176,3 +176,121 @@ async def test_rooms_are_owner_scoped(owner, client_factory, register):
     )
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "collab_room_not_found"
+
+
+async def test_second_mentioned_agent_sees_first_reply(owner, mock_agent, db, settings):
+    """ARCH-RESULT-739 — the core Agent-to-Agent proof: in ONE post
+    mentioning A then B, B's prompt must contain A's stored reply, and
+    B's message records A's message in its context ids."""
+    client, owner_id = owner
+    await seed(db, settings, owner_id, model_id=MODEL_B)
+    prompts = {}
+
+    def handler(request):
+        import json
+
+        body = json.loads(request.content)
+        prompt = body["messages"][-1]["content"]
+        if body["model"] == MODEL_A:
+            return httpx.Response(
+                200, text=sse(chunk("Kiến trúc đề xuất: ARCH-RESULT-739"), "[DONE]")
+            )
+        prompts["b"] = prompt
+        text = (
+            "Tôi thấy ARCH-RESULT-739 và phản biện như sau"
+            if "ARCH-RESULT-739" in prompt
+            else "Tôi không thấy kết quả nào của Agent khác"
+        )
+        return httpx.Response(200, text=sse(chunk(text), "[DONE]"))
+
+    mock_agent(handler)
+    agent_a = create_agent(client, "Agent A")
+    agent_b = create_agent(client, "Agent B", model=MODEL_B)
+    room = create_room(client, [agent_a["id"], agent_b["id"]])
+
+    posted = client.post(
+        f"{BASE}/{room['id']}/messages",
+        json={
+            "content": "A hãy đề xuất kiến trúc, B hãy phản biện đề xuất của A",
+            "mention_agent_ids": [agent_a["id"], agent_b["id"]],
+        },
+    )
+    assert posted.status_code == 201, posted.text
+    user_msg, reply_a, reply_b = posted.json()["messages"]
+    assert "ARCH-RESULT-739" in reply_a["content"]
+    assert "ARCH-RESULT-739" in prompts["b"]  # B really received A's result
+    assert "Tôi thấy ARCH-RESULT-739" in reply_b["content"]
+    assert reply_a["id"] in reply_b["context_message_ids"]
+    assert reply_b["reply_to_message_id"] == user_msg["id"]
+    assert reply_b["sequence"] > reply_a["sequence"] > user_msg["sequence"]
+
+
+async def test_reply_to_targets_a_specific_message(owner, mock_agent):
+    client, _ = owner
+    prompts = []
+
+    def handler(request):
+        import json
+
+        body = json.loads(request.content)
+        prompts.append(body["messages"][-1]["content"])
+        return httpx.Response(200, text=sse(chunk("Câu trả lời mẫu để phản biện"), "[DONE]"))
+
+    mock_agent(handler)
+    agent_a = create_agent(client, "Agent A")
+    agent_b = create_agent(client, "Agent B")
+    room = create_room(client, [agent_a["id"], agent_b["id"]])
+
+    first = client.post(
+        f"{BASE}/{room['id']}/messages",
+        json={"content": "A nói trước đi", "mention_agent_ids": [agent_a["id"]]},
+    )
+    reply_a = first.json()["messages"][1]
+
+    second = client.post(
+        f"{BASE}/{room['id']}/messages",
+        json={
+            "content": "B hãy phản biện ý của A",
+            "mention_agent_ids": [agent_b["id"]],
+            "reply_to_message_id": reply_a["id"],
+        },
+    )
+    assert second.status_code == 201, second.text
+    reply_b = second.json()["messages"][1]
+    assert reply_b["reply_to_message_id"] == reply_a["id"]
+    assert "cần trả lời trực tiếp" in prompts[-1]
+    assert "Câu trả lời mẫu để phản biện" in prompts[-1]
+
+    from uuid import uuid4
+
+    bad = client.post(
+        f"{BASE}/{room['id']}/messages",
+        json={"content": "Trả lời tin không có", "reply_to_message_id": str(uuid4())},
+    )
+    assert bad.status_code == 404
+    assert bad.json()["detail"]["code"] == "collab_message_not_found"
+
+
+async def test_long_room_transcript_still_answers(owner, mock_agent):
+    """Regression: a roomy transcript (~12k chars of Vietnamese) blew
+    past the Agent Studio default 8000-byte budget and every mention
+    failed with agent_budget_exceeded; the room budget fits it."""
+    client, _ = owner
+    agent = create_agent(client)
+    room = create_room(client, [agent["id"]])
+    filler = "Nội dung thảo luận chi tiết về kiến trúc hệ thống. " * 40
+    for index in range(7):
+        posted = client.post(
+            f"{BASE}/{room['id']}/messages",
+            json={"content": f"Ý {index}: {filler}", "mention_agent_ids": []},
+        )
+        assert posted.status_code == 201, posted.text
+
+    posted = client.post(
+        f"{BASE}/{room['id']}/messages",
+        json={"content": "Tổng hợp giúp tôi", "mention_agent_ids": [agent["id"]]},
+    )
+    assert posted.status_code == 201, posted.text
+    reply = posted.json()["messages"][1]
+    assert reply["status"] == "done"
+    assert reply["content"] == "Xin chào từ Agent"
