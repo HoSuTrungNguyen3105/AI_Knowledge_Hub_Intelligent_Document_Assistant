@@ -92,21 +92,25 @@ const PROVIDERS = {
   ollama: { url: 'https://ollama.com/v1/chat/completions', env_key: 'OLLAMA_API_KEY' },
   openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions', env_key: 'OPENROUTER_API_KEY' }
 };
-function providerCall(provider, model, systemPrompt, userContent, maxTokens) {
+function providerCall(provider, model, systemPrompt, userContent, maxTokens, jsonMode) {
   const prov = PROVIDERS[provider];
   const key = $env[prov.env_key] || '';
+  const body = {
+    model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent }
+    ],
+    max_tokens: maxTokens || 8192,
+    temperature: 0.3
+  };
+  if (jsonMode && (provider === 'groq' || provider === 'openrouter')) {
+    body.response_format = { type: 'json_object' };
+  }
   return {
     api_url: prov.url,
     auth_header: 'Bearer ' + key,
-    provider_body: {
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userContent }
-      ],
-      max_tokens: maxTokens || 8192,
-      temperature: 0.3
-    }
+    provider_body: body
   };
 }
 """
@@ -136,6 +140,43 @@ function extractJson(text) {
       }
     }
   }
+  return repairTruncatedJson(t, start);
+}
+function repairTruncatedJson(t, start) {
+  let candidate = t.slice(start);
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const stack = [];
+    let inStr = false, esc = false;
+    for (let i = 0; i < candidate.length; i++) {
+      const ch = candidate[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === '\\') esc = true;
+        else if (ch === '"') inStr = false;
+      } else if (ch === '"') inStr = true;
+      else if (ch === '{' || ch === '[') stack.push(ch);
+      else if (ch === '}' || ch === ']') stack.pop();
+    }
+    let repaired = candidate;
+    if (inStr) repaired += '"';
+    for (let i = stack.length - 1; i >= 0; i--) repaired += (stack[i] === '{' ? '}' : ']');
+    try { return JSON.parse(repaired); } catch (e) { /* trim tail and retry */ }
+    const cut = candidate.lastIndexOf(',');
+    if (cut === -1) return null;
+    candidate = candidate.slice(0, cut);
+  }
+  return null;
+}
+function responseError(item) {
+  const j = item.json || {};
+  if (!j.error) return null;
+  const msg = typeof j.error === 'string' ? j.error : (j.error.message || JSON.stringify(j.error));
+  return String(msg).slice(0, 200);
+}
+function finishReason(item) {
+  const j = item.json || {};
+  const choices = j.choices;
+  if (Array.isArray(choices) && choices.length) return choices[0].finish_reason || null;
   return null;
 }
 function responseText(item) {
@@ -298,7 +339,7 @@ const userContent = [
   input.constraints && input.constraints.length ? 'CONSTRAINTS: ' + JSON.stringify(input.constraints) : '',
   input.documents && input.documents.length ? 'DOCUMENTS: ' + JSON.stringify(input.documents).slice(0, 12000) : ''
 ].filter(Boolean).join('\n');
-const call = providerCall(pick.provider, pick.model_id, systemPrompt, userContent, 8192);
+const call = providerCall(pick.provider, pick.model_id, systemPrompt, userContent, 16384, true);
 const sd = $getWorkflowStaticData('global');
 sd.leader_selection = { provider: pick.provider, model_id: pick.model_id };
 return [{ json: Object.assign({ project_id: input.project_id, has_available_model: true, leader_selection: sd.leader_selection }, call) }];
@@ -350,7 +391,15 @@ const text = responseText(item);
 const plan = text ? extractJson(text) : null;
 if (!plan || !Array.isArray(plan.tasks) || !plan.tasks.length) {
   sd.plan = null;
-  sd.plan_error = 'leader_did_not_return_valid_plan';
+  const upstreamError = responseError(item);
+  if (upstreamError) {
+    sd.plan_error = 'leader_call_failed: ' + upstreamError;
+  } else if (!text) {
+    sd.plan_error = 'leader_returned_empty_response (finish_reason: ' + (finishReason(item) || 'unknown') + ')';
+  } else {
+    sd.plan_error = 'leader_did_not_return_valid_plan';
+    sd.plan_raw_excerpt = text.slice(0, 300);
+  }
   sd.skipped_roles = ROLES.map(r => ({ role: r, status: 'skipped', reason: 'plan_failed' }));
   return [{ json: { task: { task_id: 'plan', role: 'AI Leader', objective: 'Produce the team plan', status: 'failed', model_selection: null } } }];
 }
