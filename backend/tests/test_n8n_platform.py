@@ -52,11 +52,59 @@ class FakeN8nApi:
         self.gets = []
         self.posts = []
         self.patches = []
+        self.deletes = []
+
+    execution_mode = "error"
 
     async def get_json(self, url, api_key, timeout_seconds):
         self.gets.append({"url": url, "api_key": api_key})
         if self.status != 200:
             return self.status, {"message": "nope"}
+        if "/executions" in url:
+            from datetime import datetime, timezone
+
+            now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            if "/executions/" in url:
+                if self.execution_mode == "running":
+                    return 200, {
+                        "id": "e123",
+                        "workflowId": "wf07abc",
+                        "status": "running",
+                        "finished": False,
+                        "startedAt": now,
+                        "data": {
+                            "resultData": {
+                                "runData": {
+                                    "Team Webhook": [{"executionTime": 5}],
+                                }
+                            }
+                        },
+                    }
+                return 200, {
+                    "id": "e123",
+                    "workflowId": "wf07abc",
+                    "status": "error",
+                    "finished": True,
+                    "startedAt": now,
+                    "stoppedAt": now,
+                    "data": {
+                        "resultData": {
+                            "runData": {
+                                "Team Webhook": [{"executionTime": 5}],
+                                "Code": [
+                                    {"executionTime": 30, "error": {"message": "boom"}}
+                                ],
+                            },
+                            "error": {"message": "boom"},
+                        }
+                    },
+                }
+            return 200, {
+                "data": [
+                    {"id": "e123", "workflowId": "wf07abc", "startedAt": now, "status": "error"}
+                ],
+                "nextCursor": None,
+            }
         if "/workflows/" in url and "limit" not in url:
             workflow_id = url.rsplit("/workflows/", 1)[1]
             for raw in self.workflows:
@@ -73,7 +121,13 @@ class FakeN8nApi:
         self.posts.append({"url": url, "api_key": api_key, "payload": payload})
         if self.status != 200:
             return self.status, {"message": "nope"}
+        if "/webhook/" in url:
+            return 200, {"ok": True}
         return 201, {**payload, "id": "newid123", "active": False, "tags": []}
+
+    async def delete_json(self, url, api_key, timeout_seconds):
+        self.deletes.append({"url": url, "api_key": api_key})
+        return 204
 
     async def patch_json(self, url, api_key, payload, timeout_seconds):
         self.patches.append({"url": url, "api_key": api_key, "payload": payload})
@@ -316,6 +370,80 @@ async def test_create_workflow_unconfigured_is_503(owner, settings):
     response = owner.post(f"{BASE}/workflows", json=CREATE_BODY)
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "n8n_api_not_configured"
+
+
+async def _sync(owner):
+    response = owner.get(f"{BASE}/workflows")
+    assert response.status_code == 200, response.text
+
+
+async def test_start_run_reconciles_execution(owner, fake_api):
+    await _sync(owner)
+    response = owner.post(
+        f"{BASE}/runs", json={"workflow_id": "wf07abc", "payload": {"topic": "x"}}
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["status"] == "error"
+    assert body["error"] == "boom"
+    assert body["n8n_execution_id"] == "e123"
+    nodes = {item["name"]: item for item in body["node_statuses"]}
+    assert nodes["Team Webhook"]["status"] == "success"
+    assert nodes["Code"]["status"] == "error"
+    assert nodes["Code"]["error"] == "boom"
+    webhook_calls = [p for p in fake_api.posts if "/webhook/ai-team/start" in p["url"]]
+    assert len(webhook_calls) == 1
+    assert webhook_calls[0]["payload"] == {"topic": "x"}
+    assert webhook_calls[0]["api_key"] == ""
+
+
+async def test_start_run_inactive_rejected(owner, fake_api):
+    await _sync(owner)
+    response = owner.post(f"{BASE}/runs", json={"workflow_id": "wf08def", "payload": {}})
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "n8n_workflow_inactive"
+
+
+async def test_start_run_unknown_workflow(owner, fake_api):
+    response = owner.post(f"{BASE}/runs", json={"workflow_id": "nope", "payload": {}})
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "n8n_workflow_not_found"
+
+
+async def test_stop_running_run(owner, fake_api):
+    fake_api.execution_mode = "running"
+    await _sync(owner)
+    created = owner.post(f"{BASE}/runs", json={"workflow_id": "wf07abc", "payload": {}})
+    assert created.status_code == 201, created.text
+    run = created.json()
+    assert run["status"] == "running"
+    assert run["n8n_execution_id"] == "e123"
+    stopped = owner.post(f"{BASE}/runs/{run['id']}/stop")
+    assert stopped.status_code == 200, stopped.text
+    assert stopped.json()["status"] == "stopped"
+    assert any("/executions/e123" in d["url"] for d in fake_api.deletes)
+
+
+async def test_retry_run(owner, fake_api):
+    await _sync(owner)
+    created = owner.post(f"{BASE}/runs", json={"workflow_id": "wf07abc", "payload": {"a": 1}})
+    run = created.json()
+    retried = owner.post(f"{BASE}/runs/{run['id']}/retry")
+    assert retried.status_code == 201, retried.text
+    body = retried.json()
+    assert body["id"] != run["id"]
+    assert body["retry_of"] == run["id"]
+    assert body["input"] == {"a": 1}
+
+
+async def test_list_runs(owner, fake_api):
+    await _sync(owner)
+    owner.post(f"{BASE}/runs", json={"workflow_id": "wf07abc", "payload": {}})
+    response = owner.get(f"{BASE}/runs")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["workflow_id"] == "wf07abc"
 
 
 def test_parse_workflow_shape():

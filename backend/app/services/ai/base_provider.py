@@ -82,6 +82,15 @@ ERRORS = {
         422,
         "The workflow definition is invalid: it needs a name and at least one node with a name and a type.",
     ),
+    "n8n_workflow_inactive": (
+        409,
+        "The workflow is not active in n8n. Activate it before running.",
+    ),
+    "n8n_workflow_no_webhook": (
+        422,
+        "The workflow has no webhook trigger, so it cannot be started from MindFlow yet.",
+    ),
+    "n8n_run_not_found": (404, "That n8n run does not exist."),
     "invalid_factory_roles": (422, "Assign agents only to the seven team roles."),
     "factory_run_not_found": (404, "That AI Factory run does not exist."),
     "schedule_not_found": (404, "That workflow schedule does not exist."),

@@ -5,6 +5,9 @@ from fastapi import APIRouter, Depends
 from app.api.dependencies import AppSettings, CurrentUser, Database
 from app.schemas.n8n_platform import (
     N8nParamUpdatesIn,
+    N8nRunCreateIn,
+    N8nRunListOut,
+    N8nRunOut,
     N8nStatusOut,
     N8nWorkflowCreateIn,
     N8nWorkflowDetailOut,
@@ -111,3 +114,62 @@ async def deactivate_n8n_workflow(
     http: N8nApiHTTPDep,
 ) -> N8nWorkflowOut:
     return await N8nPlatformService(db, settings, http).set_active(workflow_id, False)
+
+
+@router.post("/runs", response_model=N8nRunOut, status_code=201)
+async def start_n8n_run(
+    payload: N8nRunCreateIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> N8nRunOut:
+    """Start an active webhook workflow and track the run (phase 2)."""
+    return await N8nPlatformService(db, settings, http).start_run(user.id, payload)
+
+
+@router.get("/runs", response_model=N8nRunListOut)
+async def list_n8n_runs(
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+    workflow_id: str | None = None,
+    limit: int = 50,
+) -> N8nRunListOut:
+    return await N8nPlatformService(db, settings, http).list_runs(
+        user.id, workflow_id=workflow_id, limit=limit
+    )
+
+
+@router.get("/runs/{run_id}", response_model=N8nRunOut)
+async def get_n8n_run(
+    run_id: str,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> N8nRunOut:
+    return await N8nPlatformService(db, settings, http).get_run(user.id, run_id)
+
+
+@router.post("/runs/{run_id}/stop", response_model=N8nRunOut)
+async def stop_n8n_run(
+    run_id: str,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> N8nRunOut:
+    return await N8nPlatformService(db, settings, http).stop_run(user.id, run_id)
+
+
+@router.post("/runs/{run_id}/retry", response_model=N8nRunOut, status_code=201)
+async def retry_n8n_run(
+    run_id: str,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> N8nRunOut:
+    return await N8nPlatformService(db, settings, http).retry_run(user.id, run_id)

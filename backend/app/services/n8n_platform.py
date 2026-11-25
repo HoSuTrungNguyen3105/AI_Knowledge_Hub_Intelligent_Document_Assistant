@@ -11,7 +11,8 @@ The workflow list is mirrored into ``n8n_workflows`` so the page can still
 render the last known list (marked stale) when the home n8n is off.
 """
 
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -20,7 +21,11 @@ from app.core.config import Settings
 from app.schemas.n8n_platform import (
     N8nNodeOut,
     N8nNodeParamOut,
+    N8nNodeStatusOut,
     N8nParamUpdateIn,
+    N8nRunCreateIn,
+    N8nRunListOut,
+    N8nRunOut,
     N8nStatusOut,
     N8nWorkflowCreateIn,
     N8nWorkflowDetailOut,
@@ -30,6 +35,82 @@ from app.schemas.n8n_platform import (
 from app.services.ai.base_provider import ProviderError
 
 WORKFLOWS_COLLECTION = "n8n_workflows"
+RUNS_COLLECTION = "n8n_runs"
+
+_FINAL_RUN_STATUSES = {"success", "error", "stopped"}
+
+
+def _parse_iso(value) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _execution_status(raw: dict) -> str:
+    """Map an n8n execution summary/detail onto the platform run status."""
+    result_error = None
+    data = raw.get("data")
+    if isinstance(data, dict):
+        result = data.get("resultData")
+        if isinstance(result, dict):
+            result_error = result.get("error")
+    if raw.get("error") or result_error:
+        return "error"
+    status = raw.get("status")
+    if isinstance(status, str):
+        lowered = status.lower()
+        if lowered in ("success",):
+            return "success"
+        if lowered in ("error", "crashed"):
+            return "error"
+        if lowered in ("canceled", "cancelled"):
+            return "stopped"
+        if lowered in ("running", "new", "waiting", "paused"):
+            return "running"
+    if raw.get("finished") is True:
+        return "success"
+    return "running"
+
+
+def _node_statuses_from_execution(raw: dict) -> list["N8nNodeStatusOut"]:
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else raw
+    result = data.get("resultData") if isinstance(data, dict) else None
+    run_data = result.get("runData") if isinstance(result, dict) else None
+    statuses: list[N8nNodeStatusOut] = []
+    if not isinstance(run_data, dict):
+        return statuses
+    for name, entries in run_data.items():
+        if not isinstance(entries, list) or not entries:
+            statuses.append(N8nNodeStatusOut(name=name, status="pending"))
+            continue
+        last = entries[-1] if isinstance(entries[-1], dict) else {}
+        error = last.get("error")
+        duration = last.get("executionTime")
+        if error:
+            message = error.get("message") if isinstance(error, dict) else str(error)
+            statuses.append(
+                N8nNodeStatusOut(
+                    name=name,
+                    status="error",
+                    duration_ms=int(duration) if isinstance(duration, (int, float)) else None,
+                    error=str(message)[:500] if message else "Node failed.",
+                )
+            )
+        else:
+            statuses.append(
+                N8nNodeStatusOut(
+                    name=name,
+                    status="success",
+                    duration_ms=int(duration) if isinstance(duration, (int, float)) else None,
+                )
+            )
+    return statuses
 PAGE_LIMIT = 100
 
 
@@ -143,6 +224,22 @@ class N8nApiHTTP:
             data = None
         return response.status_code, data
 
+    async def delete_json(self, url: str, api_key: str, timeout_seconds: float):
+        headers = {"Accept": "application/json"}
+        if api_key:
+            headers["X-N8N-API-KEY"] = api_key
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout_seconds),
+                follow_redirects=False,
+                trust_env=False,
+                headers=headers,
+            ) as client:
+                response = await client.delete(url)
+        except (httpx.TimeoutException, httpx.RequestError):
+            raise ProviderError("n8n_unreachable") from None
+        return response.status_code
+
     async def patch_json(self, url: str, api_key: str, payload: dict, timeout_seconds: float):
         headers = {"Accept": "application/json"}
         if api_key:
@@ -248,6 +345,10 @@ class N8nPlatformService:
     @property
     def workflows(self):
         return self.db[WORKFLOWS_COLLECTION]
+
+    @property
+    def runs(self):
+        return self.db[RUNS_COLLECTION]
 
     @property
     def base_url(self) -> str:
@@ -530,3 +631,191 @@ class N8nPlatformService:
             await self._store(parse_workflow(updated, self.base_url), _utcnow())
             return workflow_detail(updated, self.base_url)
         return workflow_detail(raw, self.base_url)
+
+    # -- Phase 2: generic runs, reconciled against n8n executions --------
+
+    @staticmethod
+    def _run_out(doc: dict) -> N8nRunOut:
+        return N8nRunOut(
+            id=str(doc["_id"]),
+            workflow_id=doc.get("workflow_id", ""),
+            workflow_name=doc.get("workflow_name", ""),
+            status=doc.get("status", "running"),
+            input=doc.get("input") or {},
+            n8n_execution_id=doc.get("n8n_execution_id"),
+            error=doc.get("error"),
+            retry_of=doc.get("retry_of"),
+            node_statuses=[
+                N8nNodeStatusOut(**item) for item in (doc.get("node_statuses") or [])
+            ],
+            started_at=doc.get("started_at"),
+            finished_at=doc.get("finished_at"),
+        )
+
+    async def _save_run(self, doc: dict) -> None:
+        await self.runs.replace_one({"_id": doc["_id"]}, doc, upsert=True)
+
+    async def start_run(self, user_id: str, payload_in: N8nRunCreateIn, *, retry_of: str | None = None) -> N8nRunOut:
+        """Start any active webhook workflow and track it as a run.
+
+        The workflow fires through its public webhook (no API key on that
+        call, exactly like the Factory bridge). The run is then reconciled
+        against the n8n executions API to attach the real execution id and
+        per-node progress; nothing about the outcome is invented here.
+        """
+        workflow = await self.workflows.find_one({"_id": payload_in.workflow_id})
+        if workflow is None:
+            raise ProviderError("n8n_workflow_not_found")
+        if not workflow.get("active"):
+            raise ProviderError("n8n_workflow_inactive")
+        paths = workflow.get("webhook_paths") or []
+        if not paths:
+            raise ProviderError("n8n_workflow_no_webhook")
+        now = _utcnow()
+        doc = {
+            "_id": uuid.uuid4().hex,
+            "user_id": user_id,
+            "workflow_id": payload_in.workflow_id,
+            "workflow_name": workflow.get("name", ""),
+            "status": "running",
+            "input": payload_in.payload,
+            "n8n_execution_id": None,
+            "error": None,
+            "retry_of": retry_of,
+            "node_statuses": [],
+            "started_at": now,
+            "finished_at": None,
+        }
+        await self._save_run(doc)
+        webhook_base = self.settings.n8n_webhook_base_url.rstrip("/")
+        try:
+            status, _data = await self.http.post_json_body(
+                f"{webhook_base}/{paths[0].lstrip('/')}",
+                "",
+                payload_in.payload,
+                self.settings.n8n_factory_timeout_seconds,
+            )
+            if status >= 400:
+                doc["status"] = "error"
+                doc["error"] = f"webhook_http_{status}"
+                doc["finished_at"] = _utcnow()
+                await self._save_run(doc)
+                return self._run_out(doc)
+        except ProviderError:
+            doc["status"] = "error"
+            doc["error"] = "n8n_unreachable"
+            doc["finished_at"] = _utcnow()
+            await self._save_run(doc)
+            return self._run_out(doc)
+        await self._reconcile(doc)
+        return self._run_out(doc)
+
+    async def _reconcile(self, doc: dict) -> None:
+        """Attach the n8n execution and refresh status/node progress.
+
+        Best effort: any API problem leaves the stored run untouched so a
+        later read can retry the reconciliation.
+        """
+        if doc.get("status") in _FINAL_RUN_STATUSES:
+            return
+        key = self.api_key
+        if not key:
+            return
+        timeout = self.settings.n8n_api_timeout_seconds
+        try:
+            if not doc.get("n8n_execution_id"):
+                status, data = await self.http.get_json(
+                    f"{self.base_url}/api/v1/executions?workflowId={doc['workflow_id']}&limit=10",
+                    key,
+                    timeout,
+                )
+                if status >= 400 or not isinstance(data, dict):
+                    return
+                items = data.get("data")
+                if not isinstance(items, list):
+                    return
+                threshold = doc["started_at"] - timedelta(seconds=5)
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    started = _parse_iso(item.get("startedAt"))
+                    if started is not None and started >= threshold and item.get("id") is not None:
+                        doc["n8n_execution_id"] = str(item["id"])
+                        break
+                if not doc.get("n8n_execution_id"):
+                    return
+                await self._save_run(doc)
+            status, data = await self.http.get_json(
+                f"{self.base_url}/api/v1/executions/{doc['n8n_execution_id']}?includeData=true",
+                key,
+                timeout,
+            )
+            if status >= 400 or not isinstance(data, dict):
+                return
+        except ProviderError:
+            return
+        detail = data.get("data") if isinstance(data.get("data"), dict) else data
+        new_status = _execution_status(detail)
+        doc["node_statuses"] = [
+            item.model_dump() for item in _node_statuses_from_execution(detail)
+        ]
+        if new_status != "running":
+            doc["status"] = new_status
+            stopped = _parse_iso(detail.get("stoppedAt"))
+            doc["finished_at"] = stopped or _utcnow()
+            if new_status == "error" and not doc.get("error"):
+                result = detail.get("data", {}).get("resultData", {}) if isinstance(detail.get("data"), dict) else {}
+                error = result.get("error") if isinstance(result, dict) else None
+                if isinstance(error, dict) and error.get("message"):
+                    doc["error"] = str(error["message"])[:500]
+        await self._save_run(doc)
+
+    async def list_runs(self, user_id: str, workflow_id: str | None = None, limit: int = 50) -> N8nRunListOut:
+        query: dict = {"user_id": user_id}
+        if workflow_id:
+            query["workflow_id"] = workflow_id
+        total = await self.runs.count_documents(query)
+        cursor = self.runs.find(query).sort("started_at", -1).limit(max(1, min(limit, 100)))
+        items = []
+        async for doc in cursor:
+            await self._reconcile(doc)
+            items.append(self._run_out(doc))
+        return N8nRunListOut(items=items, total=total)
+
+    async def _get_run_doc(self, user_id: str, run_id: str) -> dict:
+        doc = await self.runs.find_one({"_id": run_id, "user_id": user_id})
+        if doc is None:
+            raise ProviderError("n8n_run_not_found")
+        return doc
+
+    async def get_run(self, user_id: str, run_id: str) -> N8nRunOut:
+        doc = await self._get_run_doc(user_id, run_id)
+        await self._reconcile(doc)
+        return self._run_out(doc)
+
+    async def stop_run(self, user_id: str, run_id: str) -> N8nRunOut:
+        doc = await self._get_run_doc(user_id, run_id)
+        await self._reconcile(doc)
+        if doc.get("status") in _FINAL_RUN_STATUSES:
+            return self._run_out(doc)
+        if doc.get("n8n_execution_id") and self.api_key:
+            try:
+                await self.http.delete_json(
+                    f"{self.base_url}/api/v1/executions/{doc['n8n_execution_id']}",
+                    self.api_key,
+                    self.settings.n8n_api_timeout_seconds,
+                )
+            except ProviderError:
+                pass  # The run is still marked stopped in MindFlow below.
+        doc["status"] = "stopped"
+        doc["finished_at"] = _utcnow()
+        await self._save_run(doc)
+        return self._run_out(doc)
+
+    async def retry_run(self, user_id: str, run_id: str) -> N8nRunOut:
+        doc = await self._get_run_doc(user_id, run_id)
+        return await self.start_run(
+            user_id,
+            N8nRunCreateIn(workflow_id=doc["workflow_id"], payload=doc.get("input") or {}),
+            retry_of=run_id,
+        )
