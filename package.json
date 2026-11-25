@@ -1,4 +1,11 @@
 {
+  "name": "ai-knowledge-hub",
+  "private": true,
+  "scripts": {
+    "dev-ai": "concurrently -k -n backend,frontend -c blue,magenta \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:backend": "cd backend && .venv\\Scripts\\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --no-proxy-headers",
+    "dev:frontend": "cd frontend && npm run dev"
+  },
   "devDependencies": {
     "concurrently": "^10.0.7"
   }
