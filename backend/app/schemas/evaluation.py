@@ -159,8 +159,9 @@ class RunCreateIn(BaseModel):
 
     name: str = Field(default="", max_length=120)
     dataset_id: UUID
-    kind: Literal["model", "prompt"] = "model"
+    kind: Literal["model", "prompt", "agent"] = "model"
     targets: list[EvalTargetIn] = Field(default_factory=list, max_length=5)
+    agent_id: UUID | None = None
     prompt_id: UUID | None = None
     prompt_version: int | None = None
     judge: JudgeIn | None = None
@@ -191,6 +192,7 @@ class CaseResultOut(BaseModel):
     judge_score: float | None = None
     judge_reason: str = ""
     passed: bool
+    trace: dict = Field(default_factory=dict)
 
 
 class TargetSummaryOut(BaseModel):
@@ -213,6 +215,8 @@ class RunOut(BaseModel):
     dataset_name: str
     dataset_version: int
     targets: list[EvalTargetIn]
+    agent_id: UUID | None = None
+    agent_name: str = ""
     prompt_id: UUID | None = None
     prompt_name: str = ""
     prompt_version: int | None = None
@@ -280,6 +284,7 @@ class OverviewPoint(BaseModel):
 class OverviewOut(BaseModel):
     total_evaluations: int
     total_models_tested: int
+    total_agents_evaluated: int
     total_datasets: int
     avg_accuracy: float | None = None
     avg_latency_ms: float | None = None

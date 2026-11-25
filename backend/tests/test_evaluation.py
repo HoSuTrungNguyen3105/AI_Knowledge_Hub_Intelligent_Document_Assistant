@@ -341,3 +341,51 @@ async def test_cancel_marks_running_run(owner, db, owner_id):
     assert response.status_code == 200
     doc = await db.eval_runs.find_one({"_id": run_id})
     assert doc["cancel_requested"] is True
+
+
+async def test_agent_run_captures_execution_trace(owner, seeded):
+    created = owner.post(
+        "/api/v1/ai/agents",
+        json={
+            "name": "Eval Agent",
+            "provider": "openai",
+            "model": MODEL_A,
+            "tools": [],
+        },
+    )
+    assert created.status_code == 201, created.text
+    agent_id = created.json()["id"]
+
+    dataset = make_dataset(owner)
+    response = owner.post(
+        f"{BASE}/runs",
+        json={"dataset_id": dataset["id"], "kind": "agent", "agent_id": agent_id},
+    )
+    assert response.status_code == 201, response.text
+    run = response.json()
+    assert run["kind"] == "agent"
+    assert run["agent_name"] == "Eval Agent"
+    assert run["status"] == "completed"
+    summary = run["summaries"][0]
+    assert summary["target_key"] == "agent/Eval Agent"
+    assert summary["pass_rate"] == 1.0
+    first = run["results"][0]
+    assert first["trace"]["execution_id"]
+    assert first["trace"]["tool_calls"] == []
+
+    overview = owner.get(f"{BASE}/overview").json()
+    assert overview["total_agents_evaluated"] == 1
+
+
+async def test_agent_run_unknown_agent(owner, seeded):
+    dataset = make_dataset(owner)
+    response = owner.post(
+        f"{BASE}/runs",
+        json={
+            "dataset_id": dataset["id"],
+            "kind": "agent",
+            "agent_id": str(uuid4()),
+        },
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "agent_not_found"

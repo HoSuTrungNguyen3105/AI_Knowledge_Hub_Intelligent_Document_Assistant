@@ -24,6 +24,7 @@ from app.core.credential_vault import CredentialVault
 from app.models.base import utcnow
 from app.repositories.chat import ChatRepository
 from app.repositories.providers import ProviderRepository
+from app.schemas.agents import RunRequest
 from app.schemas.evaluation import (
     AffectedCase,
     CaseResultOut,
@@ -52,6 +53,7 @@ from app.schemas.evaluation import (
     RunSummaryOut,
     TargetSummaryOut,
 )
+from app.services.agents import AgentService
 from app.services.ai.ai_factory import create_provider
 from app.services.ai.base_provider import ProviderError
 from app.services.ai.chat import ChatHTTP
@@ -366,11 +368,20 @@ class EvaluationService:
         cases = [self._case_in(c) for c in dataset.get("cases") or []]
         if not cases:
             raise ProviderError("eval_no_cases")
-        if not payload.targets:
+        if payload.kind != "agent" and not payload.targets:
             raise ProviderError("eval_no_targets")
-        units = len(cases) * len(payload.targets)
+        units = len(cases) if payload.kind == "agent" else len(cases) * len(payload.targets)
         if units > MAX_UNITS:
             raise ProviderError("eval_run_too_large")
+
+        agent_name = ""
+        agent_service = None
+        if payload.kind == "agent":
+            if payload.agent_id is None:
+                raise ProviderError("agent_not_found")
+            agent_service = AgentService(self.db, self.settings, chat_http=self.chat_http)
+            agent = await agent_service.get_agent(user_id, payload.agent_id)
+            agent_name = agent.name
 
         prepared_targets = []
         for target in payload.targets:
@@ -407,9 +418,15 @@ class EvaluationService:
             prompt_version = chosen["version"]
 
         run_id = uuid4()
-        name = payload.name.strip() or (
-            f"{dataset['name']} · {payload.targets[0].provider}/{payload.targets[0].model}"
-        )
+        if payload.name.strip():
+            name = payload.name.strip()
+        elif payload.kind == "agent":
+            name = f"{dataset['name']} · agent {agent_name}"
+        else:
+            name = (
+                f"{dataset['name']} · "
+                f"{payload.targets[0].provider}/{payload.targets[0].model}"
+            )
         doc = {
             "_id": run_id,
             "user_id": user_id,
@@ -419,6 +436,8 @@ class EvaluationService:
             "dataset_name": dataset["name"],
             "dataset_version": dataset.get("version", 1),
             "targets": [t.model_dump() for t in payload.targets],
+            "agent_id": payload.agent_id if payload.kind == "agent" else None,
+            "agent_name": agent_name,
             "prompt_id": payload.prompt_id if payload.kind == "prompt" else None,
             "prompt_name": prompt_name,
             "prompt_version": prompt_version,
@@ -442,6 +461,23 @@ class EvaluationService:
         for index, (case_doc, case) in enumerate(zip(dataset["cases"], cases, strict=True)):
             if cancelled:
                 break
+            if payload.kind == "agent":
+                if await self._cancel_requested(user_id, run_id):
+                    cancelled = True
+                    break
+                result = await self._execute_agent_unit(
+                    user_id,
+                    agent_service,
+                    payload.agent_id,
+                    agent_name,
+                    case,
+                    payload.case_timeout_seconds,
+                )
+                await self._record_result(
+                    user_id, run_id, case_doc, case, index, result,
+                    payload, judge_prepared, results,
+                )
+                continue
             for target, key, model in prepared_targets:
                 if await self._cancel_requested(user_id, run_id):
                     cancelled = True
@@ -452,33 +488,9 @@ class EvaluationService:
                 result = await self._execute_unit(
                     user_id, target, key, model, prompt_text, payload.case_timeout_seconds
                 )
-                result.case_id = case_doc["id"]
-                result.case_index = index
-                scores = (
-                    score_case(case, result.output, payload.pass_threshold)
-                    if result.status == "success"
-                    else []
-                )
-                result.scores = scores
-                result.score = (
-                    round(sum(s.score for s in scores) / len(scores), 4) if scores else None
-                )
-                result.passed = (
-                    all(s.passed for s in scores) if scores else result.status == "success"
-                )
-                if judge_prepared is not None and result.status == "success":
-                    judge_score, judge_reason = await self._judge(
-                        user_id, judge_prepared, case, result.output
-                    )
-                    result.judge_score = judge_score
-                    result.judge_reason = judge_reason
-                results.append(result)
-                await self.db.eval_runs.update_one(
-                    {"_id": run_id, "user_id": user_id},
-                    {
-                        "$push": {"results": result.model_dump(mode="json")},
-                        "$set": {"progress_done": len(results)},
-                    },
+                await self._record_result(
+                    user_id, run_id, case_doc, case, index, result,
+                    payload, judge_prepared, results,
                 )
         summaries = self._summaries(results)
         status = "cancelled" if cancelled else "completed"
@@ -493,6 +505,105 @@ class EvaluationService:
             },
         )
         return self._run_out(await self._require_run(user_id, run_id))
+
+    async def _record_result(
+        self, user_id, run_id, case_doc, case, index, result,
+        payload, judge_prepared, results,
+    ) -> None:
+        result.case_id = case_doc["id"]
+        result.case_index = index
+        scores = (
+            score_case(case, result.output, payload.pass_threshold)
+            if result.status == "success"
+            else []
+        )
+        result.scores = scores
+        result.score = (
+            round(sum(s.score for s in scores) / len(scores), 4) if scores else None
+        )
+        result.passed = (
+            all(s.passed for s in scores) if scores else result.status == "success"
+        )
+        if judge_prepared is not None and result.status == "success":
+            judge_score, judge_reason = await self._judge(
+                user_id, judge_prepared, case, result.output
+            )
+            result.judge_score = judge_score
+            result.judge_reason = judge_reason
+        results.append(result)
+        await self.db.eval_runs.update_one(
+            {"_id": run_id, "user_id": user_id},
+            {
+                "$push": {"results": result.model_dump(mode="json")},
+                "$set": {"progress_done": len(results)},
+            },
+        )
+
+    async def _execute_agent_unit(
+        self, user_id, agent_service, agent_id, agent_name, case, timeout: int
+    ) -> CaseResultOut:
+        """Run one case through a real Agent and keep its execution trace:
+        steps, tool calls with per-call status/latency, tokens and cost come
+        from the Agent Studio execution record, not from the final text."""
+        target_key = f"agent/{agent_name}"
+        try:
+            prepared = await agent_service.prepare_run(
+                user_id, agent_id, RunRequest(prompt=case.input)
+            )
+
+            async def collect() -> dict | None:
+                execution = None
+                async for event in agent_service.stream_prepared(prepared):
+                    if event["event"] == "done":
+                        execution = event["data"]["execution"]
+                return execution
+
+            execution = await asyncio.wait_for(collect(), timeout=timeout)
+        except TimeoutError:
+            execution = None
+            return CaseResultOut(
+                case_id="", case_index=0, target_key=target_key, output="",
+                status="error", error_code="case_timeout", passed=False,
+            )
+        except ProviderError as error:
+            return CaseResultOut(
+                case_id="", case_index=0, target_key=target_key, output="",
+                status="error", error_code=error.code, passed=False,
+            )
+        if execution is None:
+            return CaseResultOut(
+                case_id="", case_index=0, target_key=target_key, output="",
+                status="error", error_code="generation_failed", passed=False,
+            )
+        status = "success" if execution.get("status") == "success" else "error"
+        trace = {
+            "execution_id": execution.get("id"),
+            "step_count": execution.get("step_count"),
+            "steps": len(execution.get("steps") or []),
+            "tool_calls": [
+                {
+                    "tool_name": tool.get("tool_name"),
+                    "status": tool.get("status"),
+                    "latency_ms": tool.get("latency_ms"),
+                    "step_index": tool.get("step_index"),
+                }
+                for tool in execution.get("tool_executions") or []
+            ],
+        }
+        return CaseResultOut(
+            case_id="",
+            case_index=0,
+            target_key=target_key,
+            output=execution.get("content") or "",
+            status=status,
+            error_code=execution.get("error_code") if status == "error" else None,
+            latency_ms=execution.get("latency_ms"),
+            input_tokens=execution.get("input_tokens"),
+            output_tokens=execution.get("output_tokens"),
+            estimated_cost=execution.get("estimated_cost"),
+            passed=False,
+            trace=trace,
+        )
 
     async def _execute_unit(
         self, user_id, target, key: SecretStr, model, prompt_text: str, timeout: int
@@ -681,6 +792,7 @@ class EvaluationService:
         ]
         dataset_count = await self.db.eval_datasets.count_documents({"user_id": user_id})
         models: set[str] = set()
+        agents_seen: set[str] = set()
         accuracies: list[float] = []
         latencies: list[float] = []
         token_avgs: list[float] = []
@@ -692,6 +804,8 @@ class EvaluationService:
             agg = self._aggregate(doc)
             for target in doc.get("targets") or []:
                 models.add(f"{target['provider']}/{target['model']}")
+            if doc.get("agent_id"):
+                agents_seen.add(str(doc["agent_id"]))
             if agg["accuracy"] is not None:
                 accuracies.append(agg["accuracy"])
             if agg["avg_latency_ms"] is not None:
@@ -723,6 +837,7 @@ class EvaluationService:
         return OverviewOut(
             total_evaluations=len(runs),
             total_models_tested=len(models),
+            total_agents_evaluated=len(agents_seen),
             total_datasets=dataset_count,
             avg_accuracy=mean(accuracies),
             avg_latency_ms=mean(latencies),
@@ -890,6 +1005,8 @@ class EvaluationService:
             dataset_name=doc.get("dataset_name") or "",
             dataset_version=doc.get("dataset_version", 1),
             targets=doc.get("targets") or [],
+            agent_id=doc.get("agent_id"),
+            agent_name=doc.get("agent_name") or "",
             prompt_id=doc.get("prompt_id"),
             prompt_name=doc.get("prompt_name") or "",
             prompt_version=doc.get("prompt_version"),
