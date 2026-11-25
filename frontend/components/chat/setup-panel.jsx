@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { CircleAlert, LoaderCircle, MessagesSquare, Settings2, Sparkles } from "lucide-react";
 import { providerFailureReason } from "../../utils/providers";
+import { modelOptionLabel } from "../../utils/model-info";
 
 function toNumber(value) {
   if (value === "" || value === null || value === undefined) return null;
@@ -64,7 +65,7 @@ export function SetupPanel({ providers, busy, onCreate }) {
           <label className="field-label" htmlFor="setup-model">Model</label>
           <select id="setup-model" value={effectiveModel} onChange={(event) => setModel(event.target.value)} disabled={busy || modelsLoading || models.length === 0}>
             {models.length === 0 && <option value="">{modelsLoading ? "Đang tải model…" : "Chưa có model chat"}</option>}
-            {models.map((item) => <option key={item.id} value={item.id}>{item.display_name || item.id}</option>)}
+            {models.map((item) => <option key={item.id} value={item.id}>{modelOptionLabel(item)}</option>)}
           </select>
         </div>
       </div>

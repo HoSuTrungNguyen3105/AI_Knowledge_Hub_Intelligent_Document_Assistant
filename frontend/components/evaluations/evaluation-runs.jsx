@@ -5,6 +5,7 @@ import { ConfirmDialog } from "../confirm-dialog";
 import { agentsService } from "../../services/agents";
 import { evaluationsService, getEvalError } from "../../services/evaluations";
 import { providerService } from "../../services/providers";
+import { modelSuffix } from "../../utils/model-info";
 
 export function fmtNum(value, digits = 2) {
   if (value === null || value === undefined) return "—";
@@ -372,7 +373,7 @@ export function RunPanel({ datasets, prompts, onDone }) {
           const modelsData = await providerService.models(provider.id);
           for (const model of modelsData.models || []) {
             if (model.capabilities?.chat !== false) {
-              options.push({ provider: provider.id, model: model.id });
+              options.push({ provider: provider.id, model: model.id, info: model });
             }
           }
         }
@@ -467,7 +468,7 @@ export function RunPanel({ datasets, prompts, onDone }) {
                         checked={selected.includes(key)}
                         onChange={() => toggleTarget(key)}
                       />
-                      {key}
+                      {key}{modelSuffix(t.info)}
                     </label>
                   );
                 })}

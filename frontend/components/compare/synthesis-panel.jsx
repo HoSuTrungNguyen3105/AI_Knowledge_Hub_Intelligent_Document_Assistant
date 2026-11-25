@@ -5,6 +5,7 @@ import { CircleAlert, LoaderCircle, Sparkles } from "lucide-react";
 import { Markdown } from "../chat/markdown";
 import { formatLatency, formatTokens } from "../../utils/chat";
 import { formatCost } from "../../utils/compare";
+import { modelOptionLabel } from "../../utils/model-info";
 
 export function SynthesisPanel({ providers, synthesis, liveText, canSynthesize, busy, streaming, onSynthesize }) {
   const { available, providerId, setProviderId, models, modelsLoading } = providers;
@@ -44,7 +45,7 @@ export function SynthesisPanel({ providers, synthesis, liveText, canSynthesize, 
               <label className="field-label" htmlFor="synthesis-model">Model tổng hợp</label>
               <select id="synthesis-model" value={effectiveModel} onChange={(event) => setModel(event.target.value)} disabled={busy || streaming || modelsLoading || models.length === 0}>
                 {models.length === 0 && <option value="">{modelsLoading ? "Đang tải model…" : "Chưa có model chat"}</option>}
-                {models.map((item) => <option key={item.id} value={item.id}>{item.display_name || item.id}</option>)}
+                {models.map((item) => <option key={item.id} value={item.id}>{modelOptionLabel(item)}</option>)}
               </select>
             </div>
           </div>
