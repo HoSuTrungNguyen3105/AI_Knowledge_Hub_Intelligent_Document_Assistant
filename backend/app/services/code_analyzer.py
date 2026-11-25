@@ -99,7 +99,14 @@ def build_diagram(files: list[dict]) -> dict:
         }
         for (source, target), count in sorted(aggregated.items())
     ]
-    return {"mode": "clusters", "nodes": nodes, "edges": cluster_edges}
+    return {
+        "mode": "clusters",
+        "nodes": nodes,
+        "edges": cluster_edges,
+        # Full file-level edges so the UI can expand one cluster without
+        # another round trip.
+        "file_edges": edges,
+    }
 
 
 # A tiny Express-style codebase so a brand-new user can open the module
