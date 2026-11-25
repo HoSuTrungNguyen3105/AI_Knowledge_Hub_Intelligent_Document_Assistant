@@ -25,10 +25,14 @@ export const codeAnalyzerService = {
     );
     return data;
   },
-  async upload(file) {
+  async upload(file, provider, model) {
     const form = new FormData();
     form.append("file", file);
-    const { data } = await api.post(`${base}/upload`, form, { timeout: 180000 });
+    if (provider && model) {
+      form.append("provider", provider);
+      form.append("model", model);
+    }
+    const { data } = await api.post(`${base}/upload`, form, { timeout: 300000 });
     return data;
   },
 };
@@ -40,6 +44,9 @@ const ERROR_MESSAGES = {
   code_upload_invalid: "File tải lên không phải file ZIP đọc được.",
   code_upload_empty:
     "Không tìm thấy file code nào phân tích được trong ZIP (đã lọc node_modules, file test, ảnh và file lock).",
+  credentials_missing: "Provider đã chọn chưa lưu API key.",
+  provider_disabled: "Provider đã chọn đang bị tắt.",
+  model_not_synced: "Model đã chọn chưa được đồng bộ cho provider này.",
   seed_disabled: "Môi trường production không cho phép tạo dự án mẫu.",
 };
 

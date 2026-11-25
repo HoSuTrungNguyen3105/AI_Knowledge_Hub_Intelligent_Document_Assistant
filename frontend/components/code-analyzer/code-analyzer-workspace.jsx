@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { codeAnalyzerService, getCodeError } from "../../services/code-analyzer";
+import { providerService } from "../../services/providers";
 
 const STATUS_LABELS = {
   PROCESSING: "Đang xử lý",
@@ -10,11 +11,8 @@ const STATUS_LABELS = {
 };
 
 const DISPATCH_NOTES = {
-  sent: "Đã gửi các batch sang n8n — AI Insight sẽ được cập nhật khi workflow chạy xong.",
-  skipped:
-    "Chưa cấu hình webhook n8n nên dự án hoàn tất bằng phân tích tĩnh (chưa có AI summary).",
-  failed:
-    "Không gửi được sang n8n (webhook không phản hồi) — dự án vẫn hoàn tất bằng phân tích tĩnh.",
+  static:
+    "Chưa có provider AI khả dụng (chưa cấu hình key hoặc AI gọi lỗi) nên dự án hoàn tất bằng phân tích tĩnh — cây file và đồ thị imports vẫn đầy đủ.",
 };
 
 /* ------------------------------------------------------------ file tree */
@@ -139,6 +137,10 @@ export default function CodeAnalyzerWorkspace() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [providers, setProviders] = useState([]);
+  const [providerId, setProviderId] = useState("");
+  const [models, setModels] = useState([]);
+  const [modelId, setModelId] = useState("");
   const fileInput = useRef(null);
   const seeded = useRef(false);
 
@@ -194,6 +196,54 @@ export default function CodeAnalyzerWorkspace() {
       cancelled = true;
     };
   }, [loadProjects, openProject]);
+
+  useEffect(() => {
+    let cancelled = false;
+    providerService
+      .list()
+      .then((data) => {
+        if (cancelled) return;
+        const ready = (data.providers || []).filter(
+          (provider) => provider.implemented && provider.configured && provider.enabled,
+        );
+        setProviders(ready);
+        if (ready.length > 0) setProviderId((current) => current || ready[0].id);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!providerId) {
+      setModels([]);
+      setModelId("");
+      return;
+    }
+    let cancelled = false;
+    providerService
+      .models(providerId)
+      .then((data) => {
+        if (cancelled) return;
+        const chatModels = (data.models || []).filter(
+          (model) => model.capabilities?.chat !== false,
+        );
+        setModels(chatModels);
+        const provider = providers.find((item) => item.id === providerId);
+        setModelId(
+          chatModels.some((model) => model.id === provider?.default_model)
+            ? provider.default_model
+            : chatModels[0]?.id || "",
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setModels([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [providerId, providers]);
 
   const filesById = useMemo(() => {
     const map = new Map();
@@ -265,11 +315,15 @@ export default function CodeAnalyzerWorkspace() {
     setError("");
     setNotice("");
     try {
-      const result = await codeAnalyzerService.upload(file);
+      const result = await codeAnalyzerService.upload(
+        file,
+        providerId,
+        modelId,
+      );
       setNotice(
-        `Đã phân tích xong "${result.project.name}". ${
-          DISPATCH_NOTES[result.analysis_dispatch] || ""
-        }`,
+        result.analysis_dispatch === "ai"
+          ? `Đã phân tích xong "${result.project.name}" — AI đã viết tóm tắt cho ${result.ai_analyzed} file.`
+          : `Đã phân tích xong "${result.project.name}". ${DISPATCH_NOTES.static}`,
       );
       await loadProjects();
       setProjectId(result.project.id);
@@ -302,6 +356,31 @@ export default function CodeAnalyzerWorkspace() {
           </p>
         </div>
         <div className="ca-head-actions">
+          <select
+            value={providerId}
+            onChange={(e) => setProviderId(e.target.value)}
+            aria-label="Provider AI"
+            title="Provider dùng để viết tóm tắt AI (để trống = tự chọn)"
+          >
+            <option value="">AI: tự chọn</option>
+            {providers.map((provider) => (
+              <option key={provider.id} value={provider.id}>
+                {provider.name || provider.id}
+              </option>
+            ))}
+          </select>
+          <select
+            value={modelId}
+            onChange={(e) => setModelId(e.target.value)}
+            aria-label="Model AI"
+            disabled={!providerId || models.length === 0}
+          >
+            {models.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.name || model.id}
+              </option>
+            ))}
+          </select>
           <select
             value={projectId}
             onChange={(e) => {
@@ -487,7 +566,7 @@ export default function CodeAnalyzerWorkspace() {
                 </p>
                 <p>
                   {selectedEdge.label ||
-                    "Chưa có nhãn quan hệ cho liên kết này — nhãn do AI điền sau khi workflow n8n phân tích xong."}
+                    "Chưa có nhãn quan hệ cho liên kết này — nhãn do AI điền khi phân tích file đích."}
                 </p>
               </div>
             ) : fileDetail ? (
@@ -504,7 +583,7 @@ export default function CodeAnalyzerWorkspace() {
                 <h4>Tóm tắt chức năng</h4>
                 <p>
                   {fileDetail.ai_summary ||
-                    "Chưa có phân tích AI cho file này. Khi webhook n8n được cấu hình, summary sẽ tự động xuất hiện sau khi upload."}
+                    "Chưa có phân tích AI cho file này. Summary được viết ngay lúc upload nếu có provider AI khả dụng; các file ngoài nhóm được phân tích sâu (40 file có nhiều liên kết nhất) chỉ có thông tin tĩnh."}
                 </p>
                 <h4>File này import ({fileDetail.imports.length})</h4>
                 {fileDetail.imports.length ? (

@@ -74,10 +74,12 @@ class SeedDemoOut(BaseModel):
 
 class UploadOut(BaseModel):
     project: CodeProjectSummary
-    # sent: batches delivered to the n8n webhook; skipped: webhook not
-    # configured (project completed with static parsing only); failed:
-    # delivery attempted but the webhook did not acknowledge.
-    analysis_dispatch: str = "skipped"
+    # ai: the direct in-backend AI pass summarized at least one file
+    # with the caller's own provider; static: no provider was available
+    # (or every call failed), so the project completed with static
+    # parsing only.
+    analysis_dispatch: str = "static"
+    ai_analyzed: int = 0
 
 
 class CodeCallbackFileIn(BaseModel):
