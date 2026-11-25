@@ -86,6 +86,8 @@ ERRORS = {
     "eval_dataset_not_found": (404, "That evaluation dataset does not exist."),
     "eval_run_not_found": (404, "That evaluation run does not exist."),
     "eval_prompt_not_found": (404, "That evaluation prompt does not exist."),
+    "code_project_not_found": (404, "That code project does not exist."),
+    "code_file_not_found": (404, "That code project file does not exist."),
     "eval_no_cases": (422, "The dataset has no test cases to run."),
     "eval_no_targets": (422, "Choose at least one model target to evaluate."),
     "eval_run_too_large": (
