@@ -93,14 +93,19 @@ class ScheduleRunner:
     async def _mark_fired(
         self, doc: dict, *, outcome: str, now: datetime, advance_next: bool
     ) -> None:
+        # A skipped firing never launched a run: it must not count toward
+        # run_count / max_runs, nor move last_run_at.
+        counted = outcome != "skipped"
         updates: dict = {
-            "last_run_at": now,
             "last_status": outcome,
             "updated_at": now,
-            "run_count": doc.get("run_count", 0) + 1,
+            "run_count": doc.get("run_count", 0) + (1 if counted else 0),
         }
+        if counted:
+            updates["last_run_at"] = now
         finished = doc["schedule_type"] == "once" or (
-            doc.get("max_runs") is not None
+            counted
+            and doc.get("max_runs") is not None
             and updates["run_count"] >= doc["max_runs"]
         )
         if finished:

@@ -178,3 +178,22 @@ async def test_tick_syncs_finished_factory_run(owner, db, fake_http):
     assert execution["duration_ms"] is not None
     schedule = owner.get(f"{BASE}/{created['id']}").json()
     assert schedule["last_status"] == "success"
+
+
+async def test_skipped_firing_does_not_count_as_a_run(owner, db, fake_http):
+    created = owner.post(BASE, json=payload(max_runs=2)).json()
+    manual = owner.post(f"{BASE}/{created['id']}/run-now")
+    assert manual.status_code == 202
+    before = owner.get(f"{BASE}/{created['id']}").json()
+    assert before["run_count"] == 1
+
+    await force_due(db, created["id"])
+    result = tick(owner).json()
+    assert result["skipped"] == 1
+    assert result["fired"] == 0
+
+    schedule = owner.get(f"{BASE}/{created['id']}").json()
+    assert schedule["run_count"] == 1
+    assert schedule["last_status"] == "skipped"
+    assert schedule["last_run_at"] == before["last_run_at"]
+    assert schedule["status"] == "active"
