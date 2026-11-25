@@ -72,6 +72,9 @@ class PreparedAgent:
     # Per-run output cap override (e.g. workflow artifact generation); never
     # written back to the stored Agent record.
     max_output_tokens_override: int | None = None
+    # Per-run token budget override (e.g. context-rich discussion prompts);
+    # same never-persisted rule as the output cap above.
+    token_budget_override: int | None = None
 
 
 def _request_budget(agent: Agent, turns: list[ChatTurn], tools: tuple[ToolSpec, ...]) -> int:
@@ -256,6 +259,7 @@ class AgentService:
         payload: RunRequest,
         *,
         max_output_tokens_override: int | None = None,
+        token_budget_override: int | None = None,
     ) -> PreparedAgent:
         agent = await self._require_agent(user_id, agent_id)
         credential, model = await self._require_target(user_id, agent.provider, agent.model)
@@ -271,12 +275,13 @@ class AgentService:
             if name in TOOL_REGISTRY
         )
         estimate = _request_budget(agent, [ChatTurn("user", payload.prompt)], tools)
-        if estimate >= self.limits.token_budget:
+        if estimate >= (token_budget_override or self.limits.token_budget):
             raise ProviderError("agent_budget_exceeded")
         return PreparedAgent(
             user_id, agent, create_provider(agent.provider, chat_http=self.chat_http),
             key, model, payload.prompt, tools,
             max_output_tokens_override=max_output_tokens_override,
+            token_budget_override=token_budget_override,
         )
 
     async def stream_prepared(self, prepared: PreparedAgent) -> AsyncIterator[dict]:
@@ -286,6 +291,7 @@ class AgentService:
             user_id, agent.id, prompt=prepared.prompt, provider=agent.provider, model=agent.model
         )
         started = time.monotonic()
+        budget_limit = prepared.token_budget_override or self.limits.token_budget
         turns: list[ChatTurn] = [ChatTurn("user", prepared.prompt)]
         total_input: int | None = None
         total_output: int | None = None
@@ -357,7 +363,7 @@ class AgentService:
                 tools_fallback_used = False
                 for step_index in range(self.limits.max_steps):
                     input_estimate = _request_budget(agent, turns, active_tools)
-                    remaining = self.limits.token_budget - budget_used - input_estimate
+                    remaining = budget_limit - budget_used - input_estimate
                     if remaining <= 0:
                         raise ProviderError("agent_budget_exceeded")
                     parts = []
@@ -463,7 +469,7 @@ class AgentService:
                     ) + (
                         step_output if step_output is not None else output_estimate
                     )
-                    if budget_used > self.limits.token_budget:
+                    if budget_used > budget_limit:
                         raise ProviderError("agent_budget_exceeded")
                     for position, call in enumerate(calls):
                         if position < self.limits.max_tool_calls_per_step:

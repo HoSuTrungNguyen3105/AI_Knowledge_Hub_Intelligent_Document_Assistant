@@ -254,7 +254,7 @@ export default function ProjectDiscussion({ projectId, onTasksChanged }) {
                       <span className="wf-badge low">Đã tạo task</span>
                     ) : null}
                   </div>
-                  {message.status === "error" ? (
+                  {message.status === "error" && !message.content ? (
                     <div className="wf-disc-error">
                       <p>
                         Agent chưa trả lời được:{" "}
@@ -275,7 +275,26 @@ export default function ProjectDiscussion({ projectId, onTasksChanged }) {
                   ) : (
                     <div className="wf-disc-body">{message.content}</div>
                   )}
-                  {message.status !== "error" ? (
+                  {message.status === "error" && message.content ? (
+                    <div className="wf-disc-error">
+                      <p>
+                        Câu trả lời phía trên bị cắt giữa chừng:{" "}
+                        {projectErrorByCode(
+                          message.error_code,
+                          "Đã xảy ra lỗi phía provider.",
+                        )}
+                      </p>
+                      <button
+                        type="button"
+                        className="wf-btn"
+                        disabled={retryingId === message.id}
+                        onClick={() => retry(message)}
+                      >
+                        {retryingId === message.id ? "Đang thử lại..." : "Thử lại"}
+                      </button>
+                    </div>
+                  ) : null}
+                  {message.content ? (
                     <div className="wf-actions">
                       <button
                         type="button"
