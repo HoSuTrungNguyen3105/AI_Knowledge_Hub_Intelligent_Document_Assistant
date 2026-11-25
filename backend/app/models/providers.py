@@ -38,4 +38,7 @@ class AIModel(BaseDocument, BaseModel):
     capability_source: str
     input_price_per_token: float | None = None
     output_price_per_token: float | None = None
+    health_status: str | None = None
+    health_error_code: str | None = None
+    health_checked_at: datetime | None = None
     created_at: datetime

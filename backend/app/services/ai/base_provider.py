@@ -25,6 +25,7 @@ ERRORS = {
     "invalid_provider_configuration": (422, "Invalid provider configuration."),
     "model_not_chat_capable": (409, "This model does not support chat generation."),
     "model_not_synced": (409, "Sync this provider's models before starting a chat."),
+    "chat_not_supported": (422, "This model does not support chat generation."),
     "provider_disabled": (409, "This provider is disabled. Enable it in Settings."),
     "conversation_not_found": (404, "Conversation not found."),
     "empty_message": (422, "Message content cannot be empty."),
