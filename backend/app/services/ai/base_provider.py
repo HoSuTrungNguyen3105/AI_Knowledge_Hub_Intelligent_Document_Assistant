@@ -78,6 +78,10 @@ ERRORS = {
         422,
         "That node or parameter does not exist in the workflow.",
     ),
+    "n8n_workflow_invalid": (
+        422,
+        "The workflow definition is invalid: it needs a name and at least one node with a name and a type.",
+    ),
     "invalid_factory_roles": (422, "Assign agents only to the seven team roles."),
     "factory_run_not_found": (404, "That AI Factory run does not exist."),
     "schedule_not_found": (404, "That workflow schedule does not exist."),

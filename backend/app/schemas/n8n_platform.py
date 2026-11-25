@@ -87,3 +87,17 @@ class N8nParamUpdateIn(BaseModel):
 
 class N8nParamUpdatesIn(BaseModel):
     updates: list[N8nParamUpdateIn] = Field(min_length=1, max_length=50)
+
+
+class N8nWorkflowCreateIn(BaseModel):
+    """A whole workflow definition pasted/built by the user.
+
+    Only the fields the n8n create API accepts are forwarded (name, nodes,
+    connections, settings). The workflow is created inactive; credentials
+    referenced by id inside nodes are resolved by n8n itself.
+    """
+
+    name: str = Field(min_length=1, max_length=200)
+    nodes: list[dict[str, Any]] = Field(min_length=1, max_length=200)
+    connections: dict[str, Any] = Field(default_factory=dict)
+    settings: dict[str, Any] = Field(default_factory=dict)
