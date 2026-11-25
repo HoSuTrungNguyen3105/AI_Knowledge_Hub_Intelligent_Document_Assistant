@@ -2,14 +2,16 @@
 
 Mounted under /api/v1/ai/code-analyzer; the spec's /api/code-analyzer
 paths map onto the codebase's /api/v1/ai prefix like every other AI
-module. The webhook callback is the one unauthenticated route: n8n
-calls it with the shared x-mindflow-secret header instead of a user
-session.
+module. Uploads are analyzed directly in the backend with the
+caller's own configured provider; the webhook callback remains as an
+optional external path (n8n) and is the one unauthenticated route —
+it checks the shared x-mindflow-secret header instead of a session.
 """
 
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, File, Header, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
 
 from app.api.dependencies import AppSettings, CurrentUser, Database
 from app.schemas.code_analyzer import (
@@ -21,13 +23,22 @@ from app.schemas.code_analyzer import (
     SeedDemoOut,
     UploadOut,
 )
+from app.services.ai.chat import ChatHTTP
 from app.services.code_analyzer import CodeAnalyzerService
 
 router = APIRouter(prefix="/ai/code-analyzer", tags=["Code Analyzer"])
 
 
-def _service(db, settings) -> CodeAnalyzerService:
-    return CodeAnalyzerService(db, settings)
+def analyzer_http() -> ChatHTTP:
+    """Shared outbound HTTP client for provider calls (test seam)."""
+    return ChatHTTP()
+
+
+AnalyzerHTTPDep = Annotated[ChatHTTP, Depends(analyzer_http)]
+
+
+def _service(db, settings, chat_http=None) -> CodeAnalyzerService:
+    return CodeAnalyzerService(db, settings, chat_http)
 
 
 @router.get("/projects", response_model=CodeProjectList)
@@ -48,13 +59,22 @@ async def upload(
     user: CurrentUser,
     db: Database,
     settings: AppSettings,
+    chat_http: AnalyzerHTTPDep,
     file: UploadFile = File(...),
+    provider: str = Form(""),
+    model: str = Form(""),
 ):
     """Ingest a ZIP: filter junk, statically parse imports, store the
-    project, then hand file batches to the n8n analysis webhook."""
+    project, then summarize files directly with the caller's provider
+    (explicit provider/model form fields, else the first configured
+    one)."""
     data = await file.read()
-    return await _service(db, settings).ingest_upload(
-        user.id, file.filename or "codebase.zip", data
+    return await _service(db, settings, chat_http).ingest_upload(
+        user.id,
+        file.filename or "codebase.zip",
+        data,
+        provider=provider or None,
+        model=model or None,
     )
 
 
@@ -65,7 +85,7 @@ async def webhook_callback(
     settings: AppSettings,
     x_mindflow_secret: str | None = Header(default=None),
 ):
-    """Receive per-file AI results from the n8n analysis workflow."""
+    """Receive per-file AI results from an external (n8n) workflow."""
     return await _service(db, settings).apply_callback(x_mindflow_secret, payload)
 
 

@@ -6,13 +6,87 @@ detail with the prebuilt diagram, file detail, and owner scoping for
 private projects.
 """
 
-from uuid import uuid4
+import json
+from uuid import UUID, uuid4
 
+import httpx
 import pytest
+from cryptography.fernet import Fernet
+from pydantic import SecretStr
 
+from app.api.v1.code_analyzer import analyzer_http
 from app.models.base import utcnow
+from app.services.ai.chat import ChatHTTP
+from tests.test_compare import MODEL_A, chunk, seed, sse
 
 BASE = "/api/v1/ai/code-analyzer"
+
+
+@pytest.fixture(autouse=True)
+def ai_settings(settings):
+    settings.credential_encryption_key = SecretStr(Fernet.generate_key().decode())
+    return settings
+
+
+@pytest.fixture
+def owner_id(owner):
+    return UUID(owner.get("/api/v1/auth/me").json()["id"])
+
+
+def _ai_reply(text):
+    return sse(
+        chunk(text),
+        {"choices": [], "usage": {"prompt_tokens": 11, "completion_tokens": 5}},
+        "[DONE]",
+    )
+
+
+ANALYSIS_JSON = json.dumps(
+    {
+        "files": [
+            {
+                "file_path": "app/main.py",
+                "ai_summary": "Điểm khởi động ứng dụng.",
+                "role_tag": "Entry Point",
+                "imports": [
+                    {
+                        "target_file": "app/service.py",
+                        "relation_label": "Gọi tầng service",
+                    }
+                ],
+            },
+            {
+                "file_path": "app/service.py",
+                "ai_summary": "Xử lý nghiệp vụ chính.",
+                "role_tag": "Service",
+                "imports": [
+                    {"target_file": "app/db.py", "relation_label": "Đọc dữ liệu"}
+                ],
+            },
+            {
+                "file_path": "app/db.py",
+                "ai_summary": "Mở kết nối cơ sở dữ liệu.",
+                "role_tag": "Config",
+                "imports": [],
+            },
+        ]
+    }
+)
+
+
+def ai_handler(request):
+    return httpx.Response(
+        200,
+        text=_ai_reply(ANALYSIS_JSON),
+        headers={"content-type": "text/event-stream"},
+    )
+
+
+@pytest.fixture
+def mock_ai(app):
+    app.dependency_overrides[analyzer_http] = lambda: ChatHTTP(
+        transport=httpx.MockTransport(ai_handler)
+    )
 
 
 @pytest.fixture
@@ -161,10 +235,10 @@ def test_upload_parses_imports_and_skips_junk(owner):
     r = upload(owner, data)
     assert r.status_code == 201, r.text
     body = r.json()
-    assert body["analysis_dispatch"] == "skipped"
+    assert body["analysis_dispatch"] == "static"
     project = body["project"]
     assert project["name"] == "repo"
-    assert project["status"] == "COMPLETED"  # no webhook -> static pass completes
+    assert project["status"] == "COMPLETED"  # no provider -> static pass completes
     assert project["stats"]["analyzed_files"] == 3
     assert project["stats"]["primary_language"] == "python"
 
@@ -194,13 +268,48 @@ def test_upload_rejects_invalid_and_empty(owner):
     assert r.json()["detail"]["code"] == "code_upload_empty"
 
 
-def test_upload_dispatch_failure_still_completes(owner, settings):
-    settings.n8n_code_analyzer_webhook_url = "http://127.0.0.1:9/hook"
-    data = make_zip({"src/a.py": "import os\n"})
+async def test_upload_runs_direct_ai(owner, mock_ai, db, settings, owner_id):
+    await seed(db, settings, owner_id)
+    data = make_zip(
+        {
+            "app/main.py": "from app import service\n",
+            "app/service.py": "from app.db import connect\n",
+            "app/db.py": "def connect():\n    return None\n",
+        }
+    )
     r = upload(owner, data)
     assert r.status_code == 201, r.text
-    assert r.json()["analysis_dispatch"] == "failed"
-    assert r.json()["project"]["status"] == "COMPLETED"
+    body = r.json()
+    assert body["analysis_dispatch"] == "ai"
+    assert body["ai_analyzed"] == 3
+    assert body["project"]["status"] == "COMPLETED"
+    detail = owner.get(f"{BASE}/projects/{body['project']['id']}").json()
+    by_path = {f["file_path"]: f for f in detail["files"]}
+    fd = owner.get(
+        f"{BASE}/projects/{body['project']['id']}/files/{by_path['app/main.py']['id']}"
+    ).json()
+    assert fd["ai_summary"] == "Điểm khởi động ứng dụng."
+    assert fd["role_tag"] == "Entry Point"
+    assert fd["imports"][0]["relation_label"] == "Gọi tầng service"
+
+
+async def test_upload_explicit_target(owner, mock_ai, db, settings, owner_id):
+    await seed(db, settings, owner_id)
+    data = make_zip({"app/db.py": "def connect():\n    return None\n"})
+    r = owner.post(
+        f"{BASE}/upload",
+        files={"file": ("repo.zip", data, "application/zip")},
+        data={"provider": "openai", "model": MODEL_A},
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["analysis_dispatch"] == "ai"
+    r = owner.post(
+        f"{BASE}/upload",
+        files={"file": ("repo.zip", data, "application/zip")},
+        data={"provider": "openai", "model": "model-khong-co"},
+    )
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["code"] == "model_not_synced"
 
 
 def test_callback_applies_ai_results(owner):

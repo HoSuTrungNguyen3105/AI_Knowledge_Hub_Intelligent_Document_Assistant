@@ -3,16 +3,21 @@
 Two collections: `code_projects` (metadata + the prebuilt diagram
 payload, so the UI renders instantly) and `code_project_files` (one
 document per analyzed file: static imports, reverse dependencies, and
-the AI summary/role filled in by the n8n callback or the demo seed).
+the AI summary/role filled in by the direct AI pass (the caller's own
+provider), by the optional n8n callback, or by the demo seed).
 Access is owner-scoped, except projects flagged `is_public_demo`,
 which every signed-in user may open read-only.
 """
 
+import asyncio
+import json
+import time
 from uuid import UUID, uuid4
 
-import httpx
-
+from app.core.credential_vault import CredentialVault
 from app.models.base import utcnow
+from app.repositories.chat import ChatRepository
+from app.repositories.providers import ProviderRepository
 from app.schemas.code_analyzer import (
     CodeCallbackIn,
     CodeCallbackOut,
@@ -23,14 +28,21 @@ from app.schemas.code_analyzer import (
     SeedDemoOut,
     UploadOut,
 )
+from app.services.ai.ai_factory import create_provider
 from app.services.ai.base_provider import ProviderError
+from app.services.ai.chat import ChatHTTP
+from app.services.ai.chat_types import ChatRequest, ChatTurn
+from app.services.ai.registry import PROVIDERS
 from app.services.code_parser import MAX_ZIP_BYTES, parse_codebase
+from app.services.synthesis import require_chat_target
 
 PROJECTS = "code_projects"
 FILES = "code_project_files"
 CLUSTER_THRESHOLD = 50
-BATCH_SIZE = 12
-CONTENT_EXCERPT_CHARS = 6000
+AI_BATCH_SIZE = 6
+AI_FILE_LIMIT = 40
+AI_EXCERPT_CHARS = 2500
+AI_CALL_TIMEOUT_SECONDS = 120
 
 
 def module_group_of(file_path: str) -> str:
@@ -223,10 +235,82 @@ DEMO_FILES: list[dict] = [
 ]
 
 
+
+def _analysis_prompt(batch: list[dict], contents: dict) -> str:
+    """One prompt covering a small batch of files (JSON answer only)."""
+    lines = [
+        "Bạn là chuyên gia phân tích kiến trúc phần mềm. Với mỗi file dưới "
+        "đây, hãy viết tóm tắt chức năng ngắn bằng tiếng Việt (1-3 câu), "
+        "gán role_tag ngắn (ví dụ: Entry Point, Controller, Service, "
+        "Model, Config, Util, Component, Module) và mô tả quan hệ của "
+        "từng import nội bộ bằng một cụm ngắn.",
+        'Chỉ trả về JSON đúng dạng: {"files": [{"file_path": "...", '
+        '"ai_summary": "...", "role_tag": "...", "imports": '
+        '[{"target_file": "...", "relation_label": "..."}]}]}',
+        "",
+    ]
+    for doc in batch:
+        targets = [imp["target_file"] for imp in doc.get("imports", [])]
+        lines.append(f"=== FILE: {doc['file_path']} ({doc['language']}) ===")
+        lines.append(
+            "Imports nội bộ: " + (", ".join(targets) if targets else "(không có)")
+        )
+        lines.append("```")
+        lines.append(contents.get(doc["file_path"], "")[:AI_EXCERPT_CHARS])
+        lines.append("```")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _extract_json_object(text: str) -> dict | None:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    try:
+        data = json.loads(text[start : end + 1])
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _parse_analysis(text: str) -> list[dict]:
+    """Tolerantly normalize the model's JSON answer into apply items."""
+    data = _extract_json_object(text)
+    if data is None:
+        return []
+    items = []
+    for raw in data.get("files") or []:
+        if not isinstance(raw, dict) or not raw.get("file_path"):
+            continue
+        imports = []
+        for imp in raw.get("imports") or []:
+            if isinstance(imp, dict) and imp.get("target_file"):
+                imports.append(
+                    {
+                        "target_file": str(imp["target_file"]),
+                        "relation_label": str(imp.get("relation_label") or "")[:200],
+                    }
+                )
+        items.append(
+            {
+                "file_path": str(raw["file_path"]),
+                "ai_summary": str(raw.get("ai_summary") or "")[:4000],
+                "role_tag": str(raw.get("role_tag") or "")[:80],
+                "imports": imports,
+            }
+        )
+    return items
+
+
 class CodeAnalyzerService:
-    def __init__(self, db, settings):
+    def __init__(self, db, settings, chat_http: ChatHTTP | None = None):
         self.db = db
         self.settings = settings
+        self.chat_http = chat_http
+        self.providers = ProviderRepository(db)
+        self.requests = ChatRepository(db)
+        self.vault = CredentialVault(settings.credential_encryption_key)
 
     # --- mapping helpers ---------------------------------------------------
     @staticmethod
@@ -398,7 +482,8 @@ class CodeAnalyzerService:
         user_id: UUID,
         filename: str,
         data: bytes,
-        transport: httpx.BaseTransport | None = None,
+        provider: str | None = None,
+        model: str | None = None,
     ) -> UploadOut:
         if len(data) > MAX_ZIP_BYTES:
             raise ProviderError("code_upload_too_large")
@@ -410,6 +495,7 @@ class CodeAnalyzerService:
         files = parsed["files"]
         if not files:
             raise ProviderError("code_upload_empty")
+        prepared = await self._prepare_ai(user_id, provider, model)
         now = utcnow()
         project_id = uuid4()
         ids = {f["file_path"]: uuid4() for f in files}
@@ -472,90 +558,141 @@ class CodeAnalyzerService:
         }
         await self.db[PROJECTS].insert_one(project)
         await self.db[FILES].insert_many(docs)
-        dispatch = await self._dispatch_batches(project_id, files, ids, transport)
-        if dispatch != "sent":
-            # Without the AI pass the static result is still complete and
-            # usable; the project must not spin in PROCESSING forever.
-            await self.db[PROJECTS].update_one(
-                {"_id": project_id},
-                {"$set": {"status": "COMPLETED", "updated_at": utcnow()}},
-            )
-            project["status"] = "COMPLETED"
+        contents = {f["file_path"]: f["content"] for f in files}
+        analyzed = await self._run_ai_pass(
+            user_id, project_id, docs, contents, prepared
+        )
+        await self._refresh_diagram(project_id, status="COMPLETED")
+        project["status"] = "COMPLETED"
         return UploadOut(
-            project=self._summary(project), analysis_dispatch=dispatch
+            project=self._summary(project),
+            analysis_dispatch="ai" if analyzed else "static",
+            ai_analyzed=analyzed,
         )
 
-    async def _dispatch_batches(
-        self, project_id: UUID, files: list[dict], ids: dict, transport
-    ) -> str:
-        url = self.settings.n8n_code_analyzer_webhook_url
-        if not url:
-            return "skipped"
-        hook_secret = self.settings.n8n_code_analyzer_webhook_secret
-        headers = {"Content-Type": "application/json"}
-        if hook_secret:
-            headers["x-mindflow-secret"] = hook_secret
-        batches = [
-            files[i : i + BATCH_SIZE] for i in range(0, len(files), BATCH_SIZE)
-        ]
-        all_ok = True
-        async with httpx.AsyncClient(timeout=30.0, transport=transport) as client:
-            for index, batch in enumerate(batches):
-                payload = {
-                    "event": "code_analysis.batch",
-                    "project_id": str(project_id),
-                    "batch_index": index,
-                    "batch_count": len(batches),
-                    "files": [
-                        {
-                            "file_id": str(ids[f["file_path"]]),
-                            "file_path": f["file_path"],
-                            "language": f["language"],
-                            "imports": f["targets"],
-                            "content_excerpt": f["content"][:CONTENT_EXCERPT_CHARS],
-                        }
-                        for f in batch
-                    ],
-                }
-                try:
-                    response = await client.post(url, json=payload, headers=headers)
-                    ok = (
-                        response.status_code == 200
-                        and response.json().get("received") is True
-                    )
-                except (httpx.HTTPError, ValueError):
-                    ok = False
-                all_ok = all_ok and ok
-        return "sent" if all_ok else "failed"
+    async def _prepare_ai(self, user_id, provider, model_id):
+        """Resolve the LLM target for the direct AI pass.
 
-    async def apply_callback(
-        self, secret: str | None, payload: CodeCallbackIn
-    ) -> CodeCallbackOut:
-        expected = self.settings.n8n_code_analyzer_webhook_secret
-        if expected and secret != expected:
-            raise ProviderError("code_callback_unauthorized")
-        project = await self.db[PROJECTS].find_one({"_id": payload.project_id})
-        if project is None:
-            raise ProviderError("code_project_not_found")
+        An explicit provider+model is validated up front so the usual
+        provider errors surface to the uploader before anything is
+        stored. Without an explicit target, the first configured and
+        enabled provider with a chat-capable model wins; None means no
+        AI is available and the upload completes statically.
+        """
+        if provider and model_id:
+            credential, _model = await require_chat_target(
+                self.providers, user_id, provider, model_id
+            )
+            key = self.vault.decrypt(
+                credential.encrypted_api_key, user_id, provider
+            )
+            return provider, model_id, key
+        for provider_id, definition in PROVIDERS.items():
+            if not definition.implemented:
+                continue
+            credential = await self.providers.get(user_id, provider_id)
+            if credential is None or not credential.enabled:
+                continue
+            for model in await self.providers.models(user_id, provider_id):
+                if model.capabilities.get("chat") is False:
+                    continue
+                key = self.vault.decrypt(
+                    credential.encrypted_api_key, user_id, provider_id
+                )
+                return provider_id, model.id, key
+        return None
+
+    async def _run_ai_pass(self, user_id, project_id, docs, contents, prepared):
+        """Summarize the most-connected files with the caller's provider.
+
+        Runs synchronously inside the upload request, like the other
+        evaluation engines. A failed batch degrades to the static
+        result for those files instead of failing the whole upload.
+        """
+        if prepared is None:
+            return 0
+        provider, model_id, key = prepared
+        ranked = sorted(
+            docs,
+            key=lambda d: (-len(d.get("imported_by") or []), d["file_path"]),
+        )[:AI_FILE_LIMIT]
+        adapter = create_provider(provider, chat_http=self.chat_http)
         updated = 0
-        for item in payload.files:
-            query: dict = {"project_id": str(payload.project_id)}
-            if item.file_id is not None:
-                query["_id"] = item.file_id
+        for start in range(0, len(ranked), AI_BATCH_SIZE):
+            batch = ranked[start : start + AI_BATCH_SIZE]
+            text, status, in_tok, out_tok, latency = await self._call_model(
+                adapter, key, model_id, _analysis_prompt(batch, contents)
+            )
+            await self.requests.record_request(
+                user_id,
+                provider=provider,
+                model=model_id,
+                status=status,
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+                latency_ms=latency,
+            )
+            if status != "success":
+                continue
+            updated += await self._apply_items(
+                project_id,
+                _parse_analysis(text),
+                allowed={d["file_path"] for d in batch},
+            )
+        return updated
+
+    async def _call_model(self, adapter, key, model_id, prompt):
+        request = ChatRequest(
+            model=model_id,
+            turns=(ChatTurn("user", prompt),),
+            max_output_tokens=4096,
+        )
+        started = time.monotonic()
+        parts: list[str] = []
+        input_tokens = output_tokens = None
+        status = "success"
+
+        async def collect() -> None:
+            nonlocal input_tokens, output_tokens
+            async for event in adapter.stream_chat(key, request):
+                if event.kind == "delta":
+                    parts.append(event.text)
+                elif event.kind == "usage":
+                    if event.input_tokens is not None:
+                        input_tokens = event.input_tokens
+                    if event.output_tokens is not None:
+                        output_tokens = event.output_tokens
+
+        try:
+            await asyncio.wait_for(collect(), timeout=AI_CALL_TIMEOUT_SECONDS)
+        except Exception:
+            status = "error"
+        latency_ms = int((time.monotonic() - started) * 1000)
+        return "".join(parts), status, input_tokens, output_tokens, latency_ms
+
+    async def _apply_items(self, project_id, items, allowed=None) -> int:
+        """Write AI results (summary, role, relation labels) onto file docs."""
+        updated = 0
+        for item in items:
+            if allowed is not None and item["file_path"] not in allowed:
+                continue
+            query: dict = {"project_id": str(project_id)}
+            if item.get("file_id") is not None:
+                query["_id"] = item["file_id"]
             else:
-                query["file_path"] = item.file_path
+                query["file_path"] = item["file_path"]
             doc = await self.db[FILES].find_one(query)
             if doc is None:
                 continue
             changes: dict = {"updated_at": utcnow()}
-            if item.ai_summary:
-                changes["ai_summary"] = item.ai_summary
-            if item.role_tag:
-                changes["role_tag"] = item.role_tag
+            if item.get("ai_summary"):
+                changes["ai_summary"] = item["ai_summary"]
+            if item.get("role_tag"):
+                changes["role_tag"] = item["role_tag"]
             labels = {
-                i.target_file: i.relation_label
-                for i in item.imports
-                if i.relation_label
+                imp["target_file"]: imp["relation_label"]
+                for imp in item.get("imports") or []
+                if imp.get("relation_label")
             }
             if labels:
                 changes["imports"] = [
@@ -571,11 +708,13 @@ class CodeAnalyzerService:
                 {"_id": doc["_id"]}, {"$set": changes}
             )
             updated += 1
-        status = {"completed": "COMPLETED", "failed": "FAILED"}.get(payload.status)
-        if status:
-            cursor = self.db[FILES].find({"project_id": str(payload.project_id)})
-            docs = [doc async for doc in cursor]
-            diagram = build_diagram(
+        return updated
+
+    async def _refresh_diagram(self, project_id, status: str | None = None):
+        cursor = self.db[FILES].find({"project_id": str(project_id)})
+        docs = [doc async for doc in cursor]
+        changes: dict = {
+            "diagram_data": build_diagram(
                 [
                     {
                         "id": str(d["_id"]),
@@ -586,15 +725,48 @@ class CodeAnalyzerService:
                     }
                     for d in docs
                 ]
-            )
-            await self.db[PROJECTS].update_one(
-                {"_id": payload.project_id},
-                {
-                    "$set": {
-                        "status": status,
-                        "diagram_data": diagram,
-                        "updated_at": utcnow(),
+            ),
+            "updated_at": utcnow(),
+        }
+        if status:
+            changes["status"] = status
+        await self.db[PROJECTS].update_one(
+            {"_id": project_id}, {"$set": changes}
+        )
+
+    async def apply_callback(
+        self, secret: str | None, payload: CodeCallbackIn
+    ) -> CodeCallbackOut:
+        """Optional external path: an n8n workflow may still POST results.
+
+        The primary analysis path is the direct AI pass in
+        ingest_upload; this callback stays for installations that
+        prefer orchestrating the LLM calls in n8n.
+        """
+        expected = self.settings.n8n_code_analyzer_webhook_secret
+        if expected and secret != expected:
+            raise ProviderError("code_callback_unauthorized")
+        project = await self.db[PROJECTS].find_one({"_id": payload.project_id})
+        if project is None:
+            raise ProviderError("code_project_not_found")
+        items = [
+            {
+                "file_id": item.file_id,
+                "file_path": item.file_path,
+                "ai_summary": item.ai_summary,
+                "role_tag": item.role_tag,
+                "imports": [
+                    {
+                        "target_file": imp.target_file,
+                        "relation_label": imp.relation_label,
                     }
-                },
-            )
+                    for imp in item.imports
+                ],
+            }
+            for item in payload.files
+        ]
+        updated = await self._apply_items(payload.project_id, items)
+        status = {"completed": "COMPLETED", "failed": "FAILED"}.get(payload.status)
+        if status:
+            await self._refresh_diagram(payload.project_id, status=status)
         return CodeCallbackOut(received=True, updated=updated)
