@@ -1,18 +1,24 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Header, Query, Response
 
-from app.api.dependencies import CurrentUser, Database
+from app.api.dependencies import AppSettings, CurrentUser, Database
+from app.api.v1.n8n_factory import N8nHTTPDep
 from app.schemas.workflow_schedules import (
     ScheduleCreate,
+    ScheduleExecutionListOut,
+    ScheduleExecutionOut,
     ScheduleListOut,
     ScheduleNextRunsOut,
     ScheduleOut,
     SchedulePatch,
     SchedulePreviewIn,
     SchedulePreviewOut,
+    ScheduleTickOut,
 )
+from app.services.ai.base_provider import ProviderError
+from app.services.schedule_runner import ScheduleRunner
 from app.services.workflow_schedules import WorkflowScheduleService
 
 router = APIRouter(prefix="/ai/workflow-schedules", tags=["workflow schedules"])
@@ -48,6 +54,31 @@ async def preview_schedule(
     payload: SchedulePreviewIn, user: CurrentUser, service: Service
 ) -> SchedulePreviewOut:
     return service.preview(payload)
+
+
+def schedule_runner(
+    db: Database, settings: AppSettings, http: N8nHTTPDep
+) -> ScheduleRunner:
+    return ScheduleRunner(db, settings, http)
+
+
+Runner = Annotated[ScheduleRunner, Depends(schedule_runner)]
+
+
+@router.post("/tick", response_model=ScheduleTickOut)
+async def tick_schedules(
+    runner: Runner,
+    settings: AppSettings,
+    x_scheduler_secret: str | None = Header(default=None),
+) -> ScheduleTickOut:
+    """Fire every due schedule. For external cron callers (which also
+    keep the free-tier backend awake); guarded by a shared secret that
+    never reaches the frontend."""
+    if not settings.scheduler_tick_secret:
+        raise ProviderError("scheduler_tick_disabled")
+    if x_scheduler_secret != settings.scheduler_tick_secret:
+        raise ProviderError("scheduler_tick_unauthorized")
+    return await runner.tick()
 
 
 @router.get("/{schedule_id}", response_model=ScheduleOut)
@@ -87,6 +118,29 @@ async def resume_schedule(
     schedule_id: UUID, user: CurrentUser, service: Service
 ) -> ScheduleOut:
     return await service.resume(user.id, schedule_id)
+
+
+@router.post(
+    "/{schedule_id}/run-now",
+    response_model=ScheduleExecutionOut,
+    status_code=202,
+)
+async def run_schedule_now(
+    schedule_id: UUID, user: CurrentUser, runner: Runner
+) -> ScheduleExecutionOut:
+    """Fire the schedule immediately as a manual execution; the regular
+    timetable (next_run_at) is left untouched."""
+    return await runner.run_now(user.id, schedule_id)
+
+
+@router.get(
+    "/{schedule_id}/executions", response_model=ScheduleExecutionListOut
+)
+async def list_schedule_executions(
+    schedule_id: UUID, user: CurrentUser, runner: Runner
+) -> ScheduleExecutionListOut:
+    items, total = await runner.list_executions(user.id, schedule_id)
+    return ScheduleExecutionListOut(items=items, total=total)
 
 
 @router.get("/{schedule_id}/next-runs", response_model=ScheduleNextRunsOut)

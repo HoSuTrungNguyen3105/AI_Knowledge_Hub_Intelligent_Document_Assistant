@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -30,9 +31,10 @@ from app.api.v1 import (
     workspaces,
 )
 from app.core.config import Settings, get_settings
-from app.core.database import lifespan_mongo
+from app.core.database import get_database, lifespan_mongo
 from app.core.middleware import RateLimiter, SecurityMiddleware
 from app.services.ai.base_provider import ProviderError
+from app.services.schedule_runner import run_scheduler_loop
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI):
         async with lifespan_mongo(settings) as client:
             _app.state.mongo_client = client
-            yield
+            scheduler_task = asyncio.create_task(
+                run_scheduler_loop(get_database(client, settings), settings)
+            )
+            _app.state.scheduler_task = scheduler_task
+            try:
+                yield
+            finally:
+                scheduler_task.cancel()
 
     application = FastAPI(
         title="AI Knowledge Hub API",

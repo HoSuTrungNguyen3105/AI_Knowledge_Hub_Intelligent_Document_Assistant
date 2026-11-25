@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     # A run with no callback after this long is reported as failed
     # (run_timed_out) instead of spinning forever.
     n8n_factory_run_timeout_seconds: int = Field(default=1800, ge=120, le=86400)
+    # Workflow Scheduler (phase 2): an in-process loop ticks while the
+    # backend is awake; an external cron may also POST the tick endpoint
+    # with this secret, which both wakes the free-tier service and fires
+    # due schedules. Empty secret disables the tick endpoint.
+    scheduler_tick_secret: str = ""
+    scheduler_tick_interval_seconds: int = Field(default=60, ge=15, le=3600)
     # Workforce -> n8n agent.created webhook (mindflow-workforce-feature
     # section 11). When a workforce AI resource is created, the backend
     # POSTs the agent payload to this URL with the x-mindflow-secret

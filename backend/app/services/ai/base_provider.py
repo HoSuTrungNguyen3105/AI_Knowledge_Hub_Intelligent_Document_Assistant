@@ -66,6 +66,11 @@ ERRORS = {
     "schedule_not_found": (404, "That workflow schedule does not exist."),
     "schedule_invalid": (422, "The schedule configuration is invalid."),
     "schedule_in_past": (422, "A one-time schedule must be set in the future."),
+    "scheduler_tick_disabled": (
+        503,
+        "The scheduler tick endpoint is not configured on this server.",
+    ),
+    "scheduler_tick_unauthorized": (401, "Invalid scheduler tick secret."),
     "collab_room_not_found": (404, "That collaboration room does not exist."),
     "collab_agent_not_member": (422, "A mentioned agent is not a member of this room."),
     "collab_message_not_found": (404, "That message does not exist in this room."),

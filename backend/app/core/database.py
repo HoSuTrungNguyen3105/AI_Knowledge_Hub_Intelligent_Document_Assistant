@@ -104,6 +104,15 @@ async def init_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.allocations.create_index([("user_id", 1), ("project_id", 1)])
     await db.workflow_schedules.create_index([("user_id", 1), ("updated_at", -1)])
     await db.workflow_schedules.create_index([("status", 1), ("next_run_at", 1)])
+    await db.workflow_schedule_executions.create_index(
+        [("schedule_id", 1), ("created_at", -1)]
+    )
+    await db.workflow_schedule_executions.create_index(
+        "idempotency_key", unique=True
+    )
+    await db.workflow_schedule_executions.create_index(
+        [("status", 1), ("factory_run_id", 1)]
+    )
     await _drop_foreign_projects_index(db)
 
 
