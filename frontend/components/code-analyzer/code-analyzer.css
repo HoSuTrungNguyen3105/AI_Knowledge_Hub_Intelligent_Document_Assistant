@@ -2,6 +2,17 @@
    Reuses the workflows.css variables and primitives (wf-btn, wf-chip,
    wf-badge, wf-error) imported alongside this file. */
 .ca-shell { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.ca-hint {
+  margin: 0 0 14px;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 13px;
+}
+
 .ca-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .ca-head h2 { font-size: 20px; }
 .ca-head p { color: var(--muted); font-size: 13px; margin-top: 4px; max-width: 560px; }
