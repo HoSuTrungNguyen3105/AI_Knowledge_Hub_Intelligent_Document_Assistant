@@ -176,3 +176,5 @@ h3 { font-size: 14px; font-weight: 600; }
 .topbar-search-results a:hover { background: var(--accent-soft); }
 .system-status { display: flex; align-items: center; gap: 6px; color: #16a34a; font-size: 12px; font-weight: 600; white-space: nowrap; }
 @media (max-width: 900px) { .topbar-search { display: none; } .system-status { display: none; } }
+/* Shared ModelSelect component (components/model-select.jsx) */
+.model-select-info { font-size: 12px; color: var(--muted); margin-top: 4px; }

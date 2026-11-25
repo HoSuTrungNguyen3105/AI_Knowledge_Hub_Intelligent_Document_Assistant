@@ -3,7 +3,7 @@
 import { KeyRound, LoaderCircle, PlugZap, ShieldCheck, Trash2 } from "lucide-react";
 import { formatDate } from "../../utils/format";
 import { providerFailureReason, providerStatus } from "../../utils/providers";
-import { modelOptionLabel } from "../../utils/model-info";
+import { ModelSelect } from "../model-select";
 import { ModelCatalog } from "./model-catalog";
 
 export function ProviderDetails({ controller, encryptionReady }) {
@@ -27,7 +27,7 @@ export function ProviderDetails({ controller, encryptionReady }) {
     </div>
     <div className="provider-section">
       <div className="provider-section-heading"><div><h3>Model mặc định</h3><p>Lựa chọn này được lưu để dùng ở các tính năng Chat, Compare và Agent sắp triển khai.</p></div></div>
-      <form key={`${provider.id}-${provider.default_model || "none"}-${provider.models_synced_at || "unsynced"}`} onSubmit={saveDefaultModel} className="default-model-form"><label htmlFor={`model-${provider.id}`} className="field-label">Chọn từ model đã đồng bộ</label><div className="key-input-row"><select id={`model-${provider.id}`} name="defaultModel" defaultValue={provider.default_model || ""} disabled={Boolean(busy) || !provider.configured || modelsLoading || models.length === 0} aria-label={`Model mặc định ${provider.name}`}><option value="">Chưa chọn model mặc định</option>{models.map((model) => <option key={model.id} value={model.id}>{modelOptionLabel(model)} ({model.id})</option>)}</select><button type="submit" className="button secondary" disabled={Boolean(busy) || !provider.configured || modelsLoading || models.length === 0}>{busy === "default-model" && <LoaderCircle size={16} className="spin" />}Lưu model</button></div></form>
+      <form key={`${provider.id}-${provider.default_model || "none"}-${provider.models_synced_at || "unsynced"}`} onSubmit={saveDefaultModel} className="default-model-form"><label htmlFor={`model-${provider.id}`} className="field-label">Chọn từ model đã đồng bộ</label><div className="key-input-row"><ModelSelect id={`model-${provider.id}`} name="defaultModel" models={models} defaultValue={provider.default_model || ""} disabled={Boolean(busy) || !provider.configured || modelsLoading || models.length === 0} loading={modelsLoading} placeholder="Chưa chọn model mặc định" ariaLabel={`Model mặc định ${provider.name}`} /><button type="submit" className="button secondary" disabled={Boolean(busy) || !provider.configured || modelsLoading || models.length === 0}>{busy === "default-model" && <LoaderCircle size={16} className="spin" />}Lưu model</button></div></form>
     </div>
     <ModelCatalog key={provider.id} models={models} loading={modelsLoading} error={modelState.provider === provider.id ? modelState.error : ""} syncedAt={provider.models_synced_at} onRetry={reload} onCheck={controller.checkModel} checkingId={controller.checking} />
     {provider.configured && <div className="provider-delete-row"><p>Xóa kết nối chỉ xóa API key và model cache của provider này.</p><button type="button" className="button danger-outline" disabled={Boolean(busy)} onClick={() => setConfirmDelete(true)}><Trash2 size={15} />Xóa API key</button></div>}
