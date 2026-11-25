@@ -10,7 +10,6 @@ which every signed-in user may open read-only.
 """
 
 import asyncio
-import json
 import time
 from uuid import UUID, uuid4
 
@@ -39,10 +38,11 @@ from app.services.synthesis import require_chat_target
 PROJECTS = "code_projects"
 FILES = "code_project_files"
 CLUSTER_THRESHOLD = 50
-AI_BATCH_SIZE = 6
-AI_FILE_LIMIT = 40
 AI_EXCERPT_CHARS = 2500
-AI_CALL_TIMEOUT_SECONDS = 120
+REPORT_FILE_LIMIT = 400
+REPORT_EXCERPT_FILES = 20
+REPORT_EXCERPT_CHARS = 1800
+REPORT_TIMEOUT_SECONDS = 240
 
 
 def module_group_of(file_path: str) -> str:
@@ -236,71 +236,77 @@ DEMO_FILES: list[dict] = [
 
 
 
-def _analysis_prompt(batch: list[dict], contents: dict) -> str:
-    """One prompt covering a small batch of files (JSON answer only)."""
+def _report_prompt(project_name: str, docs: list[dict], contents: dict) -> str:
+    # One prompt for the whole project: a compact inventory of every
+    # file plus content excerpts of the most-connected ones. The model
+    # answers with a single long Markdown document whose centerpiece
+    # maps each page / feature to the exact files that build it.
+    ranked = sorted(
+        docs, key=lambda d: (-len(d.get("imported_by") or []), d["file_path"])
+    )
     lines = [
-        "Bạn là chuyên gia phân tích kiến trúc phần mềm. Với mỗi file dưới "
-        "đây, hãy viết tóm tắt chức năng ngắn bằng tiếng Việt (1-3 câu), "
-        "gán role_tag ngắn (ví dụ: Entry Point, Controller, Service, "
-        "Model, Config, Util, Component, Module) và mô tả quan hệ của "
-        "từng import nội bộ bằng một cụm ngắn.",
-        'Chỉ trả về JSON đúng dạng: {"files": [{"file_path": "...", '
-        '"ai_summary": "...", "role_tag": "...", "imports": '
-        '[{"target_file": "...", "relation_label": "..."}]}]}',
+        "Bạn là chuyên gia phân tích kiến trúc phần mềm. Dưới đây là bản "
+        "kê toàn bộ file của một codebase kèm trích đoạn nội dung của "
+        "các file quan trọng nhất.",
+        "Hãy viết MỘT tài liệu Markdown hoàn chỉnh bằng tiếng Việt theo "
+        "đúng cấu trúc sau:",
+        f"# Báo cáo phân tích codebase: {project_name}",
+        "## 1. Tổng quan — mục đích dự án, công nghệ/framework suy ra "
+        "từ danh sách file, entry point và cách ứng dụng khởi chạy.",
+        "## 2. Cấu trúc thư mục — từng thư mục chứa gì và phụ trách "
+        "phần nào của hệ thống.",
+        "## 3. Ánh xạ trang & tính năng → file — PHẦN QUAN TRỌNG NHẤT: "
+        "với mỗi trang màn hình / tính năng / route tìm được, liệt kê "
+        "chính xác các file tạo nên nó (file trang, các component con, "
+        "service/API, state, style...), mỗi file kèm một câu mô tả vai "
+        "trò của nó trong trang/tính năng đó. Nếu dự án không có khái "
+        "niệm trang thì nhóm theo tính năng hoặc module.",
+        "## 4. Chi tiết từng file — bảng Markdown 4 cột: File | Vai "
+        "trò | Mô tả | File liên quan chính. Liệt kê toàn bộ file trong "
+        "bản kê.",
+        "## 5. Luồng hoạt động chính — đi từ entry point qua những "
+        "file nào để xử lý một yêu cầu điển hình.",
+        "## 6. Nhận xét — file trung tâm, điểm đáng chú ý, rủi ro nếu thấy.",
+        "Chỉ dựa trên dữ liệu được cung cấp, tuyệt đối không bịa ra "
+        "file không có trong bản kê. Trả về DUY NHẤT nội dung Markdown, "
+        "không bọc trong khối ```.",
         "",
+        "=== BẢN KÊ FILE ===",
     ]
-    for doc in batch:
+    for doc in ranked[:REPORT_FILE_LIMIT]:
         targets = [imp["target_file"] for imp in doc.get("imports", [])]
-        lines.append(f"=== FILE: {doc['file_path']} ({doc['language']}) ===")
         lines.append(
-            "Imports nội bộ: " + (", ".join(targets) if targets else "(không có)")
+            f"- {doc['file_path']} | {doc['language']} | vai trò tĩnh: "
+            f"{doc['role_tag']} | imports: "
+            f"{', '.join(targets) if targets else '—'} | được import bởi: "
+            f"{len(doc.get('imported_by') or [])} file"
         )
-        lines.append("```")
-        lines.append(contents.get(doc["file_path"], "")[:AI_EXCERPT_CHARS])
-        lines.append("```")
+    if len(ranked) > REPORT_FILE_LIMIT:
+        lines.append(
+            f"- ... và {len(ranked) - REPORT_FILE_LIMIT} file khác "
+            "(chỉ nêu trong mục 2/3 nếu liên quan, không liệt kê ở mục 4)"
+        )
+    lines.append("")
+    lines.append("=== TRÍCH ĐOẠN CÁC FILE QUAN TRỌNG NHẤT ===")
+    for doc in ranked[:REPORT_EXCERPT_FILES]:
+        excerpt = contents.get(doc["file_path"], "")
+        if not excerpt:
+            continue
+        lines.append(f"--- FILE: {doc['file_path']} ---")
+        lines.append(excerpt[:REPORT_EXCERPT_CHARS])
         lines.append("")
     return "\n".join(lines)
 
 
-def _extract_json_object(text: str) -> dict | None:
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end <= start:
-        return None
-    try:
-        data = json.loads(text[start : end + 1])
-    except ValueError:
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def _parse_analysis(text: str) -> list[dict]:
-    """Tolerantly normalize the model's JSON answer into apply items."""
-    data = _extract_json_object(text)
-    if data is None:
-        return []
-    items = []
-    for raw in data.get("files") or []:
-        if not isinstance(raw, dict) or not raw.get("file_path"):
-            continue
-        imports = []
-        for imp in raw.get("imports") or []:
-            if isinstance(imp, dict) and imp.get("target_file"):
-                imports.append(
-                    {
-                        "target_file": str(imp["target_file"]),
-                        "relation_label": str(imp.get("relation_label") or "")[:200],
-                    }
-                )
-        items.append(
-            {
-                "file_path": str(raw["file_path"]),
-                "ai_summary": str(raw.get("ai_summary") or "")[:4000],
-                "role_tag": str(raw.get("role_tag") or "")[:80],
-                "imports": imports,
-            }
-        )
-    return items
+def _clean_markdown(text: str) -> str:
+    # Models sometimes wrap the document in a ``` fence despite being
+    # told not to; strip one outer fence so the UI renders it raw.
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1] if "\n" in cleaned else ""
+        if cleaned.rstrip().endswith("```"):
+            cleaned = cleaned.rstrip()[:-3]
+    return cleaned.strip()
 
 
 class CodeAnalyzerService:
@@ -378,6 +384,7 @@ class CodeAnalyzerService:
             **summary.model_dump(),
             diagram_data=doc.get("diagram_data") or {},
             files=files,
+            report_markdown=doc.get("report_markdown") or "",
         )
 
     async def get_file(
@@ -510,6 +517,7 @@ class CodeAnalyzerService:
                     "module_group": module_group_of(f["file_path"]),
                     "language": f["language"],
                     "ai_summary": "",
+                    "content_excerpt": f["content"][:AI_EXCERPT_CHARS],
                     "role_tag": f["role_tag"],
                     "imports": [
                         {
@@ -535,6 +543,7 @@ class CodeAnalyzerService:
             "name": name[:120],
             "description": "",
             "is_public_demo": False,
+            "report_markdown": "",
             "status": "PROCESSING",
             "stats": {
                 "total_raw_files": parsed["total_raw_files"],
@@ -559,15 +568,46 @@ class CodeAnalyzerService:
         await self.db[PROJECTS].insert_one(project)
         await self.db[FILES].insert_many(docs)
         contents = {f["file_path"]: f["content"] for f in files}
-        analyzed = await self._run_ai_pass(
-            user_id, project_id, docs, contents, prepared
+        reported = await self._generate_report(
+            user_id, project_id, name, docs, contents, prepared
         )
         await self._refresh_diagram(project_id, status="COMPLETED")
         project["status"] = "COMPLETED"
         return UploadOut(
             project=self._summary(project),
-            analysis_dispatch="ai" if analyzed else "static",
-            ai_analyzed=analyzed,
+            analysis_dispatch="ai" if reported else "static",
+            ai_analyzed=len(docs) if reported else 0,
+        )
+
+    async def regenerate_report(
+        self,
+        user_id: UUID,
+        project_id: UUID,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> UploadOut:
+        # (Re)write the Markdown report for an existing project, using
+        # the content excerpts stored at ingest time (no ZIP needed).
+        # Only the owner may regenerate.
+        doc = await self._require_project(user_id, project_id)
+        if doc.get("user_id") != str(user_id):
+            raise ProviderError("code_project_not_found")
+        cursor = (
+            self.db[FILES]
+            .find({"project_id": str(project_id)})
+            .sort("file_path", 1)
+        )
+        docs = [d async for d in cursor]
+        contents = {d["file_path"]: d.get("content_excerpt", "") for d in docs}
+        prepared = await self._prepare_ai(user_id, provider, model)
+        reported = await self._generate_report(
+            user_id, project_id, doc["name"], docs, contents, prepared
+        )
+        fresh = await self.db[PROJECTS].find_one({"_id": project_id})
+        return UploadOut(
+            project=self._summary(fresh or doc),
+            analysis_dispatch="ai" if reported else "static",
+            ai_analyzed=len(docs) if reported else 0,
         )
 
     async def _prepare_ai(self, user_id, provider, model_id):
@@ -602,50 +642,46 @@ class CodeAnalyzerService:
                 return provider_id, model.id, key
         return None
 
-    async def _run_ai_pass(self, user_id, project_id, docs, contents, prepared):
-        """Summarize the most-connected files with the caller's provider.
-
-        Runs synchronously inside the upload request, like the other
-        evaluation engines. A failed batch degrades to the static
-        result for those files instead of failing the whole upload.
-        """
+    async def _generate_report(
+        self, user_id, project_id, project_name, docs, contents, prepared
+    ) -> bool:
+        # One LLM call writes the whole-project Markdown report. Any
+        # failure degrades to no report (the static data still stands).
         if prepared is None:
-            return 0
+            return False
         provider, model_id, key = prepared
-        ranked = sorted(
-            docs,
-            key=lambda d: (-len(d.get("imported_by") or []), d["file_path"]),
-        )[:AI_FILE_LIMIT]
         adapter = create_provider(provider, chat_http=self.chat_http)
-        updated = 0
-        for start in range(0, len(ranked), AI_BATCH_SIZE):
-            batch = ranked[start : start + AI_BATCH_SIZE]
-            text, status, in_tok, out_tok, latency = await self._call_model(
-                adapter, key, model_id, _analysis_prompt(batch, contents)
-            )
-            await self.requests.record_request(
-                user_id,
-                provider=provider,
-                model=model_id,
-                status=status,
-                input_tokens=in_tok,
-                output_tokens=out_tok,
-                latency_ms=latency,
-            )
-            if status != "success":
-                continue
-            updated += await self._apply_items(
-                project_id,
-                _parse_analysis(text),
-                allowed={d["file_path"] for d in batch},
-            )
-        return updated
+        prompt = _report_prompt(project_name, docs, contents)
+        text, status, in_tok, out_tok, latency = await self._call_model(
+            adapter, key, model_id, prompt,
+            max_output_tokens=8192, timeout=REPORT_TIMEOUT_SECONDS,
+        )
+        await self.requests.record_request(
+            user_id,
+            provider=provider,
+            model=model_id,
+            status=status,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            latency_ms=latency,
+        )
+        report = _clean_markdown(text) if status == "success" else ""
+        if not report:
+            return False
+        await self.db[PROJECTS].update_one(
+            {"_id": project_id},
+            {"$set": {"report_markdown": report, "updated_at": utcnow()}},
+        )
+        return True
 
-    async def _call_model(self, adapter, key, model_id, prompt):
+    async def _call_model(
+        self, adapter, key, model_id, prompt,
+        max_output_tokens: int = 4096, timeout: int = 120,
+    ):
         request = ChatRequest(
             model=model_id,
             turns=(ChatTurn("user", prompt),),
-            max_output_tokens=4096,
+            max_output_tokens=max_output_tokens,
         )
         started = time.monotonic()
         parts: list[str] = []
@@ -664,7 +700,7 @@ class CodeAnalyzerService:
                         output_tokens = event.output_tokens
 
         try:
-            await asyncio.wait_for(collect(), timeout=AI_CALL_TIMEOUT_SECONDS)
+            await asyncio.wait_for(collect(), timeout=timeout)
         except Exception:
             status = "error"
         latency_ms = int((time.monotonic() - started) * 1000)

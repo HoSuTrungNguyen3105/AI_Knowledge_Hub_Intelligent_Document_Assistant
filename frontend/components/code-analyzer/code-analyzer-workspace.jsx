@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { codeAnalyzerService, getCodeError } from "../../services/code-analyzer";
 import { providerService } from "../../services/providers";
 
@@ -10,10 +12,8 @@ const STATUS_LABELS = {
   FAILED: "Thất bại",
 };
 
-const DISPATCH_NOTES = {
-  static:
-    "Chưa có provider AI khả dụng (chưa cấu hình key hoặc AI gọi lỗi) nên dự án hoàn tất bằng phân tích tĩnh — cây file và đồ thị imports vẫn đầy đủ.",
-};
+const STATIC_NOTE =
+  "Chưa có provider AI khả dụng (chưa cấu hình key hoặc AI gọi lỗi) nên dự án chỉ có dữ liệu tĩnh — cây file và đồ thị imports vẫn đầy đủ, chưa có báo cáo AI.";
 
 /* ------------------------------------------------------------ file tree */
 function buildTree(files) {
@@ -130,13 +130,13 @@ export default function CodeAnalyzerWorkspace() {
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState("");
   const [detail, setDetail] = useState(null);
-  const [fileDetail, setFileDetail] = useState(null);
-  const [selectedEdge, setSelectedEdge] = useState(null);
+  const [selectedId, setSelectedId] = useState("");
   const [cluster, setCluster] = useState(null);
   const [query, setQuery] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reportBusy, setReportBusy] = useState(false);
   const [providers, setProviders] = useState([]);
   const [providerId, setProviderId] = useState("");
   const [models, setModels] = useState([]);
@@ -144,7 +144,7 @@ export default function CodeAnalyzerWorkspace() {
   const fileInput = useRef(null);
   const seeded = useRef(false);
 
-  const loadProjects = useCallback(async (keepSelection) => {
+  const loadProjects = useCallback(async () => {
     const list = await codeAnalyzerService.list();
     setProjects(list);
     return list;
@@ -160,8 +160,7 @@ export default function CodeAnalyzerWorkspace() {
     try {
       const data = await codeAnalyzerService.get(id);
       setDetail(data);
-      setFileDetail(null);
-      setSelectedEdge(null);
+      setSelectedId("");
       setCluster(null);
     } catch (err) {
       setError(getCodeError(err));
@@ -245,18 +244,6 @@ export default function CodeAnalyzerWorkspace() {
     };
   }, [providerId, providers]);
 
-  const filesById = useMemo(() => {
-    const map = new Map();
-    for (const file of detail?.files || []) map.set(file.id, file);
-    return map;
-  }, [detail]);
-
-  const filesByPath = useMemo(() => {
-    const map = new Map();
-    for (const file of detail?.files || []) map.set(file.file_path, file);
-    return map;
-  }, [detail]);
-
   const graph = useMemo(() => {
     if (!detail) return { nodes: [], edges: [] };
     const diagram = detail.diagram_data || {};
@@ -287,24 +274,12 @@ export default function CodeAnalyzerWorkspace() {
     [graph],
   );
 
-  async function selectFile(id) {
-    if (!detail) return;
-    setSelectedEdge(null);
-    try {
-      setFileDetail(await codeAnalyzerService.getFile(detail.id, id));
-    } catch (err) {
-      setError(getCodeError(err));
-    }
-  }
-
   function onNodeClick(node) {
     if (node.kind === "cluster") {
       setCluster(node.label);
-      setFileDetail(null);
-      setSelectedEdge(null);
       return;
     }
-    selectFile(node.id);
+    setSelectedId(node.id);
   }
 
   async function onUpload(event) {
@@ -315,15 +290,11 @@ export default function CodeAnalyzerWorkspace() {
     setError("");
     setNotice("");
     try {
-      const result = await codeAnalyzerService.upload(
-        file,
-        providerId,
-        modelId,
-      );
+      const result = await codeAnalyzerService.upload(file, providerId, modelId);
       setNotice(
         result.analysis_dispatch === "ai"
-          ? `Đã phân tích xong "${result.project.name}" — AI đã viết tóm tắt cho ${result.ai_analyzed} file.`
-          : `Đã phân tích xong "${result.project.name}". ${DISPATCH_NOTES.static}`,
+          ? `Đã phân tích xong "${result.project.name}" — AI đã viết báo cáo phân tích dựa trên ${result.ai_analyzed} file, xem ở mục Báo cáo bên dưới.`
+          : `Đã phân tích xong "${result.project.name}". ${STATIC_NOTE}`,
       );
       await loadProjects();
       setProjectId(result.project.id);
@@ -333,6 +304,43 @@ export default function CodeAnalyzerWorkspace() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function onRegenerate() {
+    if (!detail) return;
+    setReportBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await codeAnalyzerService.regenerate(
+        detail.id,
+        providerId,
+        modelId,
+      );
+      setNotice(
+        result.analysis_dispatch === "ai"
+          ? "Đã tạo lại báo cáo phân tích bằng AI."
+          : STATIC_NOTE,
+      );
+      await openProject(detail.id);
+    } catch (err) {
+      setError(getCodeError(err));
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
+  function onDownloadReport() {
+    if (!detail?.report_markdown) return;
+    const blob = new Blob([detail.report_markdown], {
+      type: "text/markdown;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${(detail.name || "codebase").replace(/[^\w-]+/g, "-")}-bao-cao.md`;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   const tree = useMemo(() => buildTree(detail?.files || []), [detail]);
@@ -351,8 +359,9 @@ export default function CodeAnalyzerWorkspace() {
         <div>
           <h2>Codebase Architecture Analyzer</h2>
           <p>
-            Upload file ZIP mã nguồn để xem cây thư mục, sơ đồ kiến trúc và
-            phân tích AI cho từng file.
+            Upload file ZIP mã nguồn: hệ thống dựng cây thư mục, sơ đồ
+            kiến trúc và một báo cáo Markdown tổng — phần nào thuộc file
+            nào, mỗi trang/tính năng gồm những file nào.
           </p>
         </div>
         <div className="ca-head-actions">
@@ -360,7 +369,7 @@ export default function CodeAnalyzerWorkspace() {
             value={providerId}
             onChange={(e) => setProviderId(e.target.value)}
             aria-label="Provider AI"
-            title="Provider dùng để viết tóm tắt AI (để trống = tự chọn)"
+            title="Provider dùng để viết báo cáo AI (để trống = tự chọn)"
           >
             <option value="">AI: tự chọn</option>
             {providers.map((provider) => (
@@ -450,8 +459,8 @@ export default function CodeAnalyzerWorkspace() {
                   <button
                     key={file.id}
                     type="button"
-                    className={`ca-tree-file ${fileDetail?.id === file.id ? "active" : ""}`}
-                    onClick={() => selectFile(file.id)}
+                    className={`ca-tree-file ${selectedId === file.id ? "active" : ""}`}
+                    onClick={() => setSelectedId(file.id)}
                     title={file.file_path}
                   >
                     {file.file_path}
@@ -465,8 +474,8 @@ export default function CodeAnalyzerWorkspace() {
               <TreeNode
                 node={tree}
                 depth={0}
-                selectedId={fileDetail?.id || ""}
-                onSelect={selectFile}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
               />
             )}
           </aside>
@@ -505,10 +514,6 @@ export default function CodeAnalyzerWorkspace() {
                   const from = layout.positions.get(edge.source);
                   const to = layout.positions.get(edge.target);
                   if (!from || !to) return null;
-                  const active =
-                    selectedEdge &&
-                    selectedEdge.source === edge.source &&
-                    selectedEdge.target === edge.target;
                   return (
                     <line
                       key={`${edge.source}-${edge.target}-${i}`}
@@ -516,19 +521,15 @@ export default function CodeAnalyzerWorkspace() {
                       y1={from.y + NODE_H / 2}
                       x2={to.x}
                       y2={to.y + NODE_H / 2}
-                      className={`ca-edge ${active ? "active" : ""}`}
+                      className="ca-edge"
                       markerEnd="url(#ca-arrow)"
-                      onClick={() => {
-                        setSelectedEdge(edge);
-                        setFileDetail(null);
-                      }}
                     />
                   );
                 })}
                 {graph.nodes.map((node) => {
                   const pos = layout.positions.get(node.id);
                   if (!pos) return null;
-                  const active = fileDetail?.id === node.id;
+                  const active = selectedId === node.id;
                   return (
                     <g
                       key={node.id}
@@ -553,92 +554,47 @@ export default function CodeAnalyzerWorkspace() {
               </svg>
             </div>
           </section>
-          <aside className="ca-pane ca-insight">
-            <h3>AI Code Insight</h3>
-            {selectedEdge ? (
-              <div>
-                <p className="ca-insight-path">
-                  {filesById.get(selectedEdge.source)?.file_path ||
-                    selectedEdge.source}
-                  {" → "}
-                  {filesById.get(selectedEdge.target)?.file_path ||
-                    selectedEdge.target}
-                </p>
-                <p>
-                  {selectedEdge.label ||
-                    "Chưa có nhãn quan hệ cho liên kết này — nhãn do AI điền khi phân tích file đích."}
-                </p>
-              </div>
-            ) : fileDetail ? (
-              <div>
-                <p className="ca-insight-path">{fileDetail.file_path}</p>
-                <p className="ca-tags">
-                  {fileDetail.role_tag ? (
-                    <span className="wf-chip">{fileDetail.role_tag}</span>
-                  ) : null}
-                  {fileDetail.language ? (
-                    <span className="wf-chip">{fileDetail.language}</span>
-                  ) : null}
-                </p>
-                <h4>Tóm tắt chức năng</h4>
-                <p>
-                  {fileDetail.ai_summary ||
-                    "Chưa có phân tích AI cho file này. Summary được viết ngay lúc upload nếu có provider AI khả dụng; các file ngoài nhóm được phân tích sâu (40 file có nhiều liên kết nhất) chỉ có thông tin tĩnh."}
-                </p>
-                <h4>File này import ({fileDetail.imports.length})</h4>
-                {fileDetail.imports.length ? (
-                  <ul className="ca-link-list">
-                    {fileDetail.imports.map((imp, i) => (
-                      <li key={i}>
-                        <button
-                          type="button"
-                          className="ca-link"
-                          disabled={!imp.target_id}
-                          onClick={() => imp.target_id && selectFile(imp.target_id)}
-                        >
-                          {imp.target_file}
-                        </button>
-                        {imp.relation_label ? (
-                          <span> — {imp.relation_label}</span>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="ca-note">Không import file nào trong repo.</p>
-                )}
-                <h4>Được import bởi ({fileDetail.imported_by.length})</h4>
-                {fileDetail.imported_by.length ? (
-                  <ul className="ca-link-list">
-                    {fileDetail.imported_by.map((path) => (
-                      <li key={path}>
-                        <button
-                          type="button"
-                          className="ca-link"
-                          disabled={!filesByPath.get(path)}
-                          onClick={() =>
-                            filesByPath.get(path) &&
-                            selectFile(filesByPath.get(path).id)
-                          }
-                        >
-                          {path}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="ca-note">Chưa có file nào import file này.</p>
-                )}
-              </div>
-            ) : (
-              <p className="ca-note">
-                Bấm vào một file trên sơ đồ hoặc trong cây thư mục để xem tóm
-                tắt AI, các file phụ thuộc và mức độ ảnh hưởng. Bấm vào một
-                đường nối để xem quan hệ giữa hai file.
-              </p>
-            )}
-          </aside>
         </div>
+      ) : null}
+      {detail ? (
+        <section className="ca-report">
+          <div className="ca-report-head">
+            <h3>Báo cáo phân tích AI</h3>
+            <div className="ca-report-actions">
+              <button
+                type="button"
+                className="wf-btn"
+                disabled={reportBusy || busy}
+                onClick={onRegenerate}
+              >
+                {reportBusy ? "Đang viết báo cáo..." : "Tạo lại báo cáo"}
+              </button>
+              {detail.report_markdown ? (
+                <button
+                  type="button"
+                  className="wf-btn"
+                  onClick={onDownloadReport}
+                >
+                  Tải file .md
+                </button>
+              ) : null}
+            </div>
+          </div>
+          {detail.report_markdown ? (
+            <div className="ca-md">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {detail.report_markdown}
+              </ReactMarkdown>
+            </div>
+          ) : (
+            <p className="ca-note">
+              Dự án này chưa có báo cáo AI (được tạo trước khi có tính năng
+              này, hoặc lần upload đó chưa có provider khả dụng). Bấm "Tạo
+              lại báo cáo" để AI viết báo cáo tổng: phần nào thuộc file
+              nào, mỗi trang/tính năng gồm những file nào.
+            </p>
+          )}
+        </section>
       ) : null}
     </div>
   );

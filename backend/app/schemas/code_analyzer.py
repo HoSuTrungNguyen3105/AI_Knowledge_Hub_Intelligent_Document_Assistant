@@ -52,6 +52,9 @@ class CodeFileSummary(BaseModel):
 class CodeProjectDetail(CodeProjectSummary):
     diagram_data: dict = Field(default_factory=dict)
     files: list[CodeFileSummary] = Field(default_factory=list)
+    # One long AI-written Markdown report for the whole project (page /
+    # feature -> file mapping included); empty when no provider ran.
+    report_markdown: str = ""
 
 
 class CodeFileDetail(BaseModel):
@@ -74,10 +77,10 @@ class SeedDemoOut(BaseModel):
 
 class UploadOut(BaseModel):
     project: CodeProjectSummary
-    # ai: the direct in-backend AI pass summarized at least one file
-    # with the caller's own provider; static: no provider was available
-    # (or every call failed), so the project completed with static
-    # parsing only.
+    # ai: the direct in-backend AI pass wrote the project's Markdown
+    # report with the caller's own provider; static: no provider was
+    # available (or the call failed), so the project has static data
+    # only. ai_analyzed counts the files the report was based on.
     analysis_dispatch: str = "static"
     ai_analyzed: int = 0
 

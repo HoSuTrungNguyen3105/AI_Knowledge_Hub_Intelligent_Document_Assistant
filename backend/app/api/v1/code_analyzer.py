@@ -89,6 +89,25 @@ async def webhook_callback(
     return await _service(db, settings).apply_callback(x_mindflow_secret, payload)
 
 
+@router.post(
+    "/projects/{project_id}/report", response_model=UploadOut
+)
+async def regenerate_report(
+    project_id: UUID,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    chat_http: AnalyzerHTTPDep,
+    provider: str = Form(""),
+    model: str = Form(""),
+):
+    """(Re)write the whole-project Markdown report with the caller's
+    provider, using the excerpts stored at upload time."""
+    return await _service(db, settings, chat_http).regenerate_report(
+        user.id, project_id, provider=provider or None, model=model or None
+    )
+
+
 @router.get("/projects/{project_id}", response_model=CodeProjectDetail)
 async def get_project(
     project_id: UUID, user: CurrentUser, db: Database, settings: AppSettings

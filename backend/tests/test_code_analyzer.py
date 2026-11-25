@@ -6,7 +6,6 @@ detail with the prebuilt diagram, file detail, and owner scoping for
 private projects.
 """
 
-import json
 from uuid import UUID, uuid4
 
 import httpx
@@ -41,43 +40,18 @@ def _ai_reply(text):
     )
 
 
-ANALYSIS_JSON = json.dumps(
-    {
-        "files": [
-            {
-                "file_path": "app/main.py",
-                "ai_summary": "Điểm khởi động ứng dụng.",
-                "role_tag": "Entry Point",
-                "imports": [
-                    {
-                        "target_file": "app/service.py",
-                        "relation_label": "Gọi tầng service",
-                    }
-                ],
-            },
-            {
-                "file_path": "app/service.py",
-                "ai_summary": "Xử lý nghiệp vụ chính.",
-                "role_tag": "Service",
-                "imports": [
-                    {"target_file": "app/db.py", "relation_label": "Đọc dữ liệu"}
-                ],
-            },
-            {
-                "file_path": "app/db.py",
-                "ai_summary": "Mở kết nối cơ sở dữ liệu.",
-                "role_tag": "Config",
-                "imports": [],
-            },
-        ]
-    }
+REPORT_MD = (
+    "# Báo cáo phân tích codebase: repo\n\n"
+    "## 3. Ánh xạ trang & tính năng → file\n\n"
+    "- Khởi động ứng dụng: app/main.py gọi app/service.py, "
+    "app/service.py đọc dữ liệu qua app/db.py.\n"
 )
 
 
 def ai_handler(request):
     return httpx.Response(
         200,
-        text=_ai_reply(ANALYSIS_JSON),
+        text=_ai_reply(REPORT_MD),
         headers={"content-type": "text/event-stream"},
     )
 
@@ -284,13 +258,12 @@ async def test_upload_runs_direct_ai(owner, mock_ai, db, settings, owner_id):
     assert body["ai_analyzed"] == 3
     assert body["project"]["status"] == "COMPLETED"
     detail = owner.get(f"{BASE}/projects/{body['project']['id']}").json()
-    by_path = {f["file_path"]: f for f in detail["files"]}
-    fd = owner.get(
-        f"{BASE}/projects/{body['project']['id']}/files/{by_path['app/main.py']['id']}"
-    ).json()
-    assert fd["ai_summary"] == "Điểm khởi động ứng dụng."
-    assert fd["role_tag"] == "Entry Point"
-    assert fd["imports"][0]["relation_label"] == "Gọi tầng service"
+    assert detail["report_markdown"].startswith("# Báo cáo phân tích")
+    assert "Ánh xạ trang" in detail["report_markdown"]
+    # The report can be regenerated without re-uploading the ZIP.
+    r = owner.post(f"{BASE}/projects/{body['project']['id']}/report")
+    assert r.status_code == 200, r.text
+    assert r.json()["analysis_dispatch"] == "ai"
 
 
 async def test_upload_explicit_target(owner, mock_ai, db, settings, owner_id):
