@@ -1,0 +1,47 @@
+/* Codebase Architecture Analyzer — 3-pane workspace (PROJECT_SPEC.md).
+   Reuses the workflows.css variables and primitives (wf-btn, wf-chip,
+   wf-badge, wf-error) imported alongside this file. */
+.ca-shell { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.ca-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.ca-head h2 { font-size: 20px; }
+.ca-head p { color: var(--muted); font-size: 13px; margin-top: 4px; max-width: 560px; }
+.ca-head-actions { display: flex; gap: 10px; align-items: center; }
+.ca-head-actions select { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 13px; background: #fff; max-width: 300px; }
+.ca-stats { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--muted); font-size: 12.5px; }
+.ca-empty, .ca-note { color: var(--muted); font-size: 13px; }
+.ca-panes { display: grid; grid-template-columns: 260px minmax(0, 1fr) 320px; gap: 14px; align-items: start; }
+.ca-pane { border: 1px solid var(--line); border-radius: 12px; background: #fff; padding: 12px; min-width: 0; }
+.ca-explorer { max-height: 72vh; overflow: auto; }
+.ca-search { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 13px; margin-bottom: 10px; }
+.ca-tree-folder, .ca-tree-file { display: block; width: 100%; text-align: left; background: none; border: none; font: inherit; font-size: 12.5px; padding: 4px 6px; border-radius: 6px; cursor: pointer; color: var(--ink, #1c2420); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ca-tree-folder { font-weight: 600; }
+.ca-tree-file:hover, .ca-tree-folder:hover { background: var(--accent-soft, #eef4ff); }
+.ca-tree-file.active { background: var(--accent-soft, #eef4ff); color: var(--accent); font-weight: 600; }
+.ca-graph { display: flex; flex-direction: column; gap: 10px; }
+.ca-graph-scroll { overflow: auto; max-height: 72vh; border: 1px solid var(--line); border-radius: 10px; background: #fcfdfc; }
+.ca-svg { display: block; }
+.ca-edge { stroke: #cbd5e1; stroke-width: 1.6; cursor: pointer; }
+.ca-edge:hover, .ca-edge.active { stroke: var(--accent); stroke-width: 2.6; }
+.ca-node { cursor: pointer; }
+.ca-node rect { fill: #fff; stroke: var(--line); }
+.ca-node:hover rect { stroke: var(--accent); }
+.ca-node.active rect { stroke: var(--accent); fill: var(--accent-soft, #eef4ff); }
+.ca-node-title { font-size: 12px; font-weight: 600; fill: var(--ink, #1c2420); }
+.ca-node-sub { font-size: 10.5px; fill: var(--muted); }
+.ca-insight { max-height: 72vh; overflow: auto; font-size: 13px; }
+.ca-insight h3 { font-size: 14px; margin-bottom: 10px; }
+.ca-insight h4 { font-size: 12.5px; margin: 14px 0 6px; }
+.ca-insight p { line-height: 1.55; }
+.ca-insight-path { font-weight: 600; overflow-wrap: anywhere; margin-bottom: 8px; }
+.ca-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.ca-link-list { list-style: none; display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+.ca-link { background: none; border: none; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-align: left; overflow-wrap: anywhere; }
+.ca-link:disabled { color: var(--muted); cursor: default; }
+@media (max-width: 1100px) {
+  .ca-panes { grid-template-columns: 220px minmax(0, 1fr); }
+  .ca-insight { grid-column: 1 / -1; max-height: none; }
+}
+@media (max-width: 720px) {
+  .ca-panes { grid-template-columns: minmax(0, 1fr); }
+  .ca-explorer, .ca-graph-scroll { max-height: 50vh; }
+}
