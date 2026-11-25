@@ -25,6 +25,7 @@ from app.api.v1 import (
     projects,
     resources,
     seed,
+    workflow_schedules,
     workflows,
     workspaces,
 )
@@ -132,6 +133,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         code_analyzer.router,
         agents.router,
         workflows.router,
+        workflow_schedules.router,
         n8n_factory.router,
         notifications.router,
         seed.router,
