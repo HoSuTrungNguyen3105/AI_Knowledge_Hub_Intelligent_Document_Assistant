@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     n8n_api_base_url: str = ""
     n8n_api_timeout_seconds: int = Field(default=30, ge=5, le=120)
 
+    # Workflow Template Library (phase 1): the GitHub importer reads public
+    # repositories without a token. An optional token (server env only)
+    # raises the GitHub API rate limit for large or repeated imports.
+    github_token: SecretStr | None = None
+    github_import_timeout_seconds: int = Field(default=30, ge=5, le=120)
+
     @field_validator("n8n_api_key")
     @classmethod
     def validate_n8n_api_key(cls, value: SecretStr | None) -> SecretStr | None:

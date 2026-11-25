@@ -91,6 +91,17 @@ ERRORS = {
         "The workflow has no webhook trigger, so it cannot be started from MindFlow yet.",
     ),
     "n8n_run_not_found": (404, "That n8n run does not exist."),
+    "template_source_not_found": (404, "That template source does not exist."),
+    "template_not_found": (404, "That workflow template does not exist."),
+    "template_source_invalid": (
+        422,
+        "The source must be a GitHub repository URL like https://github.com/owner/repo.",
+    ),
+    "template_source_exists": (409, "That template source is already registered."),
+    "github_unreachable": (
+        502,
+        "GitHub could not be reached or refused the request (rate limit without a token is common).",
+    ),
     "invalid_factory_roles": (422, "Assign agents only to the seven team roles."),
     "factory_run_not_found": (404, "That AI Factory run does not exist."),
     "schedule_not_found": (404, "That workflow schedule does not exist."),
