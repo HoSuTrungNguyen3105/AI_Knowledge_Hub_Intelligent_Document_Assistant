@@ -64,3 +64,8 @@
 .n8n-row-main { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .spin { animation: n8n-spin 1s linear infinite; }
 @keyframes n8n-spin { to { transform: rotate(360deg); } }
+.n8n-node { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 9px; }
+.n8n-node h3 { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.n8n-param { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 10px; align-items: center; font-size: 12.5px; }
+.n8n-param-name { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.n8n-param input[type="checkbox"] { width: 18px; height: 18px; justify-self: start; }

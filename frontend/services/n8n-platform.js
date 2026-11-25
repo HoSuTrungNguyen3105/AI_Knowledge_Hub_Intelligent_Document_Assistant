@@ -19,6 +19,14 @@ export const n8nPlatformService = {
     const { data } = await api.post(`${path}/workflows/${id}/${action}`, {}, { signal });
     return data;
   },
+  async getWorkflow(id, signal) {
+    const { data } = await api.get(`${path}/workflows/${id}`, { signal });
+    return data;
+  },
+  async updateParameters(id, updates, signal) {
+    const { data } = await api.post(`${path}/workflows/${id}/parameters`, { updates }, { signal });
+    return data;
+  },
 };
 
 // Human-readable text for the machine-readable status/sync error codes.
@@ -35,6 +43,12 @@ export function getN8nStatusText(code) {
   }
   if (code === "n8n_api_failed") {
     return "n8n API trả lỗi. Hãy mở n8n để kiểm tra trạng thái của instance.";
+  }
+  if (code === "n8n_parameter_not_found") {
+    return "Node hoặc tham số không còn tồn tại trong workflow (có thể workflow vừa được sửa trong n8n). Hãy đóng panel, bấm Làm mới rồi mở lại Cấu hình.";
+  }
+  if (code === "n8n_workflow_not_found") {
+    return "Workflow không còn tồn tại trong n8n. Hãy bấm Làm mới để đồng bộ lại danh sách.";
   }
   return code;
 }
