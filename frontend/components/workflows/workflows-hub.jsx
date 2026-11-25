@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Factory, GitBranch } from "lucide-react";
+import { CalendarClock, Factory, GitBranch } from "lucide-react";
 import { FactoryWorkspace } from "../agents/factory-workspace";
 import { WorkflowsList } from "./workflows-list";
+import { SchedulesWorkspace } from "./schedules-workspace";
 import "../agents/factory.css";
 
 // One page for the two ways the same agent team can run: inside MindFlow
@@ -11,7 +12,9 @@ import "../agents/factory.css";
 // Same agents, same kind of goal — so they share one menu entry with two
 // tabs instead of living on two separate pages.
 export function WorkflowsHub({ initialTab = "workflows" }) {
-  const [tab, setTab] = useState(initialTab === "factory" ? "factory" : "workflows");
+  const [tab, setTab] = useState(
+    ["factory", "schedules"].includes(initialTab) ? initialTab : "workflows",
+  );
   return <div>
     <div className="wf-hub-tabs" role="tablist" aria-label="Cách chạy đội Agent">
       <button
@@ -32,7 +35,22 @@ export function WorkflowsHub({ initialTab = "workflows" }) {
       >
         <Factory size={16} /> AI Factory — chạy qua n8n
       </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab === "schedules"}
+        className={`wf-hub-tab${tab === "schedules" ? " active" : ""}`}
+        onClick={() => setTab("schedules")}
+      >
+        <CalendarClock size={16} /> Lịch chạy — tự động theo giờ
+      </button>
     </div>
-    {tab === "workflows" ? <WorkflowsList /> : <FactoryWorkspace />}
+    {tab === "workflows" ? (
+      <WorkflowsList />
+    ) : tab === "factory" ? (
+      <FactoryWorkspace />
+    ) : (
+      <SchedulesWorkspace />
+    )}
   </div>;
 }
