@@ -142,3 +142,29 @@ class SchedulePreviewOut(BaseModel):
 
 class ScheduleNextRunsOut(BaseModel):
     next_runs: list[datetime]
+
+
+class ScheduleExecutionOut(BaseModel):
+    id: UUID
+    schedule_id: UUID
+    factory_run_id: UUID | None
+    trigger_type: str
+    scheduled_for: datetime | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    status: str
+    duration_ms: int | None
+    error: str | None
+    created_at: datetime
+
+
+class ScheduleExecutionListOut(BaseModel):
+    items: list[ScheduleExecutionOut]
+    total: int
+
+
+class ScheduleTickOut(BaseModel):
+    fired: int
+    skipped: int
+    deferred: int
+    synced: int
