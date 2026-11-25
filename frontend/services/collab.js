@@ -36,6 +36,7 @@ export function getCollabError(error) {
   const code = error?.response?.data?.detail?.code;
   if (code === "collab_room_not_found") return "Không tìm thấy phòng hợp tác.";
   if (code === "collab_agent_not_member") return "Agent được nhắc tới không phải thành viên của phòng.";
+  if (code === "collab_message_not_found") return "Không tìm thấy tin nhắn được trả lời trong phòng này.";
   if (code === "agent_not_found") return "Có Agent không thuộc về bạn.";
   return error?.response?.data?.detail?.message || "Đã xảy ra lỗi. Vui lòng thử lại.";
 }
