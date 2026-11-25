@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { codeAnalyzerService, getCodeError } from "../../services/code-analyzer";
 import { providerService } from "../../services/providers";
-import { modelOptionLabel } from "../../utils/model-info";
+import { ModelSelect } from "../model-select";
 
 const STATUS_LABELS = {
   PROCESSING: "Đang xử lý",
@@ -447,18 +447,13 @@ export default function CodeAnalyzerWorkspace() {
               </option>
             ))}
           </select>
-          <select
+          <ModelSelect
+            models={models}
             value={modelId}
-            onChange={(e) => setModelId(e.target.value)}
-            aria-label="Model AI"
+            onChange={setModelId}
+            ariaLabel="Model AI"
             disabled={!providerId || models.length === 0}
-          >
-            {models.map((model) => (
-              <option key={model.id} value={model.id}>
-                {modelOptionLabel(model)}
-              </option>
-            ))}
-          </select>
+          />
           <button
             type="button"
             className="wf-btn primary"

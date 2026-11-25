@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { CircleAlert, Columns2, LoaderCircle, Plus, Settings2, Sparkles, X } from "lucide-react";
 import { providerFailureReason } from "../../utils/providers";
-import { modelOptionLabel } from "../../utils/model-info";
+import { ModelSelect } from "../model-select";
 
 const MAX_TARGETS = 4;
 const MIN_TARGETS = 2;
@@ -80,10 +80,7 @@ export function CompareSetup({ providers, busy, onCreate }) {
         </div>
         <div>
           <label className="field-label" htmlFor="compare-model">Model</label>
-          <select id="compare-model" value={effectiveModel} onChange={(event) => setModel(event.target.value)} disabled={busy || modelsLoading || models.length === 0}>
-            {models.length === 0 && <option value="">{modelsLoading ? "Đang tải model…" : "Chưa có model chat"}</option>}
-            {models.map((item) => <option key={item.id} value={item.id}>{modelOptionLabel(item)}</option>)}
-          </select>
+          <ModelSelect id="compare-model" models={models} value={effectiveModel} onChange={setModel} disabled={busy || modelsLoading || models.length === 0} loading={modelsLoading} />
         </div>
       </div>
       {modelsError && <p className="setup-note error" role="alert"><CircleAlert size={14} />{modelsError}</p>}

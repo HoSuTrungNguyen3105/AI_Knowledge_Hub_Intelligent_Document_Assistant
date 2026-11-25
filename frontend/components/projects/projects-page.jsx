@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ConfirmDialog } from "../confirm-dialog";
 import ProjectDiscussion from "./project-discussion";
 import { providerService } from "../../services/providers";
-import { modelOptionLabel } from "../../utils/model-info";
+import { ModelSelect } from "../model-select";
 import { getProjectError, projectErrorByCode, projectsService } from "../../services/projects";
 
 const PROJECT_STATUS = {
@@ -362,13 +362,7 @@ export default function ProjectsPage() {
             </label>
             <label>
               Model phân tích
-              <select value={modelId} onChange={(event) => setModelId(event.target.value)}>
-                {models.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {modelOptionLabel(model)}
-                  </option>
-                ))}
-              </select>
+              <ModelSelect models={models} value={modelId} onChange={setModelId} />
             </label>
           </>
         ) : null}
@@ -478,13 +472,7 @@ export default function ProjectsPage() {
                 </label>
                 <label>
                   Model
-                  <select value={modelId} onChange={(event) => setModelId(event.target.value)}>
-                    {models.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {modelOptionLabel(model)}
-                      </option>
-                    ))}
-                  </select>
+                  <ModelSelect models={models} value={modelId} onChange={setModelId} />
                 </label>
                 <div className="wf-actions">
                   <button
