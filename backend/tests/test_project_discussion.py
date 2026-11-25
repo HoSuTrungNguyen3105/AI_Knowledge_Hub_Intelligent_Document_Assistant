@@ -252,3 +252,27 @@ async def test_discussion_is_owner_scoped(owner, client_factory, register, db, s
     r = other.get(f"{PROJECTS}/{project['id']}/discussion")
     assert r.status_code == 404
     assert r.json()["detail"]["code"] == "project_not_found"
+
+
+async def test_long_vietnamese_message_fits_discussion_budget(owner, mock_http):
+    """Regression: discussion prompts carry the project context plus the
+    transcript, and the budget estimate counts UTF-8 bytes, so a long
+    Vietnamese question used to die with agent_budget_exceeded before the
+    agent could answer. Discussion runs carry a larger per-run budget."""
+    client, _ = owner
+    dev = make_agent(client, "Developer")
+    project = make_project(client)
+    mock_http["configure"](reply_handler("Đã rõ, tôi sẽ triển khai."))
+
+    r = client.post(
+        f"{PROJECTS}/{project['id']}/discussion",
+        json={
+            # ~10.5 KB of UTF-8 on its own: past the default 8000 budget.
+            "content": "ế" * 3500,
+            "mention_agent_ids": [dev["id"]],
+        },
+    )
+    assert r.status_code == 201, r.text
+    reply = r.json()["messages"][1]
+    assert reply["status"] == "done", reply
+    assert "triển khai" in reply["content"]

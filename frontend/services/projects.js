@@ -131,6 +131,13 @@ const ERROR_MESSAGES = {
   model_not_synced: "Model chưa được đồng bộ cho provider này.",
   model_not_chat_capable: "Model này không hỗ trợ chat.",
   agent_not_found: "Không tìm thấy Agent này (có thể đã bị xoá).",
+  agent_budget_exceeded:
+    "Agent bị dừng vì vượt ngân sách xử lý (ngữ cảnh quá dài). Hãy hỏi ngắn gọn hơn hoặc thử lại.",
+  agent_timeout: "Agent chạy quá thời gian cho phép nên bị dừng. Hãy thử lại.",
+  agent_step_limit:
+    "Agent đã dùng hết số bước xử lý cho phép. Hãy thử hỏi lại ngắn gọn hơn.",
+  provider_request_rejected:
+    "Provider từ chối yêu cầu — thường do key hoặc quyền truy cập model. Kiểm tra cấu hình ở trang Providers.",
   discussion_message_not_found: "Không tìm thấy tin nhắn này trong phần thảo luận.",
   decision_not_found: "Không tìm thấy quyết định này.",
   discussion_nothing_to_retry: "Không có câu trả lời lỗi nào để thử lại.",

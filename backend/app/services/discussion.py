@@ -44,6 +44,12 @@ TRANSCRIPT_LIMIT = 12
 TRANSCRIPT_CHARS = 8000
 MAX_AUTO_AGENTS = 2
 MAX_ALL_AGENTS = 3
+# Discussion prompts carry the project context block plus the recent
+# transcript, and the agent engine's budget estimate counts UTF-8 bytes
+# (Vietnamese text costs 2-3 bytes per character), so the default 8000
+# budget regularly kills legitimate discussion replies mid-run. Discussion
+# runs get a larger per-run budget; other agent surfaces keep the default.
+DISCUSSION_TOKEN_BUDGET = 32768
 
 # (agent-name markers, message keywords) per specialty, used only by
 # the no-mention / @All router.
@@ -259,7 +265,12 @@ class DiscussionService:
     # --- agent runs --------------------------------------------------------------
     async def _run_agent(self, user_id: UUID, agent_id: UUID, prompt: str) -> dict:
         service = self._agent_service()
-        prepared = await service.prepare_run(user_id, agent_id, RunRequest(prompt=prompt))
+        prepared = await service.prepare_run(
+            user_id,
+            agent_id,
+            RunRequest(prompt=prompt),
+            token_budget_override=DISCUSSION_TOKEN_BUDGET,
+        )
         result: dict = {}
         async for event in service.stream_prepared(prepared):
             if event["event"] == "done":
