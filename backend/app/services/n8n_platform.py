@@ -17,7 +17,15 @@ import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import Settings
-from app.schemas.n8n_platform import N8nStatusOut, N8nWorkflowListOut, N8nWorkflowOut
+from app.schemas.n8n_platform import (
+    N8nNodeOut,
+    N8nNodeParamOut,
+    N8nParamUpdateIn,
+    N8nStatusOut,
+    N8nWorkflowDetailOut,
+    N8nWorkflowListOut,
+    N8nWorkflowOut,
+)
 from app.services.ai.base_provider import ProviderError
 
 WORKFLOWS_COLLECTION = "n8n_workflows"
@@ -113,6 +121,101 @@ class N8nApiHTTP:
 
     async def post_json(self, url: str, api_key: str, timeout_seconds: float):
         return await self._request("POST", url, api_key, timeout_seconds)
+
+    async def patch_json(self, url: str, api_key: str, payload: dict, timeout_seconds: float):
+        headers = {"Accept": "application/json"}
+        if api_key:
+            headers["X-N8N-API-KEY"] = api_key
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout_seconds),
+                follow_redirects=False,
+                trust_env=False,
+                headers=headers,
+            ) as client:
+                response = await client.patch(url, json=payload)
+        except (httpx.TimeoutException, httpx.RequestError):
+            raise ProviderError("n8n_unreachable") from None
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        return response.status_code, data
+
+
+def _flatten_params(value, prefix: str = "") -> list[N8nNodeParamOut]:
+    """Flatten a node's parameters to their scalar leaves (pure).
+
+    Nested objects are walked; arrays and nulls are not editable from
+    MindFlow (they stay editable in the n8n editor) and are skipped.
+    """
+    out: list[N8nNodeParamOut] = []
+    if isinstance(value, dict):
+        for key in sorted(value):
+            child = f"{prefix}.{key}" if prefix else str(key)
+            out.extend(_flatten_params(value[key], child))
+    elif isinstance(value, bool):
+        out.append(N8nNodeParamOut(path=prefix, value=value, kind="boolean"))
+    elif isinstance(value, (int, float)):
+        out.append(N8nNodeParamOut(path=prefix, value=value, kind="number"))
+    elif isinstance(value, str):
+        out.append(N8nNodeParamOut(path=prefix, value=value, kind="string"))
+    return out
+
+
+def workflow_detail(raw: dict, base_url: str) -> N8nWorkflowDetailOut:
+    """Map one full n8n workflow object to the editable detail shape (pure)."""
+    nodes: list[N8nNodeOut] = []
+    for node in raw.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        nodes.append(
+            N8nNodeOut(
+                name=str(node.get("name") or ""),
+                type=str(node.get("type") or ""),
+                parameters=_flatten_params(node.get("parameters") or {}),
+            )
+        )
+    workflow_id = str(raw.get("id") or "")
+    return N8nWorkflowDetailOut(
+        id=workflow_id,
+        name=str(raw.get("name") or workflow_id),
+        active=bool(raw.get("active")),
+        editor_url=f"{base_url}/workflow/{workflow_id}",
+        nodes=nodes,
+    )
+
+
+def _set_existing_param(parameters: dict, path: str, value) -> bool:
+    """Set a scalar leaf that already exists; never create structure.
+
+    Returns False when any segment is missing or the current leaf is not a
+    scalar of a compatible kind — the quick editor may only change values,
+    never reshape a workflow.
+    """
+    parts = path.split(".")
+    node = parameters
+    for part in parts[:-1]:
+        if not isinstance(node, dict) or part not in node:
+            return False
+        node = node[part]
+    leaf = parts[-1]
+    if not isinstance(node, dict) or leaf not in node:
+        return False
+    current = node[leaf]
+    if isinstance(current, bool):
+        if not isinstance(value, bool):
+            return False
+    elif isinstance(current, (int, float)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+    elif isinstance(current, str):
+        if not isinstance(value, str) or len(value) > 8000:
+            return False
+    else:
+        return False
+    node[leaf] = value
+    return True
 
 
 class N8nPlatformService:
@@ -303,3 +406,67 @@ class N8nPlatformService:
             item = self._out(doc)
         await self._store(item, _utcnow())
         return item
+
+    async def _get_raw_workflow(self, workflow_id: str) -> dict:
+        key = self._require_key()
+        status, data = await self.http.get_json(
+            f"{self.base_url}/api/v1/workflows/{workflow_id}",
+            key,
+            self.settings.n8n_api_timeout_seconds,
+        )
+        if status == 404:
+            raise ProviderError("n8n_workflow_not_found")
+        if status in (401, 403):
+            raise ProviderError("n8n_api_unauthorized")
+        if status >= 400 or not isinstance(data, dict):
+            raise ProviderError("n8n_api_failed")
+        return data
+
+    async def get_workflow_detail(self, workflow_id: str) -> N8nWorkflowDetailOut:
+        raw = await self._get_raw_workflow(workflow_id)
+        return workflow_detail(raw, self.base_url)
+
+    async def update_parameters(
+        self, workflow_id: str, updates: list[N8nParamUpdateIn]
+    ) -> N8nWorkflowDetailOut:
+        """Quick-edit scalar node parameters and PATCH the workflow back.
+
+        Only values of parameters that already exist are changed; node
+        structure, connections and credentials are never touched from here.
+        """
+        raw = await self._get_raw_workflow(workflow_id)
+        nodes = raw.get("nodes") or []
+        by_name: dict[str, dict] = {}
+        for node in nodes:
+            if isinstance(node, dict) and isinstance(node.get("name"), str):
+                by_name.setdefault(node["name"], node)
+        for update in updates:
+            node = by_name.get(update.node)
+            if node is None or not _set_existing_param(
+                node.setdefault("parameters", {}), update.path, update.value
+            ):
+                raise ProviderError("n8n_parameter_not_found")
+        key = self.api_key
+        payload = {
+            "name": raw.get("name"),
+            "nodes": nodes,
+            "connections": raw.get("connections") or {},
+            "settings": raw.get("settings") or {},
+        }
+        status, data = await self.http.patch_json(
+            f"{self.base_url}/api/v1/workflows/{workflow_id}",
+            key,
+            payload,
+            self.settings.n8n_api_timeout_seconds,
+        )
+        if status == 404:
+            raise ProviderError("n8n_workflow_not_found")
+        if status in (401, 403):
+            raise ProviderError("n8n_api_unauthorized")
+        if status >= 400:
+            raise ProviderError("n8n_api_failed")
+        updated = data if isinstance(data, dict) and data.get("id") is not None else raw
+        if isinstance(updated, dict):
+            await self._store(parse_workflow(updated, self.base_url), _utcnow())
+            return workflow_detail(updated, self.base_url)
+        return workflow_detail(raw, self.base_url)

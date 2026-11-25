@@ -5,9 +5,11 @@ through the n8n public REST API: connection status plus a cached mirror of
 its workflow list. Nothing here ever carries the n8n API key.
 """
 
+from typing import Any
+
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class N8nStatusOut(BaseModel):
@@ -52,3 +54,36 @@ class N8nWorkflowListOut(BaseModel):
     synced_at: datetime | None = None
     # Set when the list shown is a stale cache because the refresh failed.
     sync_error: str | None = None
+
+
+class N8nNodeParamOut(BaseModel):
+    # Dotted path inside the node's `parameters` object, e.g. "path" or
+    # "options.timeout". Only scalar leaves are editable from MindFlow.
+    path: str
+    value: Any = None
+    # "string" | "number" | "boolean" — drives the form control.
+    kind: str
+
+
+class N8nNodeOut(BaseModel):
+    name: str
+    type: str
+    parameters: list[N8nNodeParamOut] = []
+
+
+class N8nWorkflowDetailOut(BaseModel):
+    id: str
+    name: str
+    active: bool
+    editor_url: str
+    nodes: list[N8nNodeOut] = []
+
+
+class N8nParamUpdateIn(BaseModel):
+    node: str = Field(min_length=1, max_length=200)
+    path: str = Field(min_length=1, max_length=200)
+    value: Any = None
+
+
+class N8nParamUpdatesIn(BaseModel):
+    updates: list[N8nParamUpdateIn] = Field(min_length=1, max_length=50)
