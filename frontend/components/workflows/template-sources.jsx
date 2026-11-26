@@ -80,15 +80,32 @@ export default function TemplateSources() {
   async function runImport(source) {
     setBusy(source.id);
     setError("");
-    setNote(
-      `Đang nhập từ ${source.repo} — tải và phân tích từng file JSON, có thể mất vài phút với kho lớn…`,
-    );
+    setNote(`Đang bắt đầu nhập từ ${source.repo}…`);
     try {
-      const log = await workflowTemplatesService.importSource(source.id);
+      const started = await workflowTemplatesService.importSource(source.id);
+      // The server imports in the background (a full repo takes minutes);
+      // poll the import log every 3 seconds and show real progress.
+      let finalLog = started;
+      for (let attempt = 0; attempt < 240 && finalLog.status === "running"; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const logs = await workflowTemplatesService.listImports();
+        const current = (logs || []).find((item) => item.id === started.id);
+        if (!current) continue;
+        finalLog = current;
+        if (current.status === "running") {
+          const done =
+            current.created + current.updated + current.unchanged + current.rejected;
+          setNote(
+            `Đang nhập từ ${source.repo}: đã xử lý ${done}${current.found ? `/${current.found}` : ""} file · mới ${current.created} · cập nhật ${current.updated} · loại ${current.rejected}…`,
+          );
+        }
+      }
       setNote(
-        log.status === "completed"
-          ? `Nhập xong ${source.repo}: tìm thấy ${log.found} file · tải ${log.downloaded} · mới ${log.created} · cập nhật ${log.updated} · giữ nguyên ${log.unchanged} · loại ${log.rejected}. Template mới vào trạng thái chờ duyệt, chưa chạy gì cả.`
-          : `Nhập thất bại (${log.error || "không rõ lý do"}). Hãy thử lại sau.`,
+        finalLog.status === "completed"
+          ? `Nhập xong ${source.repo}: tìm thấy ${finalLog.found} file · tải ${finalLog.downloaded} · mới ${finalLog.created} · cập nhật ${finalLog.updated} · giữ nguyên ${finalLog.unchanged} · loại ${finalLog.rejected}. Template mới vào trạng thái chờ duyệt, chưa chạy gì cả.`
+          : finalLog.status === "running"
+            ? `Việc nhập vẫn đang chạy ở server. Quay lại sau ít phút và xem Lịch sử nhập gần đây để biết kết quả.`
+            : `Nhập thất bại (${finalLog.error || "không rõ lý do"}). Hãy thử lại sau.`,
       );
       load();
     } catch (err) {
