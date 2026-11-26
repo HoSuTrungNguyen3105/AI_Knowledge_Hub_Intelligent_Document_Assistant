@@ -19,7 +19,8 @@ PROVIDERS = MappingProxyType(
             ProviderDefinition("gemini", "Google Gemini", True),
             ProviderDefinition("groq", "Groq", True),
             ProviderDefinition("anthropic", "Anthropic Claude", False),
-            ProviderDefinition("deepseek", "DeepSeek", False),
+            ProviderDefinition("deepseek", "DeepSeek", True),
+            ProviderDefinition("grok", "xAI Grok", True),
             ProviderDefinition("ollama", "Ollama", True),
         )
     }

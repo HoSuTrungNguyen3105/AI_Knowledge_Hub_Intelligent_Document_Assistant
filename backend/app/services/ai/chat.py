@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 CHAT_ENDPOINTS = {
     "openai": "https://api.openai.com/v1/chat/completions",
     "groq": "https://api.groq.com/openai/v1/chat/completions",
+    "deepseek": "https://api.deepseek.com/v1/chat/completions",
+    "grok": "https://api.x.ai/v1/chat/completions",
     "ollama": "https://ollama.com/v1/chat/completions",
     "gemini": "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent",
 }
