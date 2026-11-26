@@ -15,8 +15,6 @@ ENDPOINTS = {
     "openai": "https://api.openai.com/v1/models",
     "gemini": "https://generativelanguage.googleapis.com/v1beta/models",
     "groq": "https://api.groq.com/openai/v1/models",
-    "deepseek": "https://api.deepseek.com/v1/models",
-    "grok": "https://api.x.ai/v1/models",
     "ollama": "https://ollama.com/v1/models",
 }
 
@@ -94,9 +92,9 @@ class ListingSession:
     async def get(self, provider: str, params: dict | None = None) -> dict:
         secret = self.api_key.get_secret_value()
         headers = (
-            {"Authorization": f"Bearer {secret}"}
-            if provider in ("openai", "groq", "ollama")
-            else {"x-goog-api-key": secret}
+            {"x-goog-api-key": secret}
+            if provider == "gemini"
+            else {"Authorization": f"Bearer {secret}"}
         )
         async with self.client.stream(
             "GET", ENDPOINTS[provider], headers=headers, params=params
