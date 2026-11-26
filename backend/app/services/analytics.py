@@ -12,7 +12,7 @@ status-only projections elsewhere), which keeps the numbers identical
 in production and in the offline test suite.
 """
 
-from datetime import timedelta
+from datetime import UTC, timedelta
 from uuid import UUID
 
 from app.models.base import utcnow
@@ -26,6 +26,34 @@ from app.schemas.analytics import (
     WorkflowStats,
 )
 from app.schemas.dashboard import ActivityResponse
+
+
+def _aware(value):
+    """Treat a naive stored datetime as UTC.
+
+    Rows written by older code paths or seed scripts may carry naive
+    datetimes; comparing them with aware cutoffs raises TypeError and
+    used to take the whole overview down as a bare 500.
+    """
+    if value is not None and getattr(value, "tzinfo", None) is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
+def _as_int(value) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    return 0
+
+
+def _as_float(value):
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
 
 
 class AnalyticsService:
@@ -57,15 +85,19 @@ class AnalyticsService:
 
     @staticmethod
     def _window(rows: list[dict], prices: dict) -> UsageWindow:
-        latencies = [r["latency_ms"] for r in rows if r.get("latency_ms") is not None]
+        latencies = [
+            value
+            for r in rows
+            if (value := _as_float(r.get("latency_ms"))) is not None
+        ]
         cost = 0.0
         priced = False
         unpriced = 0
         for row in rows:
             price = prices.get((row.get("provider"), row.get("model")))
             if price and price[0] is not None and price[1] is not None:
-                cost += (row.get("input_tokens") or 0) * price[0]
-                cost += (row.get("output_tokens") or 0) * price[1]
+                cost += _as_int(row.get("input_tokens")) * price[0]
+                cost += _as_int(row.get("output_tokens")) * price[1]
                 priced = True
             else:
                 unpriced += 1
@@ -73,8 +105,8 @@ class AnalyticsService:
             requests=len(rows),
             successful=sum(1 for r in rows if r.get("status") == "success"),
             failed=sum(1 for r in rows if r.get("status") == "error"),
-            input_tokens=sum(r.get("input_tokens") or 0 for r in rows),
-            output_tokens=sum(r.get("output_tokens") or 0 for r in rows),
+            input_tokens=sum(_as_int(r.get("input_tokens")) for r in rows),
+            output_tokens=sum(_as_int(r.get("output_tokens")) for r in rows),
             avg_latency_ms=(sum(latencies) / len(latencies) if latencies else None),
             cost_estimate=cost if priced else None,
             unpriced_requests=unpriced,
@@ -84,9 +116,30 @@ class AnalyticsService:
     def _counts(rows: list[dict]) -> tuple[int, dict[str, int]]:
         by_status: dict[str, int] = {}
         for row in rows:
-            status = row.get("status") or "unknown"
+            status = str(row.get("status") or "unknown")
             by_status[status] = by_status.get(status, 0) + 1
         return len(rows), by_status
+
+    @staticmethod
+    def _activity(row: dict) -> ActivityResponse | None:
+        """Build one activity entry, skipping rows whose stored shape
+        cannot be represented (non-UUID id, missing timestamp) instead
+        of failing the whole overview."""
+        created_at = _aware(row.get("created_at"))
+        if created_at is None:
+            return None
+        try:
+            activity_id = row["_id"]
+            if not isinstance(activity_id, UUID):
+                activity_id = UUID(str(activity_id))
+        except (KeyError, ValueError, TypeError):
+            return None
+        return ActivityResponse(
+            id=activity_id,
+            action=str(row.get("action") or ""),
+            description=str(row.get("description") or ""),
+            created_at=created_at,
+        )
 
     async def overview(self, user_id: UUID) -> AnalyticsOverview:
         now = utcnow()
@@ -105,6 +158,8 @@ class AnalyticsService:
                 "created_at": 1,
             },
         ).to_list(length=100000)
+        for row in request_rows:
+            row["created_at"] = _aware(row.get("created_at"))
         prices = await self._price_map(user_id)
         rows7 = [
             r
@@ -207,13 +262,8 @@ class AnalyticsService:
             models_30d=models,
             daily_14d=daily,
             recent_activity=[
-                ActivityResponse(
-                    id=row["_id"],
-                    action=row.get("action") or "",
-                    description=row.get("description") or "",
-                    created_at=row["created_at"],
-                )
+                activity
                 for row in activity_rows
-                if row.get("created_at") is not None
+                if (activity := self._activity(row)) is not None
             ],
         )
