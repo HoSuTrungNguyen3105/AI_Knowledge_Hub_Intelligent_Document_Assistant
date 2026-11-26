@@ -6,6 +6,7 @@ the shared library as ``pending_review``; nothing is executed or installed
 into n8n here — that stays with the n8n Platform layer, by user choice.
 """
 
+import asyncio
 import json
 from typing import Annotated
 
@@ -94,7 +95,14 @@ async def ensure_default_template_source(
     return await WorkflowTemplateService(db, settings, http).ensure_default_source()
 
 
-@router.post("/sources/{source_id}/import", response_model=TemplateImportLogOut)
+_IMPORT_TASKS: set[asyncio.Task] = set()
+
+
+@router.post(
+    "/sources/{source_id}/import",
+    response_model=TemplateImportLogOut,
+    status_code=202,
+)
 async def import_template_source(
     source_id: str,
     user: CurrentUser,
@@ -102,12 +110,21 @@ async def import_template_source(
     settings: AppSettings,
     http: GitHubHTTPDep,
 ) -> TemplateImportLogOut:
-    """Fetch, analyse and upsert every workflow JSON of the source.
+    """Start fetching, analysing and upserting the source's workflow JSONs.
 
-    Idempotent: unchanged files are counted, changed files bump the
-    template version, new files are created as pending_review.
+    The import runs in the background because a full repository takes
+    minutes — far beyond any client timeout. The response is the import
+    log in ``running`` state; poll ``GET /imports`` for progress and the
+    final counts. Idempotent: unchanged files are counted, changed files
+    bump the template version, new files are created as pending_review.
     """
-    return await WorkflowTemplateService(db, settings, http).import_source(source_id)
+    service = WorkflowTemplateService(db, settings, http)
+    log, started = await service.start_import(source_id)
+    if started:
+        task = asyncio.create_task(service.run_import(log.id))
+        _IMPORT_TASKS.add(task)
+        task.add_done_callback(_IMPORT_TASKS.discard)
+    return log
 
 
 @router.get("/imports", response_model=list[TemplateImportLogOut])

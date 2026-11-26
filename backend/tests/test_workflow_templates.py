@@ -6,6 +6,7 @@ security-scanned and upserted idempotently — not a live GitHub run.
 """
 
 import json
+import time
 
 import pytest
 
@@ -95,6 +96,20 @@ def fake_github(app):
     return fake
 
 
+def import_and_wait(owner, source_id):
+    """Start the background import and poll its log until it finishes."""
+    response = owner.post(f"{BASE}/sources/{source_id}/import")
+    assert response.status_code == 202, response.text
+    log_id = response.json()["id"]
+    for _ in range(300):
+        logs = owner.get(f"{BASE}/imports", params={"source_id": source_id}).json()
+        log = next((item for item in logs if item["id"] == log_id), None)
+        if log is not None and log["status"] != "running":
+            return log
+        time.sleep(0.05)
+    raise AssertionError("import did not finish in time")
+
+
 def test_parse_github_repo_variants():
     assert parse_github_repo("https://github.com/enescingoz/awesome-n8n-templates") == (
         "enescingoz/awesome-n8n-templates"
@@ -149,9 +164,7 @@ async def test_default_source_and_duplicate_guard(owner, fake_github):
 
 async def test_import_counts_and_idempotency(owner, fake_github):
     source = owner.post(f"{BASE}/sources/default").json()
-    result = owner.post(f"{BASE}/sources/{source['id']}/import")
-    assert result.status_code == 200, result.text
-    log = result.json()
+    log = import_and_wait(owner, source["id"])
     assert log["status"] == "completed"
     assert log["found"] == 5
     assert log["downloaded"] == 5
@@ -162,7 +175,7 @@ async def test_import_counts_and_idempotency(owner, fake_github):
     assert reasons["Other/empty.json"] == "invalid_structure"
     assert reasons["README.json"] == "invalid_structure"
 
-    second = owner.post(f"{BASE}/sources/{source['id']}/import").json()
+    second = import_and_wait(owner, source["id"])
     assert second["created"] == 0
     assert second["unchanged"] == 2
     assert second["updated"] == 0
@@ -170,14 +183,14 @@ async def test_import_counts_and_idempotency(owner, fake_github):
     fake_github.files["Telegram/report.json"] = json.dumps(
         {**GOOD_WORKFLOW, "name": "Daily Report v2"}
     )
-    third = owner.post(f"{BASE}/sources/{source['id']}/import").json()
+    third = import_and_wait(owner, source["id"])
     assert third["updated"] == 1
     assert third["unchanged"] == 1
 
 
 async def test_template_list_detail_and_review(owner, fake_github):
     source = owner.post(f"{BASE}/sources/default").json()
-    owner.post(f"{BASE}/sources/{source['id']}/import")
+    import_and_wait(owner, source["id"])
 
     listing = owner.get(f"{BASE}/templates")
     assert listing.status_code == 200
@@ -207,7 +220,7 @@ async def test_template_list_detail_and_review(owner, fake_github):
 
 async def test_stats_service_filter_and_sort(owner, fake_github):
     source = owner.post(f"{BASE}/sources/default").json()
-    owner.post(f"{BASE}/sources/{source['id']}/import")
+    import_and_wait(owner, source["id"])
 
     stats = owner.get(f"{BASE}/templates/stats")
     assert stats.status_code == 200, stats.text
@@ -268,7 +281,7 @@ def fake_n8n(app, settings):
 
 async def _import_and_approve(owner):
     source = owner.post(f"{BASE}/sources/default").json()
-    owner.post(f"{BASE}/sources/{source['id']}/import")
+    import_and_wait(owner, source["id"])
     listing = owner.get(f"{BASE}/templates").json()
     report = next(i for i in listing["items"] if i["name"] == "Daily Report")
     leaky = next(i for i in listing["items"] if i["name"] == "Leaky")
@@ -321,7 +334,7 @@ async def test_sync_update_and_remove(owner, fake_github, fake_n8n):
         {**GOOD_WORKFLOW, "name": "Daily Report v2"}
     )
     source = owner.get(f"{BASE}/sources").json()[0]
-    owner.post(f"{BASE}/sources/{source['id']}/import")
+    import_and_wait(owner, source["id"])
 
     candidates = owner.get(f"{BASE}/sync-candidates").json()
     assert len(candidates["updates"]) == 1
@@ -344,7 +357,7 @@ async def test_sync_update_and_remove(owner, fake_github, fake_n8n):
 
 async def test_versions_diff_and_restore(owner, fake_github):
     source = owner.post(f"{BASE}/sources/default").json()
-    owner.post(f"{BASE}/sources/{source['id']}/import")
+    import_and_wait(owner, source["id"])
     listing = owner.get(f"{BASE}/templates").json()
     report = next(i for i in listing["items"] if i["name"] == "Daily Report")
 
@@ -365,7 +378,7 @@ async def test_versions_diff_and_restore(owner, fake_github):
         }
     )
     fake_github.files["Telegram/report.json"] = json.dumps(changed)
-    owner.post(f"{BASE}/sources/{source['id']}/import")
+    import_and_wait(owner, source["id"])
 
     versions2 = owner.get(f"{BASE}/templates/{report['id']}/versions").json()
     assert [v["version"] for v in versions2] == [2, 1]
@@ -416,7 +429,7 @@ async def test_contribute_template(owner):
 
 async def test_assistant_unavailable_without_provider(owner, fake_github):
     source = owner.post(f"{BASE}/sources/default").json()
-    owner.post(f"{BASE}/sources/{source['id']}/import")
+    import_and_wait(owner, source["id"])
     report = owner.get(f"{BASE}/templates").json()["items"][0]
     resp = owner.post(
         f"{BASE}/templates/{report['id']}/assistant", json={"task": "explain"}
@@ -438,7 +451,7 @@ def test_parse_proposal_accepts_fenced_json():
 
 async def test_assistant_apply_installs_custom_copy(owner, fake_github, fake_n8n):
     source = owner.post(f"{BASE}/sources/default").json()
-    owner.post(f"{BASE}/sources/{source['id']}/import")
+    import_and_wait(owner, source["id"])
     listing = owner.get(f"{BASE}/templates").json()
     report = next(i for i in listing["items"] if i["name"] == "Daily Report")
 

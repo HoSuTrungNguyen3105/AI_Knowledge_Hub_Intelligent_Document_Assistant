@@ -323,16 +323,28 @@ class WorkflowTemplateService:
 
     # -- importer ----------------------------------------------------------
 
-    async def import_source(self, source_id: str) -> TemplateImportLogOut:
+    async def start_import(self, source_id: str) -> tuple[TemplateImportLogOut, bool]:
+        """Create a ``running`` import log and return it with a started flag.
+
+        The import itself runs in the background (see :meth:`run_import`):
+        downloading and analysing hundreds of files takes minutes, far
+        beyond the frontend client's 20-second request timeout, so the
+        HTTP request must return immediately and the client polls the log.
+        If an import for this source is already running, its log is
+        returned with ``started=False`` instead of starting a second one.
+        """
         source = await self._get_source(source_id)
-        repo = source["repo"]
-        branch = source.get("branch", "main")
-        started = _utcnow()
+        running = await self.logs.find_one(
+            {"source_id": source_id, "status": "running"},
+            sort=[("started_at", -1)],
+        )
+        if running is not None:
+            return self._log_out(running), False
         log = {
             "_id": uuid.uuid4().hex,
             "source_id": source_id,
-            "source_repo": repo,
-            "status": "failed",
+            "source_repo": source["repo"],
+            "status": "running",
             "found": 0,
             "downloaded": 0,
             "created": 0,
@@ -341,10 +353,33 @@ class WorkflowTemplateService:
             "rejected": 0,
             "failures": [],
             "error": None,
-            "started_at": started,
+            "started_at": _utcnow(),
             "finished_at": None,
         }
         await self.logs.insert_one(dict(log))
+        return self._log_out(log), True
+
+    async def run_import(self, log_id: str) -> None:
+        """Execute the import for a log created by :meth:`start_import`.
+
+        Progress counters are persisted every 25 processed files so the
+        polling client sees real progress; the final state is written at
+        the end. Never raises: failures land on the log itself.
+        """
+        log = await self.logs.find_one({"_id": log_id})
+        if log is None:
+            return
+        source_id = log["source_id"]
+        try:
+            source = await self._get_source(source_id)
+        except ProviderError as exc:
+            log["status"] = "failed"
+            log["error"] = exc.code
+            log["finished_at"] = _utcnow()
+            await self.logs.replace_one({"_id": log_id}, log)
+            return
+        repo = source["repo"]
+        branch = source.get("branch", "main")
         try:
             status, tree = await self.http.get_json(
                 f"https://api.github.com/repos/{repo}/git/trees/{branch}?recursive=1",
@@ -362,6 +397,8 @@ class WorkflowTemplateService:
                 and item["path"].lower().endswith(".json")
             ]
             log["found"] = len(paths)
+            await self._persist_progress(log)
+            progress = {"done": 0}
             semaphore = asyncio.Semaphore(DOWNLOAD_CONCURRENCY)
 
             async def process(path: str) -> str:
@@ -386,16 +423,42 @@ class WorkflowTemplateService:
                         return self._record_failure(log, path, analysis["rejected"])
                     return await self._upsert_template(source, path, text, analysis, log)
 
-            await asyncio.gather(*(process(path) for path in paths))
+            async def tracked(path: str) -> str:
+                result = await process(path)
+                progress["done"] += 1
+                if progress["done"] % 25 == 0:
+                    await self._persist_progress(log)
+                return result
+
+            await asyncio.gather(*(tracked(path) for path in paths))
             log["status"] = "completed"
         except ProviderError as exc:
+            log["status"] = "failed"
             log["error"] = exc.code
+        except Exception:  # noqa: BLE001 - the failure belongs on the log
+            log["status"] = "failed"
+            log["error"] = "import_failed"
         log["finished_at"] = _utcnow()
         await self.logs.replace_one({"_id": log["_id"]}, log)
         await self.sources.update_one(
             {"_id": source_id}, {"$set": {"last_import_at": log["finished_at"]}}
         )
-        return self._log_out(log)
+
+    async def _persist_progress(self, log: dict) -> None:
+        await self.logs.update_one(
+            {"_id": log["_id"]},
+            {
+                "$set": {
+                    "found": log["found"],
+                    "downloaded": log["downloaded"],
+                    "created": log["created"],
+                    "updated": log["updated"],
+                    "unchanged": log["unchanged"],
+                    "rejected": log["rejected"],
+                    "failures": log["failures"],
+                }
+            },
+        )
 
     @staticmethod
     def _record_failure(log: dict, path: str, reason: str) -> str:
