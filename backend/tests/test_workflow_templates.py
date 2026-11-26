@@ -414,6 +414,58 @@ async def test_contribute_template(owner):
     assert invalid.status_code == 422
 
 
+async def test_assistant_unavailable_without_provider(owner, fake_github):
+    source = owner.post(f"{BASE}/sources/default").json()
+    owner.post(f"{BASE}/sources/{source['id']}/import")
+    report = owner.get(f"{BASE}/templates").json()["items"][0]
+    resp = owner.post(
+        f"{BASE}/templates/{report['id']}/assistant", json={"task": "explain"}
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["code"] == "template_assistant_unavailable"
+
+
+def test_parse_proposal_accepts_fenced_json():
+    from app.services.template_assistant import parse_proposal
+
+    text = "```json\n" + json.dumps(GOOD_WORKFLOW) + "\n```"
+    parsed = parse_proposal(text)
+    assert parsed is not None
+    assert parsed["name"] == "Daily Report"
+    assert parse_proposal("không có json ở đây") is None
+    assert parse_proposal('{"nodes": "nope"}') is None
+
+
+async def test_assistant_apply_installs_custom_copy(owner, fake_github, fake_n8n):
+    source = owner.post(f"{BASE}/sources/default").json()
+    owner.post(f"{BASE}/sources/{source['id']}/import")
+    listing = owner.get(f"{BASE}/templates").json()
+    report = next(i for i in listing["items"] if i["name"] == "Daily Report")
+
+    proposal = json.loads(json.dumps(GOOD_WORKFLOW))
+    proposal["name"] = "Daily Report (custom)"
+    applied = owner.post(
+        f"{BASE}/templates/{report['id']}/assistant/apply",
+        json={"workflow_json": proposal},
+    )
+    assert applied.status_code == 201, applied.text
+    assert applied.json()["template_name"] == "Daily Report (custom)"
+    assert len(fake_n8n.posts) == 1
+
+    mine = owner.get(f"{BASE}/mine").json()
+    assert len(mine) == 1
+    # The shared template itself is untouched.
+    detail = owner.get(f"{BASE}/templates/{report['id']}").json()
+    assert detail["name"] == "Daily Report"
+    assert detail["version"] == 1
+
+    invalid = owner.post(
+        f"{BASE}/templates/{report['id']}/assistant/apply",
+        json={"workflow_json": {"nodes": "nope"}},
+    )
+    assert invalid.status_code == 422
+
+
 def test_templates_require_auth(client):
     assert client.get(f"{BASE}/sources").status_code == 401
     assert client.get(f"{BASE}/templates").status_code == 401

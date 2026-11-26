@@ -930,6 +930,37 @@ class WorkflowSyncService:
             )
         return InstallResultOut(results=results)
 
+    async def install_custom(
+        self, user_id: str, template: dict, workflow_json: dict, name: str | None
+    ) -> UserWorkflowOut:
+        """Install a user-approved customized copy of a template (Phase 5).
+
+        The copy lives only in the user's n8n and in this mapping; the
+        shared template is never modified. Marked via the name suffix so
+        the user can tell it apart from a pristine install.
+        """
+        payload = N8nWorkflowCreateIn(
+            name=name or f"{template.get('name', 'Workflow')} (tùy chỉnh)",
+            nodes=workflow_json.get("nodes") or [],
+            connections=workflow_json.get("connections") or {},
+            settings=workflow_json.get("settings") or {},
+        )
+        created = await self.platform.create_workflow(payload)
+        now = _utcnow()
+        doc = {
+            "_id": uuid.uuid4().hex,
+            "user_id": user_id,
+            "template_id": str(template["_id"]),
+            "template_name": payload.name,
+            "n8n_workflow_id": created.id,
+            "installed_version": int(template.get("version", 1)),
+            "customized": True,
+            "installed_at": now,
+            "updated_at": now,
+        }
+        await self.installs.insert_one(doc)
+        return self._install_out(doc, template)
+
     async def _get_install(self, user_id: str, install_id: str) -> dict:
         doc = await self.installs.find_one({"_id": install_id, "user_id": user_id})
         if doc is None:

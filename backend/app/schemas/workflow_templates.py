@@ -128,6 +128,29 @@ class ContributeIn(BaseModel):
     workflow_json: dict[str, Any]
 
 
+class AssistantIn(BaseModel):
+    task: str = Field(
+        pattern="^(explain|explain_node|setup_guide|api_keys|customize)$"
+    )
+    prompt: str | None = Field(default=None, max_length=4000)
+    node_name: str | None = Field(default=None, max_length=200)
+    provider: str | None = None
+    model: str | None = None
+
+
+class AssistantOut(BaseModel):
+    answer: str
+    proposal: dict[str, Any] | None = None
+    provider: str
+    model: str
+    task: str
+
+
+class AssistantApplyIn(BaseModel):
+    workflow_json: dict[str, Any]
+    name: str | None = Field(default=None, max_length=200)
+
+
 class UserWorkflowOut(BaseModel):
     id: str
     template_id: str
