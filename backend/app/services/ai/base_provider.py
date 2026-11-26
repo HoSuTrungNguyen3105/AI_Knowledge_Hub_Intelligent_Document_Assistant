@@ -98,6 +98,11 @@ ERRORS = {
         "The source must be a GitHub repository URL like https://github.com/owner/repo.",
     ),
     "template_source_exists": (409, "That template source is already registered."),
+    "template_not_approved": (
+        409,
+        "Only approved templates can be installed. Review the template first.",
+    ),
+    "user_workflow_not_found": (404, "That installed workflow does not exist."),
     "github_unreachable": (
         502,
         "GitHub could not be reached or refused the request (rate limit without a token is common).",

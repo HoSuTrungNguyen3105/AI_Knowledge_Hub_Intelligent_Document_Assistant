@@ -232,6 +232,116 @@ async def test_stats_service_filter_and_sort(owner, fake_github):
     assert needs_nodes.json()["items"][0]["name"] == "Leaky"
 
 
+class FakeN8n:
+    """Minimal stand-in for the n8n REST API used by template sync."""
+
+    def __init__(self):
+        self.posts = []
+        self.patches = []
+        self.deletes = []
+
+    async def post_json_body(self, url, api_key, payload, timeout_seconds):
+        self.posts.append({"url": url, "payload": payload})
+        return 201, {**payload, "id": "n8n-new-1", "active": False, "tags": []}
+
+    async def patch_json(self, url, api_key, payload, timeout_seconds):
+        self.patches.append({"url": url, "payload": payload})
+        workflow_id = url.rsplit("/workflows/", 1)[1]
+        return 200, {**payload, "id": workflow_id, "active": False, "tags": []}
+
+    async def delete_json(self, url, api_key, timeout_seconds):
+        self.deletes.append(url)
+        return 204
+
+
+@pytest.fixture
+def fake_n8n(app, settings):
+    from pydantic import SecretStr
+
+    from app.api.v1.n8n_platform import n8n_api_http
+
+    settings.n8n_api_key = SecretStr("test-key")
+    fake = FakeN8n()
+    app.dependency_overrides[n8n_api_http] = lambda: fake
+    return fake
+
+
+async def _import_and_approve(owner):
+    source = owner.post(f"{BASE}/sources/default").json()
+    owner.post(f"{BASE}/sources/{source['id']}/import")
+    listing = owner.get(f"{BASE}/templates").json()
+    report = next(i for i in listing["items"] if i["name"] == "Daily Report")
+    leaky = next(i for i in listing["items"] if i["name"] == "Leaky")
+    owner.patch(
+        f"{BASE}/templates/{report['id']}/review", json={"review_status": "approved"}
+    )
+    return report, leaky
+
+
+async def test_sync_install_flow(owner, fake_github, fake_n8n):
+    report, leaky = await _import_and_approve(owner)
+
+    candidates = owner.get(f"{BASE}/sync-candidates")
+    assert candidates.status_code == 200, candidates.text
+    available_ids = {item["id"] for item in candidates.json()["available"]}
+    assert report["id"] in available_ids
+    assert leaky["id"] not in available_ids  # not approved yet
+
+    refused = owner.post(f"{BASE}/install", json={"template_ids": [leaky["id"]]})
+    assert refused.json()["results"][0]["status"] == "failed"
+    assert refused.json()["results"][0]["error"] == "template_not_approved"
+
+    installed = owner.post(f"{BASE}/install", json={"template_ids": [report["id"]]})
+    result = installed.json()["results"][0]
+    assert result["status"] == "installed"
+    assert result["n8n_workflow_id"] == "n8n-new-1"
+    assert len(fake_n8n.posts) == 1
+
+    again = owner.post(f"{BASE}/install", json={"template_ids": [report["id"]]})
+    assert again.json()["results"][0]["status"] == "already_installed"
+    assert len(fake_n8n.posts) == 1  # no duplicate created in n8n
+
+    mine = owner.get(f"{BASE}/mine").json()
+    assert len(mine) == 1
+    assert mine[0]["installed_version"] == 1
+    assert mine[0]["update_available"] is False
+
+    candidates2 = owner.get(f"{BASE}/sync-candidates").json()
+    assert candidates2["available"] == []
+    assert candidates2["updates"] == []
+    return mine[0]
+
+
+async def test_sync_update_and_remove(owner, fake_github, fake_n8n):
+    report, _leaky = await _import_and_approve(owner)
+    owner.post(f"{BASE}/install", json={"template_ids": [report["id"]]})
+    mine = owner.get(f"{BASE}/mine").json()[0]
+
+    fake_github.files["Telegram/report.json"] = json.dumps(
+        {**GOOD_WORKFLOW, "name": "Daily Report v2"}
+    )
+    source = owner.get(f"{BASE}/sources").json()[0]
+    owner.post(f"{BASE}/sources/{source['id']}/import")
+
+    candidates = owner.get(f"{BASE}/sync-candidates").json()
+    assert len(candidates["updates"]) == 1
+    assert candidates["updates"][0]["latest_version"] == 2
+
+    updated = owner.post(f"{BASE}/mine/{mine['id']}/update")
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["installed_version"] == 2
+    assert updated.json()["update_available"] is False
+    assert len(fake_n8n.patches) == 1
+    assert fake_n8n.patches[0]["payload"]["name"] == "Daily Report v2"
+
+    removed = owner.delete(f"{BASE}/mine/{mine['id']}")
+    assert removed.status_code == 204
+    assert any("n8n-new-1" in url for url in fake_n8n.deletes)
+    assert owner.get(f"{BASE}/mine").json() == []
+    # The shared template itself survives removal.
+    assert owner.get(f"{BASE}/templates").json()["total"] == 2
+
+
 def test_templates_require_auth(client):
     assert client.get(f"{BASE}/sources").status_code == 401
     assert client.get(f"{BASE}/templates").status_code == 401

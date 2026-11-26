@@ -31,6 +31,9 @@ from app.schemas.workflow_templates import (
     DEFAULT_SOURCE_LICENSE,
     DEFAULT_SOURCE_NAME,
     DEFAULT_SOURCE_REPO,
+    InstallResultItemOut,
+    InstallResultOut,
+    SyncCandidatesOut,
     TemplateDetailOut,
     TemplateImportLogOut,
     TemplateListOut,
@@ -39,8 +42,11 @@ from app.schemas.workflow_templates import (
     TemplateSourceOut,
     TemplateStatsOut,
     TemplateSummaryOut,
+    UserWorkflowOut,
 )
+from app.schemas.n8n_platform import N8nWorkflowCreateIn
 from app.services.ai.base_provider import ProviderError
+from app.services.n8n_platform import N8nPlatformService
 
 SOURCES_COLLECTION = "workflow_template_sources"
 TEMPLATES_COLLECTION = "shared_workflows"
@@ -588,3 +594,184 @@ class WorkflowTemplateService:
             raise ProviderError("template_not_found")
         doc = await self.templates.find_one({"_id": template_id}, {"workflow_json": 0})
         return self._summary_out(doc)
+
+
+# -- Phase 3: per-user sync -------------------------------------------------
+
+USER_WORKFLOWS_COLLECTION = "user_workflows"
+
+
+class WorkflowSyncService:
+    """Installs approved shared templates into the user's n8n and tracks
+    the mapping per user.
+
+    Installing reuses the n8n Platform create path (workflow lands
+    inactive in n8n); updating PATCHes the installed copy with the new
+    template definition; removing deletes the copy from n8n and then the
+    mapping — the shared template itself is never touched. Because the
+    current platform is one shared n8n instance, ownership lives in this
+    mapping, exactly as audited in the Phase 0 report.
+    """
+
+    def __init__(self, db: AsyncIOMotorDatabase, platform: "N8nPlatformService"):
+        self.db = db
+        self.platform = platform
+
+    @property
+    def installs(self):
+        return self.db[USER_WORKFLOWS_COLLECTION]
+
+    @property
+    def templates(self):
+        return self.db[TEMPLATES_COLLECTION]
+
+    @staticmethod
+    def _install_out(doc: dict, template: dict | None) -> UserWorkflowOut:
+        latest = int(template.get("version", doc.get("installed_version", 1))) if template else int(doc.get("installed_version", 1))
+        installed = int(doc.get("installed_version", 1))
+        return UserWorkflowOut(
+            id=str(doc["_id"]),
+            template_id=doc.get("template_id", ""),
+            template_name=(template or {}).get("name", doc.get("template_name", "")),
+            category=(template or {}).get("category", ""),
+            n8n_workflow_id=doc.get("n8n_workflow_id", ""),
+            installed_version=installed,
+            latest_version=latest,
+            update_available=latest > installed,
+            installed_at=doc.get("installed_at"),
+            updated_at=doc.get("updated_at"),
+        )
+
+    async def list_mine(self, user_id: str) -> list[UserWorkflowOut]:
+        out = []
+        cursor = self.installs.find({"user_id": user_id}).sort("installed_at", -1)
+        async for doc in cursor:
+            template = await self.templates.find_one(
+                {"_id": doc["template_id"]}, {"workflow_json": 0}
+            )
+            out.append(self._install_out(doc, template))
+        return out
+
+    async def sync_candidates(self, user_id: str) -> SyncCandidatesOut:
+        mine = await self.list_mine(user_id)
+        installed_ids = {item.template_id for item in mine}
+        updates = [item for item in mine if item.update_available]
+        available = []
+        cursor = self.templates.find(
+            {"review_status": "approved"}, {"workflow_json": 0}
+        ).sort("name", 1)
+        async for doc in cursor:
+            if str(doc["_id"]) not in installed_ids:
+                available.append(WorkflowTemplateService._summary_out(doc))
+        return SyncCandidatesOut(available=available, updates=updates)
+
+    @staticmethod
+    def _create_payload(template: dict) -> "N8nWorkflowCreateIn":
+        workflow = template.get("workflow_json") or {}
+        return N8nWorkflowCreateIn(
+            name=template.get("name") or workflow.get("name") or "Workflow template",
+            nodes=workflow.get("nodes") or [],
+            connections=workflow.get("connections") or {},
+            settings=workflow.get("settings") or {},
+        )
+
+    async def install(self, user_id: str, template_ids: list[str]) -> InstallResultOut:
+        results: list[InstallResultItemOut] = []
+        for template_id in template_ids:
+            template = await self.templates.find_one({"_id": template_id})
+            if template is None:
+                results.append(
+                    InstallResultItemOut(
+                        template_id=template_id, status="failed", error="template_not_found"
+                    )
+                )
+                continue
+            name = template.get("name", "")
+            if template.get("review_status") != "approved":
+                results.append(
+                    InstallResultItemOut(
+                        template_id=template_id,
+                        template_name=name,
+                        status="failed",
+                        error="template_not_approved",
+                    )
+                )
+                continue
+            existing = await self.installs.find_one(
+                {"user_id": user_id, "template_id": template_id}
+            )
+            if existing is not None:
+                results.append(
+                    InstallResultItemOut(
+                        template_id=template_id,
+                        template_name=name,
+                        status="already_installed",
+                        n8n_workflow_id=existing.get("n8n_workflow_id"),
+                    )
+                )
+                continue
+            try:
+                created = await self.platform.create_workflow(self._create_payload(template))
+            except ProviderError as exc:
+                results.append(
+                    InstallResultItemOut(
+                        template_id=template_id,
+                        template_name=name,
+                        status="failed",
+                        error=exc.code,
+                    )
+                )
+                continue
+            now = _utcnow()
+            doc = {
+                "_id": uuid.uuid4().hex,
+                "user_id": user_id,
+                "template_id": template_id,
+                "template_name": name,
+                "n8n_workflow_id": created.id,
+                "installed_version": int(template.get("version", 1)),
+                "installed_at": now,
+                "updated_at": now,
+            }
+            await self.installs.insert_one(doc)
+            results.append(
+                InstallResultItemOut(
+                    template_id=template_id,
+                    template_name=name,
+                    status="installed",
+                    n8n_workflow_id=created.id,
+                )
+            )
+        return InstallResultOut(results=results)
+
+    async def _get_install(self, user_id: str, install_id: str) -> dict:
+        doc = await self.installs.find_one({"_id": install_id, "user_id": user_id})
+        if doc is None:
+            raise ProviderError("user_workflow_not_found")
+        return doc
+
+    async def update_install(self, user_id: str, install_id: str) -> UserWorkflowOut:
+        doc = await self._get_install(user_id, install_id)
+        template = await self.templates.find_one({"_id": doc["template_id"]})
+        if template is None:
+            raise ProviderError("template_not_found")
+        await self.platform.replace_workflow(
+            doc["n8n_workflow_id"], self._create_payload(template)
+        )
+        await self.installs.update_one(
+            {"_id": install_id},
+            {
+                "$set": {
+                    "installed_version": int(template.get("version", 1)),
+                    "template_name": template.get("name", doc.get("template_name", "")),
+                    "updated_at": _utcnow(),
+                }
+            },
+        )
+        updated = await self.installs.find_one({"_id": install_id})
+        return self._install_out(updated, template)
+
+    async def remove_install(self, user_id: str, install_id: str) -> None:
+        doc = await self._get_install(user_id, install_id)
+        await self.platform.delete_workflow(doc["n8n_workflow_id"])
+        await self.installs.delete_one({"_id": install_id})

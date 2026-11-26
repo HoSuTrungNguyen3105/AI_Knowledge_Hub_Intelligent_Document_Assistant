@@ -97,6 +97,40 @@ class TemplateReviewIn(BaseModel):
     review_status: str = Field(pattern="^(approved|rejected|pending_review)$")
 
 
+class UserWorkflowOut(BaseModel):
+    id: str
+    template_id: str
+    template_name: str
+    category: str = ""
+    n8n_workflow_id: str
+    installed_version: int
+    latest_version: int
+    update_available: bool = False
+    installed_at: datetime
+    updated_at: datetime
+
+
+class InstallIn(BaseModel):
+    template_ids: list[str] = Field(min_length=1, max_length=50)
+
+
+class InstallResultItemOut(BaseModel):
+    template_id: str
+    template_name: str = ""
+    status: str  # installed | already_installed | failed
+    error: str | None = None
+    n8n_workflow_id: str | None = None
+
+
+class InstallResultOut(BaseModel):
+    results: list[InstallResultItemOut]
+
+
+class SyncCandidatesOut(BaseModel):
+    available: list[TemplateSummaryOut] = Field(default_factory=list)
+    updates: list[UserWorkflowOut] = Field(default_factory=list)
+
+
 class TemplateStatsOut(BaseModel):
     total: int = 0
     by_category: dict[str, int] = Field(default_factory=dict)
