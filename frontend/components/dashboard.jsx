@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, ArrowRight, Bot, Braces, Check, CircleAlert, Clock3, Coins,
   FileText, LibraryBig, ListChecks, MessagesSquare, RefreshCw, ShieldCheck,
@@ -10,6 +10,7 @@ import { useDashboard } from "../hooks/use-dashboard";
 import { useSession } from "../stores/session";
 import { analyticsService } from "../services/analytics";
 import { getErrorMessage } from "../services/api";
+import { useServerStatus } from "../utils/server-status";
 import { formatActivity, formatCount, formatDate } from "../utils/format";
 import { APP_STAGE } from "../utils/app-config";
 
@@ -217,6 +218,14 @@ function ModelDonut({ models }) {
 export function Dashboard() {
   const user = useSession((state) => state.user);
   const { data, loading, error, retry } = useDashboard();
+  const serverStatus = useServerStatus();
+  const prevServerStatus = useRef(serverStatus);
+  useEffect(() => {
+    const was = prevServerStatus.current;
+    prevServerStatus.current = serverStatus;
+    if (was !== "online" && serverStatus === "online" && error) retry();
+  }, [serverStatus, error, retry]);
+  const serverWaking = serverStatus === "checking" || serverStatus === "waking";
   const [ana, setAna] = useState(null);
   const [range, setRange] = useState(14);
   const firstName = user?.name?.trim().split(/\s+/).at(-1) || "bạn";
@@ -307,16 +316,26 @@ export function Dashboard() {
       </div>
 
       {error ? (
-        <div className="error-panel" role="alert">
-          <CircleAlert size={24} />
-          <div>
-            <h2>Chưa tải được dữ liệu</h2>
-            <p>{getErrorMessage(error)}</p>
+        serverWaking ? (
+          <div className="error-panel waking" role="status">
+            <span className="wake-dot" />
+            <div>
+              <h2>Máy chủ đang khởi động</h2>
+              <p>Máy chủ đang khởi động, thường mất 30–90 giây. Dữ liệu sẽ tự tải lại ngay khi máy chủ sẵn sàng, bạn không cần bấm gì thêm.</p>
+            </div>
           </div>
-          <button className="button secondary" onClick={retry}>
-            <RefreshCw size={16} />Thử lại
-          </button>
-        </div>
+        ) : (
+          <div className="error-panel" role="alert">
+            <CircleAlert size={24} />
+            <div>
+              <h2>Chưa tải được dữ liệu</h2>
+              <p>{getErrorMessage(error)}</p>
+            </div>
+            <button className="button secondary" onClick={retry}>
+              <RefreshCw size={16} />Thử lại
+            </button>
+          </div>
+        )
       ) : (
         <>
           <section className="dash2-stats" aria-label="Thống kê tài khoản">
