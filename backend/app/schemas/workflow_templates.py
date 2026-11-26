@@ -44,7 +44,7 @@ class TemplateImportLogOut(BaseModel):
     id: str
     source_id: str
     source_repo: str
-    status: str  # completed | failed
+    status: str  # running | completed | failed
     found: int = 0
     downloaded: int = 0
     created: int = 0
