@@ -11,7 +11,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import AppSettings, CurrentUser, Database
+from app.api.dependencies import AppSettings, CurrentUser, Database
 from app.api.v1.n8n_platform import N8nApiHTTPDep
 from app.schemas.workflow_templates import (
     AssistantApplyIn,
