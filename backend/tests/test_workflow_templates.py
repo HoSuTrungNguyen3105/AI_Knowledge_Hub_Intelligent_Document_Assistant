@@ -205,6 +205,33 @@ async def test_template_list_detail_and_review(owner, fake_github):
     assert reviewed.json()["review_status"] == "rejected"
 
 
+async def test_stats_service_filter_and_sort(owner, fake_github):
+    source = owner.post(f"{BASE}/sources/default").json()
+    owner.post(f"{BASE}/sources/{source['id']}/import")
+
+    stats = owner.get(f"{BASE}/templates/stats")
+    assert stats.status_code == 200, stats.text
+    body = stats.json()
+    assert body["total"] == 2
+    assert body["by_category"] == {"Other": 1, "Telegram": 1}
+    assert body["by_review_status"] == {"pending_review": 2}
+    assert body["by_compatibility"] == {"compatible": 1, "needs_community_nodes": 1}
+    assert body["services"] == ["gmailOAuth2"]
+
+    by_service = owner.get(f"{BASE}/templates", params={"service": "gmailOAuth2"})
+    assert by_service.json()["total"] == 1
+    assert by_service.json()["items"][0]["name"] == "Daily Report"
+
+    by_complexity = owner.get(f"{BASE}/templates", params={"complexity": "simple"})
+    assert by_complexity.json()["total"] == 2
+
+    needs_nodes = owner.get(
+        f"{BASE}/templates", params={"compatibility": "needs_community_nodes"}
+    )
+    assert needs_nodes.json()["total"] == 1
+    assert needs_nodes.json()["items"][0]["name"] == "Leaky"
+
+
 def test_templates_require_auth(client):
     assert client.get(f"{BASE}/sources").status_code == 401
     assert client.get(f"{BASE}/templates").status_code == 401
