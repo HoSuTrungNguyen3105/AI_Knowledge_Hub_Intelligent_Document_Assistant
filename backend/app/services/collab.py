@@ -50,11 +50,14 @@ from app.schemas.collab import (
     RoomOut,
     RoomPatch,
     RunDetail,
+    SnapshotMemberOut,
+    TeamSnapshotOut,
     RunList,
     RunOut,
     SummarizeIn,
     TaskOut,
 )
+from app.repositories.workflows import WorkflowRepository
 from app.services.agents import AgentService
 from app.services.ai.base_provider import ProviderError
 from app.services.ai.chat import ChatHTTP
@@ -131,12 +134,51 @@ class CollabService:
         return doc
 
     async def _room_out(self, user_id: UUID, doc) -> RoomOut:
-        summaries = {a.id: a for a in (await self._agent_service().list_agents(user_id)).agents}
-        agents = [
-            RoomAgentOut(id=a.id, name=a.name, provider=a.provider, model=a.model)
-            for agent_id in doc.get("agent_ids") or []
-            if (a := summaries.get(agent_id)) is not None
-        ]
+        snapshot = doc.get("team_snapshot") or None
+        team_snapshot_out = None
+        if snapshot:
+            # Team rooms render from the frozen snapshot: later edits to
+            # the team or the Agents must not rewrite this session.
+            agents = [
+                RoomAgentOut(
+                    id=m["agent_id"],
+                    name=m.get("agent_name") or str(m["agent_id"]),
+                    provider=m.get("provider"),
+                    model=m.get("model"),
+                    role=m.get("role"),
+                )
+                for m in snapshot.get("members") or []
+            ]
+            team_snapshot_out = TeamSnapshotOut(
+                team_id=snapshot["team_id"],
+                team_name=snapshot.get("team_name") or "",
+                coordinator_agent_id=snapshot["coordinator_agent_id"],
+                members=[
+                    SnapshotMemberOut(
+                        agent_id=m["agent_id"],
+                        agent_name=m.get("agent_name"),
+                        role=m.get("role") or "member",
+                        enabled=m.get("enabled", True),
+                        execution_order=m.get("execution_order"),
+                        priority=m.get("priority") or 0,
+                        instructions=m.get("instructions"),
+                        responsibility=m.get("responsibility"),
+                        description=m.get("description"),
+                        provider=m.get("provider"),
+                        model=m.get("model"),
+                        provider_override=m.get("provider_override"),
+                        model_override=m.get("model_override"),
+                    )
+                    for m in snapshot.get("members") or []
+                ],
+            )
+        else:
+            summaries = {a.id: a for a in (await self._agent_service().list_agents(user_id)).agents}
+            agents = [
+                RoomAgentOut(id=a.id, name=a.name, provider=a.provider, model=a.model)
+                for agent_id in doc.get("agent_ids") or []
+                if (a := summaries.get(agent_id)) is not None
+            ]
         total_in = 0
         total_out = 0
         count = 0
@@ -151,6 +193,8 @@ class CollabService:
         return RoomOut(
             id=doc["_id"],
             title=doc["title"],
+            team_id=doc.get("team_id"),
+            team_snapshot=team_snapshot_out,
             agent_ids=list(doc.get("agent_ids") or []),
             agents=agents,
             mode=doc.get("mode") or "directed",
@@ -195,13 +239,78 @@ class CollabService:
         return doc
 
     # --- rooms ---------------------------------------------------------------
+    @staticmethod
+    def _snapshot_member(room: dict, agent_id) -> dict | None:
+        snapshot = room.get("team_snapshot") or {}
+        for member in snapshot.get("members") or []:
+            if member.get("agent_id") == agent_id:
+                return member
+        return None
+
+    async def _build_team_snapshot(self, user_id: UUID, team) -> dict:
+        """Freeze the team's assignment configuration into a room.
+
+        Everything the engine needs — role, execution order,
+        instructions and the EFFECTIVE provider/model (team override
+        when set, otherwise the Agent's own) — is copied at room
+        creation time, so later edits to the team or to the Agents
+        never rewrite a running or finished session.
+        """
+        summaries = {a.id: a for a in (await self._agent_service().list_agents(user_id)).agents}
+        members = []
+        for m in team.members:
+            agent = summaries.get(m.agent_id)
+            members.append(
+                {
+                    "agent_id": m.agent_id,
+                    "agent_name": agent.name if agent else None,
+                    "role": m.role,
+                    "enabled": m.enabled,
+                    "execution_order": getattr(m, "execution_order", None),
+                    "priority": getattr(m, "priority", 0) or 0,
+                    "instructions": getattr(m, "instructions", None),
+                    "responsibility": getattr(m, "responsibility", None),
+                    "description": getattr(m, "description", None),
+                    "provider_override": getattr(m, "provider_override", None),
+                    "model_override": getattr(m, "model_override", None),
+                    "system_prompt_override": getattr(m, "system_prompt_override", None),
+                    "provider": getattr(m, "provider_override", None)
+                    or (agent.provider if agent else None),
+                    "model": getattr(m, "model_override", None)
+                    or (agent.model if agent else None),
+                }
+            )
+        return {
+            "team_id": team.id,
+            "team_name": team.name,
+            "coordinator_agent_id": team.coordinator_agent_id,
+            "members": members,
+        }
+
     async def create_room(self, user_id: UUID, payload: RoomCreate) -> RoomOut:
-        await self._validate_agents(user_id, payload.agent_ids)
-        member_ids = list(dict.fromkeys(payload.agent_ids))
-        if payload.moderator_agent_id is not None:
-            await self._validate_agents(user_id, [payload.moderator_agent_id])
-            if payload.moderator_agent_id not in member_ids:
-                raise ProviderError("collab_moderator_not_member")
+        team_snapshot = None
+        if payload.team_id is not None:
+            team = await WorkflowRepository(self.db).get_team(user_id, payload.team_id)
+            if team is None:
+                raise ProviderError("team_not_found")
+            team_snapshot = await self._build_team_snapshot(user_id, team)
+            member_ids = [m["agent_id"] for m in team_snapshot["members"] if m["enabled"]]
+            if not member_ids:
+                raise ProviderError("collab_team_empty")
+            coordinator = self._snapshot_member(
+                {"team_snapshot": team_snapshot}, team_snapshot["coordinator_agent_id"]
+            )
+            if coordinator is None or not coordinator["enabled"]:
+                raise ProviderError("collab_team_no_leader")
+            moderator_id = team_snapshot["coordinator_agent_id"]
+        else:
+            await self._validate_agents(user_id, payload.agent_ids)
+            member_ids = list(dict.fromkeys(payload.agent_ids))
+            moderator_id = payload.moderator_agent_id
+            if moderator_id is not None:
+                await self._validate_agents(user_id, [moderator_id])
+                if moderator_id not in member_ids:
+                    raise ProviderError("collab_moderator_not_member")
         now = utcnow()
         doc = {
             "_id": uuid4(),
@@ -210,7 +319,9 @@ class CollabService:
             "conversation_ids": [],
             "agent_ids": member_ids,
             "mode": payload.mode,
-            "moderator_agent_id": payload.moderator_agent_id,
+            "team_id": payload.team_id,
+            "team_snapshot": team_snapshot,
+            "moderator_agent_id": moderator_id,
             "max_turns": payload.max_turns,
             "allow_handoff": payload.allow_handoff,
             "system_prompt": None,
@@ -237,6 +348,12 @@ class CollabService:
 
     async def patch_room(self, user_id: UUID, room_id: UUID, payload: RoomPatch) -> RoomOut:
         doc = await self._require_room(user_id, room_id)
+        if doc.get("team_snapshot") and (
+            payload.agent_ids is not None or "moderator_agent_id" in payload.model_fields_set
+        ):
+            # A team room's membership IS its snapshot; letting a patch
+            # change members without the snapshot would desync the two.
+            raise ProviderError("collab_team_room_frozen")
         updates: dict = {"updated_at": utcnow()}
         if payload.title is not None:
             updates["title"] = payload.title
@@ -324,13 +441,24 @@ class CollabService:
             text = text[-TRANSCRIPT_CHARS:]
         return text, ids
 
-    async def _run_agent(self, user_id: UUID, agent_id: UUID, prompt: str) -> dict:
+    async def _run_agent(
+        self, user_id: UUID, agent_id: UUID, prompt: str, member: dict | None = None
+    ) -> dict:
         service = self._agent_service()
+        overrides: dict = {}
+        if member:
+            if member.get("provider_override"):
+                overrides["provider_override"] = member["provider_override"]
+            if member.get("model_override"):
+                overrides["model_override"] = member["model_override"]
+            if member.get("system_prompt_override"):
+                overrides["system_prompt_override"] = member["system_prompt_override"]
         prepared = await service.prepare_run(
             user_id,
             agent_id,
             RunRequest(prompt=prompt),
             token_budget_override=COLLAB_TOKEN_BUDGET,
+            **overrides,
         )
         result: dict = {}
         async for event in service.stream_prepared(prepared):
@@ -497,6 +625,7 @@ class CollabService:
         reply_link: UUID | None,
         is_summary: bool = False,
         task: dict | None = None,
+        member: dict | None = None,
     ) -> dict:
         """One Agent speaking turn: fresh DB context, run, store reply.
 
@@ -506,10 +635,17 @@ class CollabService:
         """
         if run_id is not None and task is None:
             task = await self._create_task(user_id, run_id, room_id, agent, assigned_by)
+        if member:
+            role_bits = [f"Vai trò của bạn trong nhóm: {member.get('role') or 'member'}."]
+            if member.get("responsibility"):
+                role_bits.append(f"Trách nhiệm: {member['responsibility']}")
+            if member.get("instructions"):
+                role_bits.append(f"Chỉ dẫn riêng: {member['instructions']}")
+            instruction = " ".join(role_bits) + "\n\n" + instruction
         context, context_ids = await self._context(room_id)
         prompt = self._prompt(context, instruction)
         try:
-            execution = await self._run_agent(user_id, agent.id, prompt)
+            execution = await self._run_agent(user_id, agent.id, prompt, member=member)
             status = execution.get("status") or "error"
             ok = status == "success"
             content = execution.get("content") or ""
@@ -522,8 +658,8 @@ class CollabService:
                 sender_type="agent",
                 agent_id=agent.id,
                 agent_name=agent.name,
-                provider=agent.provider,
-                model=agent.model,
+                provider=execution.get("provider") or agent.provider,
+                model=execution.get("model") or agent.model,
                 content=content,
                 mentions=[],
                 sequence=await self._next_sequence(room_id),
@@ -599,6 +735,16 @@ class CollabService:
         await self._set_message_run(user_doc, run["_id"])
         summaries = {a.id: a for a in (await self._agent_service().list_agents(user_id)).agents}
         members = [summaries[i] for i in (room.get("agent_ids") or []) if i in summaries]
+        snapshot_order = {
+            m["agent_id"]: m.get("execution_order")
+            for m in (room.get("team_snapshot") or {}).get("members") or []
+        }
+        if snapshot_order:
+            # Team rooms follow the configured execution order wherever
+            # the router has no stronger signal.
+            members.sort(
+                key=lambda a: (snapshot_order.get(a.id) is None, snapshot_order.get(a.id) or 0)
+            )
         moderator_id = room.get("moderator_agent_id")
         moderator = summaries.get(moderator_id) if moderator_id else None
         if moderator is not None and moderator.id not in [m.id for m in members]:
@@ -628,6 +774,7 @@ class CollabService:
                 assigned_by="orchestrator",
                 instruction=AUTO_INSTRUCTION,
                 reply_link=user_doc["_id"],
+                member=self._snapshot_member(room, agent.id),
             )
             replies.append(reply)
             turns += 1
@@ -654,6 +801,7 @@ class CollabService:
                 instruction=SUMMARY_INSTRUCTION,
                 reply_link=user_doc["_id"],
                 is_summary=True,
+                member=self._snapshot_member(room, moderator.id),
             )
             replies.append(reply)
             if reply.get("status") == "done":
@@ -732,6 +880,7 @@ class CollabService:
                     assigned_by="user",
                     instruction=instruction,
                     reply_link=reply_link,
+                    member=self._snapshot_member(room, agent_id),
                 )
                 if reply.get("status") == "error":
                     failed += 1
@@ -850,6 +999,7 @@ class CollabService:
             instruction=SUMMARY_INSTRUCTION,
             reply_link=None,
             is_summary=True,
+            member=self._snapshot_member(room, chosen.id),
         )
         return self._message_out(reply)
 
