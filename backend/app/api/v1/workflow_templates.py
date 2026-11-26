@@ -18,6 +18,7 @@ from app.schemas.workflow_templates import (
     TemplateReviewIn,
     TemplateSourceCreateIn,
     TemplateSourceOut,
+    TemplateStatsOut,
     TemplateSummaryOut,
 )
 from app.services.workflow_templates import GitHubHTTP, WorkflowTemplateService
@@ -94,6 +95,16 @@ async def list_template_imports(
     )
 
 
+@router.get("/templates/stats", response_model=TemplateStatsOut)
+async def template_stats(
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+) -> TemplateStatsOut:
+    return await WorkflowTemplateService(db, settings, http).template_stats()
+
+
 @router.get("/templates", response_model=TemplateListOut)
 async def list_templates(
     user: CurrentUser,
@@ -105,6 +116,9 @@ async def list_templates(
     source_id: str | None = None,
     review_status: str | None = None,
     compatibility: str | None = None,
+    complexity: str | None = None,
+    service: str | None = None,
+    sort: str = "name",
     limit: int = 50,
     offset: int = 0,
 ) -> TemplateListOut:
@@ -114,6 +128,9 @@ async def list_templates(
         source_id=source_id,
         review_status=review_status,
         compatibility=compatibility,
+        complexity=complexity,
+        service=service,
+        sort=sort,
         limit=limit,
         offset=offset,
     )

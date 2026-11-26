@@ -37,6 +37,7 @@ from app.schemas.workflow_templates import (
     TemplateReviewIn,
     TemplateSourceCreateIn,
     TemplateSourceOut,
+    TemplateStatsOut,
     TemplateSummaryOut,
 )
 from app.services.ai.base_provider import ProviderError
@@ -501,6 +502,9 @@ class WorkflowTemplateService:
         source_id: str | None = None,
         review_status: str | None = None,
         compatibility: str | None = None,
+        complexity: str | None = None,
+        service: str | None = None,
+        sort: str = "name",
         limit: int = 50,
         offset: int = 0,
     ) -> TemplateListOut:
@@ -513,17 +517,53 @@ class WorkflowTemplateService:
             query["review_status"] = review_status
         if compatibility:
             query["compatibility"] = compatibility
+        if complexity:
+            query["complexity"] = complexity
+        if service:
+            query["$or"] = [
+                {"credential_types": service},
+                {"node_types": {"$regex": re.escape(service), "$options": "i"}},
+            ]
         if q:
             query["name"] = {"$regex": re.escape(q), "$options": "i"}
         total = await self.templates.count_documents(query)
+        sort_field = {
+            "name": ("name", 1),
+            "newest": ("updated_at", -1),
+            "nodes": ("node_count", -1),
+        }.get(sort, ("name", 1))
         cursor = (
             self.templates.find(query, {"workflow_json": 0})
-            .sort("name", 1)
+            .sort(sort_field[0], sort_field[1])
             .skip(max(0, offset))
             .limit(max(1, min(limit, 100)))
         )
         items = [self._summary_out(doc) async for doc in cursor]
         return TemplateListOut(items=items, total=total)
+
+    async def template_stats(self) -> TemplateStatsOut:
+        by_category: dict[str, int] = {}
+        by_review: dict[str, int] = {}
+        by_compat: dict[str, int] = {}
+        services: set[str] = set()
+        total = 0
+        cursor = self.templates.find(
+            {}, {"category": 1, "review_status": 1, "compatibility": 1, "credential_types": 1}
+        )
+        async for doc in cursor:
+            total += 1
+            by_category[doc.get("category", "")] = by_category.get(doc.get("category", ""), 0) + 1
+            by_review[doc.get("review_status", "")] = by_review.get(doc.get("review_status", ""), 0) + 1
+            by_compat[doc.get("compatibility", "")] = by_compat.get(doc.get("compatibility", ""), 0) + 1
+            for cred in doc.get("credential_types") or []:
+                services.add(cred)
+        return TemplateStatsOut(
+            total=total,
+            by_category=dict(sorted(by_category.items())),
+            by_review_status=by_review,
+            by_compatibility=by_compat,
+            services=sorted(services),
+        )
 
     async def get_template(self, template_id: str) -> TemplateDetailOut:
         doc = await self.templates.find_one({"_id": template_id})

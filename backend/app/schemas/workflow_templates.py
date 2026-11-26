@@ -95,3 +95,11 @@ class TemplateListOut(BaseModel):
 
 class TemplateReviewIn(BaseModel):
     review_status: str = Field(pattern="^(approved|rejected|pending_review)$")
+
+
+class TemplateStatsOut(BaseModel):
+    total: int = 0
+    by_category: dict[str, int] = Field(default_factory=dict)
+    by_review_status: dict[str, int] = Field(default_factory=dict)
+    by_compatibility: dict[str, int] = Field(default_factory=dict)
+    services: list[str] = Field(default_factory=list)
