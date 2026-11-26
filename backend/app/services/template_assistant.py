@@ -38,7 +38,7 @@ from app.services.synthesis import require_chat_target
 
 MAX_CONTEXT_CHARS = 12000
 COMPACT_CONTEXT_CHARS = 3000
-TIMEOUT_SECONDS = 60
+TIMEOUT_SECONDS = 150
 MAX_CANDIDATES = 5
 
 logger = logging.getLogger(__name__)
@@ -94,6 +94,14 @@ TASK_INSTRUCTIONS = {
         "JSON workflow n8n hoàn chỉnh đã sửa theo yêu cầu (giữ nguyên các "
         "node không liên quan, giữ định dạng nodes/connections của n8n), "
         "không kèm giải thích ngoài JSON."
+    ),
+    "follow_up": (
+        "Người dùng đang hỏi tiếp về workflow này, dựa trên cuộc trao đổi "
+        "trước đó được gửi kèm trong yêu cầu. Hãy trả lời đúng câu hỏi mới, "
+        "ngắn gọn và chính xác, bằng tiếng Việt; chỉ dựa vào thông tin "
+        "workflow và ngữ cảnh đã cho, không bịa thêm tính năng không có "
+        "trong workflow. Nếu câu hỏi không liên quan tới workflow này, nói "
+        "rõ là nằm ngoài phạm vi giải thích workflow."
     ),
 }
 
@@ -249,9 +257,7 @@ class TemplateAssistantService:
             # Second pass with a much smaller prompt for small-context
             # models, whose limit the full workflow JSON alone can fill.
             prompts.append(build_prompt(compact_context))
-        budgets = (
-            (4096, 2048, 1024) if payload.task == "customize" else (2048, 1024, 512)
-        )
+        budgets = (4096, 2048) if payload.task == "customize" else (2048, 1024)
         started = time.monotonic()
         text = ""
         input_tokens = output_tokens = None
