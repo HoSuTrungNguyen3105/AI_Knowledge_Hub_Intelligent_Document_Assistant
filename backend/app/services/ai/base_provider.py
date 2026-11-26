@@ -98,6 +98,25 @@ ERRORS = {
         "The source must be a GitHub repository URL like https://github.com/owner/repo.",
     ),
     "template_source_exists": (409, "That template source is already registered."),
+    "template_version_not_found": (404, "That template version does not exist."),
+    "template_contribute_invalid": (
+        422,
+        "The contributed workflow JSON is not a valid n8n workflow.",
+    ),
+    "template_assistant_unavailable": (
+        409,
+        "Configure and enable an AI provider with a synced chat model first.",
+    ),
+    "studio_graph_invalid": (
+        422,
+        "The Studio graph is invalid: unknown node type, duplicate names, "
+        "a missing required parameter or an edge to an unknown node.",
+    ),
+    "template_not_approved": (
+        409,
+        "Only approved templates can be installed. Review the template first.",
+    ),
+    "user_workflow_not_found": (404, "That installed workflow does not exist."),
     "github_unreachable": (
         502,
         "GitHub could not be reached or refused the request (rate limit without a token is common).",
