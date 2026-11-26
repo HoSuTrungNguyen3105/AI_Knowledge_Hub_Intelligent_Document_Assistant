@@ -6,6 +6,12 @@ export const metadata = {
   title: { default: APP_NAME, template: `%s | ${APP_NAME}` },
   description: "Không gian AI cá nhân để kết nối provider, model và tri thức của bạn.",
   robots: { index: false, follow: false },
+  // Favicon: the PNG Nguyên added at images/ in the repo root. It is
+  // referenced by URL because the file is binary; to self-host it
+  // later, drop the same PNG at frontend/app/icon.png and remove this.
+  icons: {
+    icon: "https://raw.githubusercontent.com/HoSuTrungNguyen3105/AI_Knowledge_Hub_Intelligent_Document_Assistant/main/images/f1d82c88-81e8-4bfc-8f4d-8194e3ca78f6.png",
+  },
 };
 
 export default function RootLayout({ children }) {
