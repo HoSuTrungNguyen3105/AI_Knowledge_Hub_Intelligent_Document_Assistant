@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from urllib.parse import quote
@@ -7,7 +8,13 @@ from urllib.parse import quote
 import httpx
 from pydantic import SecretStr
 
-from app.services.ai.base_provider import ProviderError, classify_provider_error
+from app.services.ai.base_provider import (
+    ProviderError,
+    classify_provider_error,
+    describe_provider_error,
+)
+
+logger = logging.getLogger(__name__)
 
 # Fixed official endpoints. Credentials never travel to a caller-supplied host.
 CHAT_ENDPOINTS = {
@@ -169,8 +176,26 @@ class ChatHTTP:
                                 # A client-error rejection carries a structured
                                 # provider error body; classify it into a fixed
                                 # public code instead of masking it as a generic
-                                # generation failure.
-                                raise ProviderError(await self._rejection_code(response))
+                                # generation failure. The upstream reason is
+                                # logged (secret-redacted) server-side only:
+                                # without it, a generic rejection code is
+                                # undiagnosable — the Ollama rejection that
+                                # survived for weeks hid exactly here.
+                                code, summary = await self._rejection_details(
+                                    response
+                                )
+                                logger.warning(
+                                    "provider request rejected: provider=%s "
+                                    "model=%s status=%s code=%s upstream=%s",
+                                    provider,
+                                    payload.get("model"),
+                                    status,
+                                    code,
+                                    summary.replace(secret, "***")
+                                    if secret
+                                    else summary,
+                                )
+                                raise ProviderError(code)
                             raise ProviderError("generation_failed")
                         if (
                             response.headers.get("content-encoding", "identity").lower()
@@ -193,12 +218,14 @@ class ChatHTTP:
             raise ProviderError("provider_unavailable") from None
 
     @staticmethod
-    async def _rejection_code(response: httpx.Response) -> str:
+    async def _rejection_details(response: httpx.Response) -> tuple[str, str]:
         """Classify a 4xx rejection from its bounded provider error body.
 
-        At most ``_MAX_ERROR_BODY_BYTES`` are read and only the fixed code from
-        :func:`classify_provider_error` is kept; the body text itself is never
-        stored, logged or raised, so an echoed credential cannot leak.
+        At most ``_MAX_ERROR_BODY_BYTES`` are read. Only the fixed code from
+        :func:`classify_provider_error` crosses the API boundary; the short
+        error summary (code/type/message fields only) is returned solely so
+        the caller can log it server-side with the credential redacted —
+        it is never stored on a record or raised to the client.
         """
         raw = bytearray()
         try:
@@ -207,11 +234,12 @@ class ChatHTTP:
                 if len(raw) >= _MAX_ERROR_BODY_BYTES:
                     break
         except (httpx.HTTPError, RuntimeError):
-            return "provider_request_rejected"
+            return "provider_request_rejected", ""
         try:
             payload = json.loads(bytes(raw))
         except (ValueError, RecursionError):
-            return "provider_request_rejected"
+            return "provider_request_rejected", ""
         if isinstance(payload, dict):
-            return classify_provider_error(payload.get("error"))
-        return "provider_request_rejected"
+            error = payload.get("error")
+            return classify_provider_error(error), describe_provider_error(error)
+        return "provider_request_rejected", ""
