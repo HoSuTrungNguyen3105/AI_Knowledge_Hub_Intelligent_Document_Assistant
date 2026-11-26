@@ -25,6 +25,10 @@ export const providerService = {
     const { data } = await api.post(`${providerPath(id)}/test`, {}, { timeout: 45000 });
     return data;
   },
+  async rateLimits(signal) {
+    const { data } = await api.get("/ai/providers/rate-limits", { signal });
+    return data;
+  },
   async disconnect(id) {
     await api.delete(providerPath(id));
   },
