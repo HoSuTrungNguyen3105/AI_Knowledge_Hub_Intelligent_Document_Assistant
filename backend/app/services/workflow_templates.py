@@ -31,6 +31,14 @@ from app.schemas.workflow_templates import (
     DEFAULT_SOURCE_LICENSE,
     DEFAULT_SOURCE_NAME,
     DEFAULT_SOURCE_REPO,
+    ContributeIn,
+    InstallResultItemOut,
+    InstallResultOut,
+    SyncCandidatesOut,
+    TemplateDiffOut,
+    TemplateNodeChangeOut,
+    TemplateVersionDetailOut,
+    TemplateVersionOut,
     TemplateDetailOut,
     TemplateImportLogOut,
     TemplateListOut,
@@ -39,11 +47,15 @@ from app.schemas.workflow_templates import (
     TemplateSourceOut,
     TemplateStatsOut,
     TemplateSummaryOut,
+    UserWorkflowOut,
 )
+from app.schemas.n8n_platform import N8nWorkflowCreateIn
 from app.services.ai.base_provider import ProviderError
+from app.services.n8n_platform import N8nPlatformService
 
 SOURCES_COLLECTION = "workflow_template_sources"
 TEMPLATES_COLLECTION = "shared_workflows"
+VERSIONS_COLLECTION = "shared_workflow_versions"
 IMPORT_LOGS_COLLECTION = "workflow_import_logs"
 
 MAX_FILE_BYTES = 2_000_000
@@ -433,6 +445,7 @@ class WorkflowTemplateService:
                 }
             )
             await self.templates.insert_one(fields)
+            await self._store_version(fields, 1)
             log["created"] += 1
             return "created"
         if existing.get("content_hash") == content_hash:
@@ -440,8 +453,187 @@ class WorkflowTemplateService:
             return "unchanged"
         fields["version"] = int(existing.get("version", 1)) + 1
         await self.templates.update_one({"_id": existing["_id"]}, {"$set": fields})
+        await self._store_version({**existing, **fields}, fields["version"])
         log["updated"] += 1
         return "updated"
+
+    @property
+    def versions(self):
+        return self.db[VERSIONS_COLLECTION]
+
+    async def _store_version(self, template: dict, version: int) -> None:
+        workflow = template.get("workflow_json") or {}
+        await self.versions.update_one(
+            {"template_id": str(template["_id"]), "version": version},
+            {
+                "$set": {
+                    "workflow_json": workflow,
+                    "content_hash": template.get("content_hash", ""),
+                    "node_count": len(workflow.get("nodes") or []),
+                    "updated_at": _utcnow(),
+                },
+                "$setOnInsert": {
+                    "_id": uuid.uuid4().hex,
+                    "template_id": str(template["_id"]),
+                    "version": version,
+                    "created_at": _utcnow(),
+                },
+            },
+            upsert=True,
+        )
+
+    async def _get_template_or_404(self, template_id: str) -> dict:
+        doc = await self.templates.find_one({"_id": template_id})
+        if doc is None:
+            raise ProviderError("template_not_found")
+        return doc
+
+    async def list_versions(self, template_id: str) -> list[TemplateVersionOut]:
+        await self._get_template_or_404(template_id)
+        out = []
+        cursor = self.versions.find({"template_id": template_id}).sort("version", -1)
+        async for doc in cursor:
+            out.append(
+                TemplateVersionOut(
+                    version=int(doc.get("version", 1)),
+                    content_hash=doc.get("content_hash", ""),
+                    node_count=int(doc.get("node_count", 0)),
+                    created_at=doc.get("created_at"),
+                )
+            )
+        return out
+
+    async def get_version(self, template_id: str, version: int) -> TemplateVersionDetailOut:
+        await self._get_template_or_404(template_id)
+        doc = await self.versions.find_one(
+            {"template_id": template_id, "version": version}
+        )
+        if doc is None:
+            raise ProviderError("template_version_not_found")
+        return TemplateVersionDetailOut(
+            version=int(doc.get("version", 1)),
+            content_hash=doc.get("content_hash", ""),
+            node_count=int(doc.get("node_count", 0)),
+            created_at=doc.get("created_at"),
+            workflow_json=doc.get("workflow_json") or {},
+        )
+
+    @staticmethod
+    def diff_workflows(old: dict, new: dict) -> TemplateDiffOut:
+        def by_name(workflow: dict) -> dict[str, dict]:
+            out: dict[str, dict] = {}
+            for node in workflow.get("nodes") or []:
+                if isinstance(node, dict) and node.get("name"):
+                    out[str(node["name"])] = node
+            return out
+
+        old_nodes = by_name(old)
+        new_nodes = by_name(new)
+        changed: list[TemplateNodeChangeOut] = []
+        for name in sorted(set(old_nodes) & set(new_nodes)):
+            before, after = old_nodes[name], new_nodes[name]
+            fields: list[str] = []
+            if before.get("type") != after.get("type"):
+                fields.append("type")
+            old_params = before.get("parameters") or {}
+            new_params = after.get("parameters") or {}
+            for key in sorted(set(old_params) | set(new_params)):
+                if old_params.get(key) != new_params.get(key):
+                    fields.append(f"parameters.{key}")
+            if fields:
+                changed.append(TemplateNodeChangeOut(name=name, changed_fields=fields))
+        return TemplateDiffOut(
+            from_version=0,
+            to_version=0,
+            nodes_added=sorted(set(new_nodes) - set(old_nodes)),
+            nodes_removed=sorted(set(old_nodes) - set(new_nodes)),
+            nodes_changed=changed,
+            connections_changed=(old.get("connections") or {}) != (new.get("connections") or {}),
+        )
+
+    async def diff_versions(
+        self, template_id: str, from_version: int, to_version: int
+    ) -> TemplateDiffOut:
+        old = await self.get_version(template_id, from_version)
+        new = await self.get_version(template_id, to_version)
+        diff = self.diff_workflows(old.workflow_json, new.workflow_json)
+        diff.from_version = from_version
+        diff.to_version = to_version
+        return diff
+
+    async def restore_version(self, template_id: str, version: int) -> TemplateDetailOut:
+        template = await self._get_template_or_404(template_id)
+        snapshot = await self.get_version(template_id, version)
+        workflow = snapshot.workflow_json
+        raw_text = json.dumps(workflow, ensure_ascii=False, sort_keys=True)
+        analysis = analyze_workflow(raw_text, template.get("source_path") or "restored.json")
+        if "rejected" in analysis:
+            raise ProviderError("template_contribute_invalid")
+        now = _utcnow()
+        new_version = int(template.get("version", 1)) + 1
+        fields = {
+            "name": analysis["name"] or template.get("name", ""),
+            "category": template.get("category", analysis["category"]),
+            "node_count": analysis["node_count"],
+            "node_types": analysis["node_types"],
+            "credential_types": analysis["credential_types"],
+            "complexity": analysis["complexity"],
+            "compatibility": analysis["compatibility"],
+            "community_nodes": analysis["community_nodes"],
+            "security_flag": analysis["security_flag"],
+            "risk_flags": analysis["risk_flags"],
+            "has_code_node": analysis["has_code_node"],
+            "has_http_node": analysis["has_http_node"],
+            "http_urls": analysis["http_urls"],
+            "workflow_json": workflow,
+            "content_hash": hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
+            "version": new_version,
+            "updated_at": now,
+        }
+        await self.templates.update_one({"_id": template_id}, {"$set": fields})
+        await self._store_version({**template, **fields, "_id": template_id}, new_version)
+        return await self.get_template(template_id)
+
+    async def contribute(self, user_id: str, payload: ContributeIn) -> TemplateDetailOut:
+        raw_text = json.dumps(payload.workflow_json, ensure_ascii=False)
+        analysis = analyze_workflow(raw_text, "community.json")
+        if "rejected" in analysis:
+            raise ProviderError("template_contribute_invalid")
+        now = _utcnow()
+        doc = {
+            "_id": uuid.uuid4().hex,
+            "source_key": f"community:{user_id}:{uuid.uuid4().hex}",
+            "name": payload.name,
+            "description": "",
+            "category": payload.category or analysis["category"],
+            "source_kind": "community",
+            "source_id": None,
+            "source_path": None,
+            "source_url": None,
+            "node_count": analysis["node_count"],
+            "node_types": analysis["node_types"],
+            "credential_types": analysis["credential_types"],
+            "complexity": analysis["complexity"],
+            "compatibility": analysis["compatibility"],
+            "community_nodes": analysis["community_nodes"],
+            "security_flag": analysis["security_flag"],
+            "risk_flags": analysis["risk_flags"],
+            "has_code_node": analysis["has_code_node"],
+            "has_http_node": analysis["has_http_node"],
+            "http_urls": analysis["http_urls"],
+            "workflow_json": analysis["workflow_json"],
+            "license": "Người đóng góp tự chịu trách nhiệm về bản quyền nội dung.",
+            "attribution": "Đóng góp bởi người dùng MindFlow",
+            "content_hash": hashlib.sha256(raw_text.encode("utf-8")).hexdigest(),
+            "review_status": "pending_review",
+            "version": 1,
+            "created_by": user_id,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await self.templates.insert_one(doc)
+        await self._store_version(doc, 1)
+        return await self.get_template(str(doc["_id"]))
 
     @staticmethod
     def _log_out(doc: dict) -> TemplateImportLogOut:
@@ -588,3 +780,184 @@ class WorkflowTemplateService:
             raise ProviderError("template_not_found")
         doc = await self.templates.find_one({"_id": template_id}, {"workflow_json": 0})
         return self._summary_out(doc)
+
+
+# -- Phase 3: per-user sync -------------------------------------------------
+
+USER_WORKFLOWS_COLLECTION = "user_workflows"
+
+
+class WorkflowSyncService:
+    """Installs approved shared templates into the user's n8n and tracks
+    the mapping per user.
+
+    Installing reuses the n8n Platform create path (workflow lands
+    inactive in n8n); updating PATCHes the installed copy with the new
+    template definition; removing deletes the copy from n8n and then the
+    mapping — the shared template itself is never touched. Because the
+    current platform is one shared n8n instance, ownership lives in this
+    mapping, exactly as audited in the Phase 0 report.
+    """
+
+    def __init__(self, db: AsyncIOMotorDatabase, platform: "N8nPlatformService"):
+        self.db = db
+        self.platform = platform
+
+    @property
+    def installs(self):
+        return self.db[USER_WORKFLOWS_COLLECTION]
+
+    @property
+    def templates(self):
+        return self.db[TEMPLATES_COLLECTION]
+
+    @staticmethod
+    def _install_out(doc: dict, template: dict | None) -> UserWorkflowOut:
+        latest = int(template.get("version", doc.get("installed_version", 1))) if template else int(doc.get("installed_version", 1))
+        installed = int(doc.get("installed_version", 1))
+        return UserWorkflowOut(
+            id=str(doc["_id"]),
+            template_id=doc.get("template_id", ""),
+            template_name=(template or {}).get("name", doc.get("template_name", "")),
+            category=(template or {}).get("category", ""),
+            n8n_workflow_id=doc.get("n8n_workflow_id", ""),
+            installed_version=installed,
+            latest_version=latest,
+            update_available=latest > installed,
+            installed_at=doc.get("installed_at"),
+            updated_at=doc.get("updated_at"),
+        )
+
+    async def list_mine(self, user_id: str) -> list[UserWorkflowOut]:
+        out = []
+        cursor = self.installs.find({"user_id": user_id}).sort("installed_at", -1)
+        async for doc in cursor:
+            template = await self.templates.find_one(
+                {"_id": doc["template_id"]}, {"workflow_json": 0}
+            )
+            out.append(self._install_out(doc, template))
+        return out
+
+    async def sync_candidates(self, user_id: str) -> SyncCandidatesOut:
+        mine = await self.list_mine(user_id)
+        installed_ids = {item.template_id for item in mine}
+        updates = [item for item in mine if item.update_available]
+        available = []
+        cursor = self.templates.find(
+            {"review_status": "approved"}, {"workflow_json": 0}
+        ).sort("name", 1)
+        async for doc in cursor:
+            if str(doc["_id"]) not in installed_ids:
+                available.append(WorkflowTemplateService._summary_out(doc))
+        return SyncCandidatesOut(available=available, updates=updates)
+
+    @staticmethod
+    def _create_payload(template: dict) -> "N8nWorkflowCreateIn":
+        workflow = template.get("workflow_json") or {}
+        return N8nWorkflowCreateIn(
+            name=template.get("name") or workflow.get("name") or "Workflow template",
+            nodes=workflow.get("nodes") or [],
+            connections=workflow.get("connections") or {},
+            settings=workflow.get("settings") or {},
+        )
+
+    async def install(self, user_id: str, template_ids: list[str]) -> InstallResultOut:
+        results: list[InstallResultItemOut] = []
+        for template_id in template_ids:
+            template = await self.templates.find_one({"_id": template_id})
+            if template is None:
+                results.append(
+                    InstallResultItemOut(
+                        template_id=template_id, status="failed", error="template_not_found"
+                    )
+                )
+                continue
+            name = template.get("name", "")
+            if template.get("review_status") != "approved":
+                results.append(
+                    InstallResultItemOut(
+                        template_id=template_id,
+                        template_name=name,
+                        status="failed",
+                        error="template_not_approved",
+                    )
+                )
+                continue
+            existing = await self.installs.find_one(
+                {"user_id": user_id, "template_id": template_id}
+            )
+            if existing is not None:
+                results.append(
+                    InstallResultItemOut(
+                        template_id=template_id,
+                        template_name=name,
+                        status="already_installed",
+                        n8n_workflow_id=existing.get("n8n_workflow_id"),
+                    )
+                )
+                continue
+            try:
+                created = await self.platform.create_workflow(self._create_payload(template))
+            except ProviderError as exc:
+                results.append(
+                    InstallResultItemOut(
+                        template_id=template_id,
+                        template_name=name,
+                        status="failed",
+                        error=exc.code,
+                    )
+                )
+                continue
+            now = _utcnow()
+            doc = {
+                "_id": uuid.uuid4().hex,
+                "user_id": user_id,
+                "template_id": template_id,
+                "template_name": name,
+                "n8n_workflow_id": created.id,
+                "installed_version": int(template.get("version", 1)),
+                "installed_at": now,
+                "updated_at": now,
+            }
+            await self.installs.insert_one(doc)
+            results.append(
+                InstallResultItemOut(
+                    template_id=template_id,
+                    template_name=name,
+                    status="installed",
+                    n8n_workflow_id=created.id,
+                )
+            )
+        return InstallResultOut(results=results)
+
+    async def _get_install(self, user_id: str, install_id: str) -> dict:
+        doc = await self.installs.find_one({"_id": install_id, "user_id": user_id})
+        if doc is None:
+            raise ProviderError("user_workflow_not_found")
+        return doc
+
+    async def update_install(self, user_id: str, install_id: str) -> UserWorkflowOut:
+        doc = await self._get_install(user_id, install_id)
+        template = await self.templates.find_one({"_id": doc["template_id"]})
+        if template is None:
+            raise ProviderError("template_not_found")
+        await self.platform.replace_workflow(
+            doc["n8n_workflow_id"], self._create_payload(template)
+        )
+        await self.installs.update_one(
+            {"_id": install_id},
+            {
+                "$set": {
+                    "installed_version": int(template.get("version", 1)),
+                    "template_name": template.get("name", doc.get("template_name", "")),
+                    "updated_at": _utcnow(),
+                }
+            },
+        )
+        updated = await self.installs.find_one({"_id": install_id})
+        return self._install_out(updated, template)
+
+    async def remove_install(self, user_id: str, install_id: str) -> None:
+        doc = await self._get_install(user_id, install_id)
+        await self.platform.delete_workflow(doc["n8n_workflow_id"])
+        await self.installs.delete_one({"_id": install_id})
