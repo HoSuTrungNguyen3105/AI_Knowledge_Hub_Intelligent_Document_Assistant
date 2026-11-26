@@ -13,6 +13,7 @@ from app.services.ai.base_provider import (
     classify_provider_error,
     describe_provider_error,
 )
+from app.services.ai.rate_limits import note_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,14 @@ class ChatHTTP:
                         "POST", url, headers=headers, json=payload, params=params
                     ) as response:
                         status = response.status_code
+                        # Providers such as Groq report their real
+                        # remaining quota only via x-ratelimit-*
+                        # response headers; keep the newest snapshot
+                        # for display. Providers without such headers
+                        # simply never produce one.
+                        note_rate_limit(
+                            provider, payload.get("model") or model, response.headers
+                        )
                         if status in (401, 403):
                             raise ProviderError("provider_authentication_failed")
                         if status == 429:

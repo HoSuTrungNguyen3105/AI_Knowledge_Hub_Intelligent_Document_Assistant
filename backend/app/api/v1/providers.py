@@ -6,6 +6,7 @@ from app.api.dependencies import AppSettings, CurrentUser, Database
 from app.schemas.providers import (
     ModelCheckResult,
     ProviderCatalog,
+    ProviderRateLimits,
     ProviderMetadata,
     ProviderModels,
     ProviderPatch,
@@ -14,6 +15,7 @@ from app.schemas.providers import (
 from app.services.ai.chat import ChatHTTP
 from app.services.ai.http import ModelListingHTTP
 from app.services.providers import ProviderService
+from app.services.rate_limits import list_rate_limit_snapshots
 
 router = APIRouter(prefix="/ai/providers", tags=["AI providers"])
 
@@ -37,6 +39,12 @@ ProviderChatHTTP = Annotated[ChatHTTP, Depends(provider_chat_http)]
 @router.get("", response_model=ProviderCatalog)
 async def list_providers(user: CurrentUser, db: Database, settings: AppSettings) -> ProviderCatalog:
     return await ProviderService(db, settings).catalog(user.id)
+
+
+@router.get("/rate-limits", response_model=ProviderRateLimits)
+async def list_rate_limits(user: CurrentUser, db: Database) -> ProviderRateLimits:
+    snapshots = await list_rate_limit_snapshots(db, user.id)
+    return ProviderRateLimits(snapshots=snapshots)
 
 
 @router.patch("/{provider}", response_model=ProviderMetadata)
