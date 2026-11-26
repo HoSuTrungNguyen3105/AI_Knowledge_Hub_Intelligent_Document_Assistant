@@ -22,7 +22,7 @@ model covers the rows. All queries are owner-scoped.
 """
 
 import uuid
-from datetime import datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 from uuid import UUID
 
 from app.models.base import utcnow
@@ -95,7 +95,7 @@ class AIUsageService:
     async def _rows(
         self, user_id: UUID, start: datetime, end: datetime
     ) -> list[dict]:
-        return await self.db.ai_requests.find(
+        rows = await self.db.ai_requests.find(
             {"user_id": user_id, "created_at": {"$gte": start, "$lte": end}},
             {
                 "provider": 1,
@@ -108,6 +108,14 @@ class AIUsageService:
                 "created_at": 1,
             },
         ).to_list(length=100000)
+        # Sorting/comparing mixed naive and aware stored datetimes
+        # raises TypeError; normalize naive values to UTC (same rule as
+        # AnalyticsService) so history ordering can never crash.
+        for row in rows:
+            created_at = row.get("created_at")
+            if created_at is not None and created_at.tzinfo is None:
+                row["created_at"] = created_at.replace(tzinfo=UTC)
+        return rows
 
     @staticmethod
     def _row_cost(row: dict, prices: dict) -> float | None:
