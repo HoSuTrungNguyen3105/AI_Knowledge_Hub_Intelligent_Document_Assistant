@@ -30,6 +30,26 @@ export const workflowTemplatesService = {
     });
     return data.total;
   },
+  async listTemplates(params, signal) {
+    const { data } = await api.get(`${path}/templates`, { params, signal });
+    return data;
+  },
+  async getStats(signal) {
+    const { data } = await api.get(`${path}/templates/stats`, { signal });
+    return data;
+  },
+  async getTemplate(id, signal) {
+    const { data } = await api.get(`${path}/templates/${id}`, { signal });
+    return data;
+  },
+  async reviewTemplate(id, reviewStatus, signal) {
+    const { data } = await api.patch(
+      `${path}/templates/${id}/review`,
+      { review_status: reviewStatus },
+      { signal },
+    );
+    return data;
+  },
 };
 
 export function getWorkflowTemplatesError(error, fallback) {
