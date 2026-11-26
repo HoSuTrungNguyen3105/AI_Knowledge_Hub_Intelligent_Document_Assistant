@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import time
 
@@ -36,7 +37,36 @@ from app.services.ai.registry import PROVIDERS
 from app.services.synthesis import require_chat_target
 
 MAX_CONTEXT_CHARS = 12000
-TIMEOUT_SECONDS = 120
+COMPACT_CONTEXT_CHARS = 3000
+TIMEOUT_SECONDS = 60
+MAX_CANDIDATES = 5
+
+logger = logging.getLogger(__name__)
+
+# Well-known chat model families are tried first; known small-context
+# models (allam-2-7b has a 4k window that a full workflow JSON plus a
+# useful answer can exceed on input alone) are tried last.
+_PREFERRED_MARKERS = (
+    "gpt-oss",
+    "llama",
+    "qwen",
+    "gemini",
+    "gpt-4",
+    "gpt-5",
+    "claude",
+    "deepseek",
+    "kimi",
+)
+_SMALL_CONTEXT_MARKERS = ("allam",)
+
+
+def _candidate_rank(model_id: str) -> tuple[int, str]:
+    lowered = model_id.lower()
+    if any(marker in lowered for marker in _SMALL_CONTEXT_MARKERS):
+        return (2, lowered)
+    if any(marker in lowered for marker in _PREFERRED_MARKERS):
+        return (0, lowered)
+    return (1, lowered)
 
 TASK_INSTRUCTIONS = {
     "explain": (
@@ -133,98 +163,141 @@ class TemplateAssistantService:
         self.providers = ProviderRepository(db)
         self.requests = ChatRepository(db)
 
-    async def _resolve_target(self, user_id, provider: str | None, model_id: str | None):
+    async def _resolve_candidates(
+        self, user_id, provider: str | None, model_id: str | None
+    ) -> list[tuple[str, str, str]]:
+        """Ordered (provider, model, key) candidates to try, best first.
+
+        The assistant must not depend on a single auto-picked model: the
+        first synced model of a provider can be a small-context or
+        otherwise unsuitable one while another configured model works
+        fine. Candidates prefer well-known chat models and deprioritise
+        known small-context ones; an explicitly requested provider+model
+        is honoured as the only candidate.
+        """
         if provider and model_id:
             credential, _model = await require_chat_target(
                 self.providers, user_id, provider, model_id
             )
             key = self.vault.decrypt(credential.encrypted_api_key, user_id, provider)
-            return provider, model_id, key
+            return [(provider, model_id, key)]
+        candidates: list[tuple[str, str, str]] = []
         for provider_id, definition in PROVIDERS.items():
             if not definition.implemented:
                 continue
             credential = await self.providers.get(user_id, provider_id)
             if credential is None or not credential.enabled:
                 continue
-            for model in await self.providers.models(user_id, provider_id):
-                if model.capabilities.get("chat") is False:
-                    continue
-                key = self.vault.decrypt(
-                    credential.encrypted_api_key, user_id, provider_id
-                )
-                return provider_id, model.id, key
-        raise ProviderError("template_assistant_unavailable")
+            models = [
+                model
+                for model in await self.providers.models(user_id, provider_id)
+                if model.capabilities.get("chat") is not False
+            ]
+            if not models:
+                continue
+            key = self.vault.decrypt(
+                credential.encrypted_api_key, user_id, provider_id
+            )
+            for model in sorted(models, key=lambda item: _candidate_rank(item.id)):
+                candidates.append((provider_id, model.id, key))
+        if not candidates:
+            raise ProviderError("template_assistant_unavailable")
+        return candidates[:MAX_CANDIDATES]
 
     async def ask(
         self, user_id, template: TemplateDetailOut, payload: AssistantIn
     ) -> AssistantOut:
-        provider, model_id, key = await self._resolve_target(
+        candidates = await self._resolve_candidates(
             user_id, payload.provider, payload.model
         )
         instruction = TASK_INSTRUCTIONS[payload.task]
-        parts = [
-            instruction,
-            "",
-            "Thông tin workflow (JSON rút gọn):",
-            _workflow_context(template),
-        ]
-        if payload.task == "explain_node" and payload.node_name:
-            parts.append(f"Node cần giải thích: {payload.node_name}")
-        if payload.prompt:
-            parts.append(f"Yêu cầu của người dùng: {payload.prompt}")
-        prompt = "\n".join(parts)
-        adapter = create_provider(provider, chat_http=self.chat_http)
-        # Token ladder: some models reject a large max_output_tokens
-        # outright (e.g. a 4k-context model asked for 4096 output tokens),
-        # so retry with smaller budgets before giving up — the same
-        # failure mode the Code Analyzer hit with allam-2-7b.
+
+        def build_prompt(context: str) -> str:
+            parts = [instruction, "", "Thông tin workflow (JSON rút gọn):", context]
+            if payload.task == "explain_node" and payload.node_name:
+                parts.append(f"Node cần giải thích: {payload.node_name}")
+            if payload.prompt:
+                parts.append(f"Yêu cầu của người dùng: {payload.prompt}")
+            return "\n".join(parts)
+
+        full_context = _workflow_context(template)
+        prompts = [build_prompt(full_context)]
+        compact_context = full_context[:COMPACT_CONTEXT_CHARS]
+        if compact_context != full_context:
+            # Second pass with a much smaller prompt for small-context
+            # models, whose limit the full workflow JSON alone can fill.
+            prompts.append(build_prompt(compact_context))
         budgets = (
-            (8192, 4096, 2048, 1024)
-            if payload.task == "customize"
-            else (4096, 2048, 1024, 512)
+            (4096, 2048, 1024) if payload.task == "customize" else (2048, 1024, 512)
         )
         started = time.monotonic()
         text = ""
         input_tokens = output_tokens = None
         status = "error"
         last_error_code: str | None = None
-        for budget in budgets:
-            request = ChatRequest(
-                model=model_id,
-                turns=(ChatTurn("user", prompt),),
-                max_output_tokens=budget,
-            )
-            chunks: list[str] = []
-            attempt_in = attempt_out = None
-
-            async def collect() -> None:
-                nonlocal attempt_in, attempt_out
-                async for event in adapter.stream_chat(key, request):
-                    if event.kind == "delta":
-                        chunks.append(event.text)
-                    elif event.kind == "usage":
-                        if event.input_tokens is not None:
-                            attempt_in = event.input_tokens
-                        if event.output_tokens is not None:
-                            attempt_out = event.output_tokens
-
-            try:
-                await asyncio.wait_for(collect(), timeout=TIMEOUT_SECONDS)
-            except ProviderError as exc:
-                # Keep the provider's real error code instead of masking
-                # it as a generic generation failure.
-                last_error_code = exc.code
-                continue
-            except Exception:  # noqa: BLE001 - retried with a smaller budget
-                last_error_code = "generation_failed"
-                continue
-            candidate = "".join(chunks)
-            if candidate.strip():
-                text = candidate
-                input_tokens, output_tokens = attempt_in, attempt_out
-                status = "success"
+        provider = candidates[0][0]
+        model_id = candidates[0][1]
+        for prompt in prompts:
+            if status == "success":
                 break
-            last_error_code = "generation_failed"
+            for cand_provider, cand_model, cand_key in candidates:
+                if status == "success":
+                    break
+                provider, model_id = cand_provider, cand_model
+                adapter = create_provider(cand_provider, chat_http=self.chat_http)
+                for budget in budgets:
+                    request = ChatRequest(
+                        model=cand_model,
+                        turns=(ChatTurn("user", prompt),),
+                        max_output_tokens=budget,
+                    )
+                    chunks: list[str] = []
+                    attempt_in = attempt_out = None
+
+                    async def collect() -> None:
+                        nonlocal attempt_in, attempt_out
+                        async for event in adapter.stream_chat(cand_key, request):
+                            if event.kind == "delta":
+                                chunks.append(event.text)
+                            elif event.kind == "usage":
+                                if event.input_tokens is not None:
+                                    attempt_in = event.input_tokens
+                                if event.output_tokens is not None:
+                                    attempt_out = event.output_tokens
+
+                    try:
+                        await asyncio.wait_for(collect(), timeout=TIMEOUT_SECONDS)
+                    except ProviderError as exc:
+                        # Keep the provider's real error code instead of
+                        # masking it as a generic generation failure.
+                        last_error_code = exc.code
+                        logger.warning(
+                            "template assistant attempt failed: provider=%s "
+                            "model=%s budget=%s code=%s",
+                            cand_provider,
+                            cand_model,
+                            budget,
+                            exc.code,
+                        )
+                        continue
+                    except Exception as exc:  # noqa: BLE001 - try next budget/model
+                        last_error_code = "generation_failed"
+                        logger.warning(
+                            "template assistant attempt failed: provider=%s "
+                            "model=%s budget=%s error=%r",
+                            cand_provider,
+                            cand_model,
+                            budget,
+                            exc,
+                        )
+                        continue
+                    candidate_text = "".join(chunks)
+                    if candidate_text.strip():
+                        text = candidate_text
+                        input_tokens, output_tokens = attempt_in, attempt_out
+                        status = "success"
+                        break
+                    last_error_code = "generation_failed"
         latency_ms = int((time.monotonic() - started) * 1000)
         await self.requests.record_request(
             user_id,
