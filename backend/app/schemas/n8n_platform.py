@@ -79,14 +79,80 @@ class N8nWorkflowDetailOut(BaseModel):
     nodes: list[N8nNodeOut] = []
 
 
-class N8nParamUpdateIn(BaseModel):
-    node: str = Field(min_length=1, max_length=200)
-    path: str = Field(min_length=1, max_length=200)
-    value: Any = None
+class N8nWorkflowValidateIn(BaseModel):
+    """A parsed workflow JSON object sent for validation only.
+
+    Nothing is created in n8n; the service checks the structure and returns
+    a preview so the user can confirm before the real import.
+    """
+
+    workflow: dict[str, Any]
 
 
-class N8nParamUpdatesIn(BaseModel):
-    updates: list[N8nParamUpdateIn] = Field(min_length=1, max_length=50)
+class N8nWorkflowValidateOut(BaseModel):
+    valid: bool
+    # Machine-readable problem codes (workflow_name_missing,
+    # workflow_nodes_missing, workflow_node_missing_name,
+    # workflow_node_missing_type, workflow_connections_invalid,
+    # workflow_not_an_object); empty when valid.
+    errors: list[str] = []
+    name: str | None = None
+    node_count: int = 0
+    node_types: list[str] = []
+    triggers: list[str] = []
+    webhook_paths: list[str] = []
+
+
+class N8nWorkflowExportOut(BaseModel):
+    """The freshest workflow definition, read live from n8n for download."""
+
+    id: str
+    name: str
+    workflow: dict[str, Any]
+
+
+class N8nStatsOut(BaseModel):
+    """Dashboard statistics for the Workflow Management page.
+
+    Workflow counts come from the synced mirror. Execution counts are read
+    live from the n8n executions API for the current UTC day; they stay
+    None (with `executions_error` set) when n8n cannot be read — numbers
+    are never invented.
+    """
+
+    total_workflows: int
+    active_workflows: int
+    inactive_workflows: int
+    executions_today: int | None = None
+    failed_executions_today: int | None = None
+    # True when the scan hit its page cap while more of today's executions
+    # may exist; the counts are then a lower bound.
+    executions_truncated: bool = False
+    executions_error: str | None = None
+    checked_at: datetime
+
+
+class N8nExecutionOut(BaseModel):
+    """One n8n execution (any workflow, not only MindFlow-started runs)."""
+
+    id: str
+    workflow_id: str
+    # Joined from the synced workflow mirror; falls back to the id.
+    workflow_name: str
+    # success | error | running | waiting | stopped
+    status: str
+    mode: str | None = None
+    started_at: datetime | None = None
+    stopped_at: datetime | None = None
+    duration_ms: int | None = None
+    error: str | None = None
+
+
+class N8nExecutionListOut(BaseModel):
+    items: list[N8nExecutionOut]
+    total: int
+    # Set when n8n could not be read; items is then empty, never faked.
+    error: str | None = None
 
 
 class N8nRunCreateIn(BaseModel):
@@ -132,3 +198,7 @@ class N8nWorkflowCreateIn(BaseModel):
     nodes: list[dict[str, Any]] = Field(min_length=1, max_length=200)
     connections: dict[str, Any] = Field(default_factory=dict)
     settings: dict[str, Any] = Field(default_factory=dict)
+
+
+class N8nExecutionDetailOut(N8nExecutionOut):
+    node_statuses: list[N8nNodeStatusOut] = []

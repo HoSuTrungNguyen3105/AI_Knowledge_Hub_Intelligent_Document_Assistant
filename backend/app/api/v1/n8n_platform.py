@@ -1,18 +1,23 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response, status
 
 from app.api.dependencies import AppSettings, CurrentUser, Database
 from app.schemas.n8n_platform import (
-    N8nParamUpdatesIn,
+    N8nExecutionDetailOut,
+    N8nExecutionListOut,
     N8nRunCreateIn,
     N8nRunListOut,
     N8nRunOut,
+    N8nStatsOut,
     N8nStatusOut,
     N8nWorkflowCreateIn,
     N8nWorkflowDetailOut,
+    N8nWorkflowExportOut,
     N8nWorkflowListOut,
     N8nWorkflowOut,
+    N8nWorkflowValidateIn,
+    N8nWorkflowValidateOut,
 )
 from app.services.n8n_platform import N8nApiHTTP, N8nPlatformService
 
@@ -73,25 +78,107 @@ async def get_n8n_workflow_detail(
     settings: AppSettings,
     http: N8nApiHTTPDep,
 ) -> N8nWorkflowDetailOut:
-    """One workflow with every node's editable (scalar) parameters."""
+    """One workflow with its nodes (read-only detail view). Node
+    parameters are edited in n8n itself, never from MindFlow."""
     return await N8nPlatformService(db, settings, http).get_workflow_detail(workflow_id)
 
 
-@router.post("/workflows/{workflow_id}/parameters", response_model=N8nWorkflowDetailOut)
-async def update_n8n_workflow_parameters(
-    workflow_id: str,
-    payload: N8nParamUpdatesIn,
+@router.post("/workflows/validate", response_model=N8nWorkflowValidateOut)
+async def validate_n8n_workflow(
+    payload: N8nWorkflowValidateIn,
     user: CurrentUser,
     db: Database,
     settings: AppSettings,
     http: N8nApiHTTPDep,
-) -> N8nWorkflowDetailOut:
-    """Quick-edit node parameter values; the backend PATCHes the workflow
-    in n8n. Only existing scalar values change — structure, connections and
-    credentials are never touched from MindFlow."""
-    return await N8nPlatformService(db, settings, http).update_parameters(
-        workflow_id, payload.updates
+) -> N8nWorkflowValidateOut:
+    """Validate a parsed workflow JSON and preview it. Creates nothing —
+    the import flow calls this before the user confirms."""
+    return await N8nPlatformService(db, settings, http).validate_workflow(
+        payload.workflow
     )
+
+
+@router.put("/workflows/{workflow_id}", response_model=N8nWorkflowOut)
+async def update_n8n_workflow(
+    workflow_id: str,
+    payload: N8nWorkflowCreateIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> N8nWorkflowOut:
+    """Replace an existing workflow's definition with an imported JSON.
+    The stored n8n id decides which workflow is updated."""
+    return await N8nPlatformService(db, settings, http).update_workflow(
+        workflow_id, payload
+    )
+
+
+@router.delete("/workflows/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_n8n_workflow(
+    workflow_id: str,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> Response:
+    """Delete a workflow in n8n and drop its mirror entry."""
+    await N8nPlatformService(db, settings, http).delete_workflow(workflow_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/workflows/{workflow_id}/export", response_model=N8nWorkflowExportOut)
+async def export_n8n_workflow(
+    workflow_id: str,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> N8nWorkflowExportOut:
+    """The workflow definition read live from n8n, for download/backup."""
+    return await N8nPlatformService(db, settings, http).export_workflow(workflow_id)
+
+
+@router.get("/stats", response_model=N8nStatsOut)
+async def get_n8n_stats(
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> N8nStatsOut:
+    """Workflow Management dashboard statistics: synced workflow counts
+    plus today's execution counts read live from n8n (None when n8n
+    cannot be read — never estimated)."""
+    return await N8nPlatformService(db, settings, http).get_stats()
+
+
+@router.get("/executions", response_model=N8nExecutionListOut)
+async def list_n8n_executions(
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+    workflow_id: str | None = None,
+    status_filter: str | None = None,
+    limit: int = 50,
+) -> N8nExecutionListOut:
+    """Execution history synced live from n8n, with workflow/status
+    filters. A read failure is reported on the object, not raised."""
+    return await N8nPlatformService(db, settings, http).list_executions(
+        workflow_id=workflow_id, status_filter=status_filter, limit=limit
+    )
+
+
+@router.get("/executions/{execution_id}", response_model=N8nExecutionDetailOut)
+async def get_n8n_execution(
+    execution_id: str,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> N8nExecutionDetailOut:
+    """One execution with its error (if any) and per-node results."""
+    return await N8nPlatformService(db, settings, http).get_execution(execution_id)
 
 
 @router.post("/workflows/{workflow_id}/activate", response_model=N8nWorkflowOut)

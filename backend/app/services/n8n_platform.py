@@ -19,18 +19,23 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import Settings
 from app.schemas.n8n_platform import (
+    N8nExecutionDetailOut,
+    N8nExecutionListOut,
+    N8nExecutionOut,
     N8nNodeOut,
     N8nNodeParamOut,
     N8nNodeStatusOut,
-    N8nParamUpdateIn,
     N8nRunCreateIn,
     N8nRunListOut,
     N8nRunOut,
+    N8nStatsOut,
     N8nStatusOut,
     N8nWorkflowCreateIn,
     N8nWorkflowDetailOut,
+    N8nWorkflowExportOut,
     N8nWorkflowListOut,
     N8nWorkflowOut,
+    N8nWorkflowValidateOut,
 )
 from app.services.ai.base_provider import ProviderError
 
@@ -304,36 +309,135 @@ def workflow_detail(raw: dict, base_url: str) -> N8nWorkflowDetailOut:
     )
 
 
-def _set_existing_param(parameters: dict, path: str, value) -> bool:
-    """Set a scalar leaf that already exists; never create structure.
+def _execution_error_message(raw: dict) -> str | None:
+    """Best-effort failure message from an n8n execution object."""
+    error = raw.get("error")
+    if isinstance(error, dict) and error.get("message"):
+        return str(error["message"])[:500]
+    if isinstance(error, str) and error:
+        return error[:500]
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    result = data.get("resultData") if isinstance(data, dict) else None
+    if isinstance(result, dict):
+        result_error = result.get("error")
+        if isinstance(result_error, dict) and result_error.get("message"):
+            return str(result_error["message"])[:500]
+        if isinstance(result_error, str) and result_error:
+            return result_error[:500]
+    return None
 
-    Returns False when any segment is missing or the current leaf is not a
-    scalar of a compatible kind — the quick editor may only change values,
-    never reshape a workflow.
+
+def _history_status(raw: dict) -> str:
+    """Status for the execution history: like `_execution_status` but
+    `waiting` stays visible instead of collapsing into `running`."""
+    if _execution_error_message(raw):
+        return "error"
+    status = raw.get("status")
+    if isinstance(status, str):
+        lowered = status.lower()
+        if lowered == "success":
+            return "success"
+        if lowered in ("error", "crashed"):
+            return "error"
+        if lowered == "waiting":
+            return "waiting"
+        if lowered in ("canceled", "cancelled"):
+            return "stopped"
+        if lowered in ("running", "new", "paused"):
+            return "running"
+    if raw.get("finished") is True:
+        return "success"
+    return "running"
+
+
+def _execution_out(raw: dict, names: dict[str, str]) -> N8nExecutionOut:
+    """Map one n8n execution summary/detail to the history shape (pure)."""
+    started = _parse_iso(raw.get("startedAt")) or _parse_iso(raw.get("createdAt"))
+    stopped = _parse_iso(raw.get("stoppedAt"))
+    duration_ms = None
+    if started is not None and stopped is not None:
+        duration_ms = int((stopped - started).total_seconds() * 1000)
+    workflow_id = str(raw.get("workflowId") or "")
+    workflow_data = raw.get("workflowData")
+    fallback_name = (
+        str(workflow_data.get("name"))
+        if isinstance(workflow_data, dict) and workflow_data.get("name")
+        else workflow_id
+    )
+    mode = raw.get("mode")
+    return N8nExecutionOut(
+        id=str(raw.get("id") or ""),
+        workflow_id=workflow_id,
+        workflow_name=names.get(workflow_id) or fallback_name,
+        status=_history_status(raw),
+        mode=mode if isinstance(mode, str) else None,
+        started_at=started,
+        stopped_at=stopped,
+        duration_ms=duration_ms,
+        error=_execution_error_message(raw),
+    )
+
+
+def validate_definition(raw) -> N8nWorkflowValidateOut:
+    """Structural check of a parsed workflow JSON object (pure).
+
+    Mirrors the rules the create path enforces (name present, nodes a
+    non-empty list, every node named and typed) plus a connections shape
+    check, and builds the preview the import flow shows before creating.
     """
-    parts = path.split(".")
-    node = parameters
-    for part in parts[:-1]:
-        if not isinstance(node, dict) or part not in node:
-            return False
-        node = node[part]
-    leaf = parts[-1]
-    if not isinstance(node, dict) or leaf not in node:
-        return False
-    current = node[leaf]
-    if isinstance(current, bool):
-        if not isinstance(value, bool):
-            return False
-    elif isinstance(current, (int, float)):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return False
-    elif isinstance(current, str):
-        if not isinstance(value, str) or len(value) > 8000:
-            return False
+    if not isinstance(raw, dict):
+        return N8nWorkflowValidateOut(valid=False, errors=["workflow_not_an_object"])
+    errors: list[str] = []
+    name = raw.get("name")
+    if not isinstance(name, str) or not name.strip():
+        errors.append("workflow_name_missing")
+    nodes = raw.get("nodes")
+    node_types: list[str] = []
+    triggers: list[str] = []
+    webhook_paths: list[str] = []
+    if not isinstance(nodes, list) or not nodes:
+        errors.append("workflow_nodes_missing")
+        nodes = []
     else:
-        return False
-    node[leaf] = value
-    return True
+        missing_name = False
+        missing_type = False
+        for node in nodes:
+            if not isinstance(node, dict):
+                missing_name = True
+                missing_type = True
+                continue
+            if not isinstance(node.get("name"), str) or not node.get("name"):
+                missing_name = True
+            node_type = node.get("type")
+            if not isinstance(node_type, str) or not node_type:
+                missing_type = True
+                continue
+            if node_type not in node_types:
+                node_types.append(node_type)
+            kind = _trigger_kind(node_type)
+            if kind and kind not in triggers:
+                triggers.append(kind)
+            if kind == "webhook":
+                params = node.get("parameters")
+                path = params.get("path") if isinstance(params, dict) else None
+                if isinstance(path, str) and path and path not in webhook_paths:
+                    webhook_paths.append(path)
+        if missing_name:
+            errors.append("workflow_node_missing_name")
+        if missing_type:
+            errors.append("workflow_node_missing_type")
+    connections = raw.get("connections")
+    if connections is not None and not isinstance(connections, dict):
+        errors.append("workflow_connections_invalid")
+    return N8nWorkflowValidateOut(
+        valid=not errors,
+        errors=errors,
+        name=name if isinstance(name, str) and name else None,
+        node_count=len(nodes),
+        node_types=sorted(node_types),
+        triggers=triggers,
+        webhook_paths=webhook_paths,
+    )
 
 
 class N8nPlatformService:
@@ -544,14 +648,11 @@ class N8nPlatformService:
             raise ProviderError("n8n_api_failed")
         return data
 
-    async def create_workflow(self, payload_in: N8nWorkflowCreateIn) -> N8nWorkflowOut:
-        """Create a workflow in n8n from a user-supplied definition.
-
-        The definition is validated structurally (every node needs a name
-        and a type) and forwarded as-is otherwise. n8n creates it inactive;
-        the user reviews, wires credentials and activates it in n8n.
-        """
-        for node in payload_in.nodes:
+    @staticmethod
+    def _validate_nodes(nodes: list) -> None:
+        """Every node needs a name and a type; anything else is forwarded
+        to n8n exactly as supplied."""
+        for node in nodes:
             if (
                 not isinstance(node, dict)
                 or not isinstance(node.get("name"), str)
@@ -560,6 +661,15 @@ class N8nPlatformService:
                 or not node.get("type")
             ):
                 raise ProviderError("n8n_workflow_invalid")
+
+    async def create_workflow(self, payload_in: N8nWorkflowCreateIn) -> N8nWorkflowOut:
+        """Create a workflow in n8n from a user-supplied definition.
+
+        The definition is validated structurally (every node needs a name
+        and a type) and forwarded as-is otherwise. n8n creates it inactive;
+        the user reviews, wires credentials and activates it in n8n.
+        """
+        self._validate_nodes(payload_in.nodes)
         key = self._require_key()
         payload = {
             "name": payload_in.name,
@@ -612,68 +722,180 @@ class N8nPlatformService:
 
     async def delete_workflow(self, workflow_id: str) -> None:
         """Delete a workflow from n8n. A 404 counts as success: the goal
-        state (workflow gone) is already reached."""
+        state (workflow gone) is already reached — the mirror entry is
+        dropped either way so the list cannot resurrect it."""
         key = self._require_key()
         status = await self.http.delete_json(
             f"{self.base_url}/api/v1/workflows/{workflow_id}",
             key,
             self.settings.n8n_api_timeout_seconds,
         )
-        if status == 404:
-            return
         if status in (401, 403):
             raise ProviderError("n8n_api_unauthorized")
-        if status >= 400:
+        if status >= 400 and status != 404:
             raise ProviderError("n8n_api_failed")
         await self.workflows.delete_one({"_id": workflow_id})
 
-    async def get_workflow_detail(self, workflow_id: str) -> N8nWorkflowDetailOut:
+    async def update_workflow(
+        self, workflow_id: str, payload_in: N8nWorkflowCreateIn
+    ) -> N8nWorkflowOut:
+        """Replace an existing workflow's definition from an imported JSON
+        (Workflow Management "Update JSON"). The id comes from the stored
+        link, never from the payload, so an update can never create or
+        overwrite a different workflow; on failure nothing is deleted."""
+        self._validate_nodes(payload_in.nodes)
+        return await self.replace_workflow(workflow_id, payload_in)
+
+    async def validate_workflow(self, raw) -> N8nWorkflowValidateOut:
+        """Validate-only pass for the import flow; touches nothing."""
+        return validate_definition(raw)
+
+    async def export_workflow(self, workflow_id: str) -> N8nWorkflowExportOut:
+        """The workflow definition read live from n8n (never the mirror),
+        so an export is always the freshest version."""
         raw = await self._get_raw_workflow(workflow_id)
-        return workflow_detail(raw, self.base_url)
+        return N8nWorkflowExportOut(
+            id=str(raw.get("id") or workflow_id),
+            name=str(raw.get("name") or ""),
+            workflow=raw,
+        )
 
-    async def update_parameters(
-        self, workflow_id: str, updates: list[N8nParamUpdateIn]
-    ) -> N8nWorkflowDetailOut:
-        """Quick-edit scalar node parameters and PATCH the workflow back.
+    async def _count_today_executions(self, key: str) -> tuple[int, int, bool]:
+        """Count today's (UTC) executions and failures from the n8n API.
 
-        Only values of parameters that already exist are changed; node
-        structure, connections and credentials are never touched from here.
+        Executions come newest-first; paging stops at the first page that
+        reaches an older execution, or at a hard page cap — in that case
+        the counts are a lower bound and `truncated` says so.
         """
-        raw = await self._get_raw_workflow(workflow_id)
-        nodes = raw.get("nodes") or []
-        by_name: dict[str, dict] = {}
-        for node in nodes:
-            if isinstance(node, dict) and isinstance(node.get("name"), str):
-                by_name.setdefault(node["name"], node)
-        for update in updates:
-            node = by_name.get(update.node)
-            if node is None or not _set_existing_param(
-                node.setdefault("parameters", {}), update.path, update.value
+        boundary = _utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = 0
+        failed = 0
+        truncated = False
+        cursor: str | None = None
+        for _page in range(5):
+            url = f"{self.base_url}/api/v1/executions?limit={PAGE_LIMIT}"
+            if cursor:
+                url += f"&cursor={cursor}"
+            status, data = await self.http.get_json(
+                url, key, self.settings.n8n_api_timeout_seconds
+            )
+            if status in (401, 403):
+                raise ProviderError("n8n_api_unauthorized")
+            if status >= 400 or not isinstance(data, dict) or not isinstance(
+                data.get("data"), list
             ):
-                raise ProviderError("n8n_parameter_not_found")
-        key = self.api_key
-        payload = {
-            "name": raw.get("name"),
-            "nodes": nodes,
-            "connections": raw.get("connections") or {},
-            "settings": raw.get("settings") or {},
-        }
-        status, data = await self.http.patch_json(
-            f"{self.base_url}/api/v1/workflows/{workflow_id}",
+                raise ProviderError("n8n_api_failed")
+            reached_older = False
+            for item in data["data"]:
+                if not isinstance(item, dict):
+                    continue
+                started = _parse_iso(item.get("startedAt")) or _parse_iso(
+                    item.get("createdAt")
+                )
+                if started is None:
+                    continue
+                if started >= boundary:
+                    today += 1
+                    if _history_status(item) == "error":
+                        failed += 1
+                else:
+                    reached_older = True
+            cursor = data.get("nextCursor")
+            if reached_older or not cursor:
+                break
+        else:
+            truncated = True
+        return today, failed, truncated
+
+    async def get_stats(self) -> N8nStatsOut:
+        listing = await self.list_workflows()
+        active = sum(1 for item in listing.items if item.active)
+        executions_today: int | None = None
+        failed_today: int | None = None
+        truncated = False
+        error: str | None = None
+        try:
+            key = self._require_key()
+            executions_today, failed_today, truncated = (
+                await self._count_today_executions(key)
+            )
+        except ProviderError as err:
+            error = err.code
+        return N8nStatsOut(
+            total_workflows=listing.total,
+            active_workflows=active,
+            inactive_workflows=listing.total - active,
+            executions_today=executions_today,
+            failed_executions_today=failed_today,
+            executions_truncated=truncated,
+            executions_error=error,
+            checked_at=_utcnow(),
+        )
+
+    async def list_executions(
+        self,
+        workflow_id: str | None = None,
+        status_filter: str | None = None,
+        limit: int = 50,
+    ) -> N8nExecutionListOut:
+        """Execution history read live from n8n (all workflows, not only
+        runs MindFlow started). Like the workflow list, a read failure is
+        reported on the object instead of failing the page."""
+        try:
+            key = self._require_key()
+            limit = max(1, min(limit, 100))
+            fetch = min(250, limit * 3) if status_filter else limit
+            url = f"{self.base_url}/api/v1/executions?limit={fetch}"
+            if workflow_id:
+                url += f"&workflowId={workflow_id}"
+            status, data = await self.http.get_json(
+                url, key, self.settings.n8n_api_timeout_seconds
+            )
+            if status in (401, 403):
+                raise ProviderError("n8n_api_unauthorized")
+            if status >= 400 or not isinstance(data, dict) or not isinstance(
+                data.get("data"), list
+            ):
+                raise ProviderError("n8n_api_failed")
+            names = {item.id: item.name for item in await self._cached()}
+            mapped = [
+                _execution_out(raw, names)
+                for raw in data["data"]
+                if isinstance(raw, dict)
+            ]
+            if status_filter:
+                mapped = [item for item in mapped if item.status == status_filter]
+            return N8nExecutionListOut(
+                items=mapped[:limit], total=len(mapped), error=None
+            )
+        except ProviderError as err:
+            return N8nExecutionListOut(items=[], total=0, error=err.code)
+
+    async def get_execution(self, execution_id: str) -> N8nExecutionDetailOut:
+        key = self._require_key()
+        status, data = await self.http.get_json(
+            f"{self.base_url}/api/v1/executions/{execution_id}?includeData=true",
             key,
-            payload,
             self.settings.n8n_api_timeout_seconds,
         )
         if status == 404:
-            raise ProviderError("n8n_workflow_not_found")
+            raise ProviderError("execution_not_found")
         if status in (401, 403):
             raise ProviderError("n8n_api_unauthorized")
-        if status >= 400:
+        if status >= 400 or not isinstance(data, dict):
             raise ProviderError("n8n_api_failed")
-        updated = data if isinstance(data, dict) and data.get("id") is not None else raw
-        if isinstance(updated, dict):
-            await self._store(parse_workflow(updated, self.base_url), _utcnow())
-            return workflow_detail(updated, self.base_url)
+        raw = data
+        if not isinstance(raw.get("id"), str) and isinstance(data.get("data"), dict):
+            raw = data["data"]
+        names = {item.id: item.name for item in await self._cached()}
+        base = _execution_out(raw, names)
+        return N8nExecutionDetailOut(
+            **base.model_dump(),
+            node_statuses=_node_statuses_from_execution(raw),
+        )
+
+    async def get_workflow_detail(self, workflow_id: str) -> N8nWorkflowDetailOut:
+        raw = await self._get_raw_workflow(workflow_id)
         return workflow_detail(raw, self.base_url)
 
     # -- Phase 2: generic runs, reconciled against n8n executions --------
