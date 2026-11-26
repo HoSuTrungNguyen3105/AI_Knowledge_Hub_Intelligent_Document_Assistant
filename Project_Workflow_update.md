@@ -1,512 +1,431 @@
-# MINDFLOW — WORKFLOW TEMPLATE LIBRARY & GITHUB IMPORT INTEGRATION
+# REBUILD WORKFLOWS PAGE – MINDFLOW AI
 
-## 1. Mục tiêu dự án
+## 1. Mục tiêu
 
-Mở rộng MindFlow Automation Hub thành một nền tảng quản lý, khám phá, tạo và sử dụng n8n Workflow.
+Tiến hành thay đổi toàn bộ trang `/agents/workflows`.
 
-Hệ thống cần kết hợp 4 chức năng:
+Hiện tại website đang có giao diện tự xây dựng Workflow Builder gồm Node Catalog, Canvas, Node Editor, Sticky Note Editor và chức năng chỉnh sửa JSON.
 
-1. Workflow Template Library: Thư viện workflow mẫu.
-2. Shared Workflow Sync: Đồng bộ workflow dùng chung vào tài khoản người dùng.
-3. GitHub Template Importer: Trực tiếp truy cập GitHub, tải và nhập các workflow JSON thực tế.
-4. MindFlow Workflow Studio: Cho phép tạo, chỉnh sửa và thực thi workflow trực tiếp trong MindFlow thông qua n8n engine.
+**Yêu cầu: XÓA phần Workflow Builder tự xây dựng hiện tại và thay thế bằng giao diện quản lý n8n Workflow chuyên nghiệp.**
 
-**GitHub repository cần truy cập trực tiếp:**
+Định hướng kiến trúc:
 
-https://github.com/enescingoz/awesome-n8n-templates
+- MindFlow AI: Control Center – quản lý, cấu hình, giám sát và điều phối workflow.
+- n8n: Workflow Engine – thiết kế node, kết nối, xử lý logic và thực thi workflow.
+- Backend: Trung gian giao tiếp giữa MindFlow AI và n8n thông qua REST API.
 
-Lưu ý quan trọng: Tôi muốn Muse thực sự truy cập repository, duyệt các thư mục, lấy các file JSON workflow và đưa dữ liệu thực tế vào hệ thống. Không chỉ thiết kế chức năng kết nối GitHub hoặc tạo dữ liệu demo.
-
----
-
-## 2. Giai đoạn 1 — Audit code hiện tại
-
-Trước khi triển khai, hãy kiểm tra toàn bộ kiến trúc MindFlow hiện tại.
-
-Đặc biệt kiểm tra:
-
-- Agent Workflows.
-- Agent Teams.
-- AI Provider Gateway.
-- Backend API.
-- MongoDB collections.
-- n8n integration hiện có.
-- Workflow execution.
-- Workflow Studio nếu đã có.
-- Các tính năng quản lý workflow và template.
-- Cơ chế xác thực và phân quyền người dùng.
-
-Yêu cầu:
-
-- Tận dụng code hiện có.
-- Không tạo trùng chức năng.
-- Không xây thêm một execution engine thay thế n8n.
-- Không tạo thêm orchestrator nếu Agent Orchestrator hiện tại đã đáp ứng.
-- Chỉ bổ sung những phần thực sự còn thiếu.
-
-Tạo báo cáo audit trước khi thay đổi kiến trúc.
+Không xây dựng lại các tính năng mà n8n đã hỗ trợ.
 
 ---
 
-## 3. Giai đoạn 2 — Trực tiếp lấy workflow từ GitHub
+## 2. Xóa các thành phần hiện tại
 
-Truy cập repository:
+Kiểm tra code của trang `/agents/workflows` và loại bỏ các thành phần thuộc Workflow Builder cũ:
 
-https://github.com/enescingoz/awesome-n8n-templates
+- Node Catalog.
+- AI Agent Node tự xây dựng.
+- Set / Edit Fields Node.
+- Code (JavaScript) Node.
+- IF / ELSE Node.
+- Merge Node.
+- Gmail / Telegram Node tự xây dựng.
+- Canvas kéo thả node.
+- Node Connection Editor.
+- Node Parameter Editor.
+- Sticky Note Editor.
+- Chỉnh sửa thuộc tính node trực tiếp trên website.
+- Chức năng tạo và kết nối node thủ công.
+- Các thành phần UI chỉ phục vụ cho trình dựng workflow riêng.
 
-### 3.1. Thu thập dữ liệu
+Đặc biệt:
+- Xóa các component, state, hook và logic không còn sử dụng sau khi thay đổi.
+- Không chỉ ẩn giao diện bằng CSS.
+- Không để lại các component cũ gây xung đột hoặc khó bảo trì.
+- Không xóa các chức năng dùng chung với những trang khác.
+- Không làm ảnh hưởng đến Agent Studio, Agent Teams, AI Chat và các module hiện có.
 
-- Duyệt README và toàn bộ danh mục workflow.
-- Duyệt các thư mục chứa workflow.
-- Tìm và tải các file JSON thực tế.
-- Thu thập tên, mô tả, danh mục, tác giả nếu có.
-- Lưu URL repository và URL file gốc.
-- Phân tích các node được sử dụng.
-- Xác định các dịch vụ bên ngoài và credentials cần thiết.
-
-Không chỉ lấy danh sách tên workflow. Phải lấy được nội dung JSON để có thể sử dụng và nhập vào n8n.
-
-### 3.2. Phân loại workflow
-
-Tổ chức các template thành các danh mục:
-
-- AI Agents & AI Automation.
-- Chatbot & Conversational AI.
-- Telegram.
-- Discord & Slack.
-- Gmail & Email.
-- Google Drive & Google Sheets.
-- PDF & Document Processing.
-- Database & Storage.
-- Developer & DevOps.
-- GitHub Automation.
-- Marketing & Social Media.
-- Notion & Airtable.
-- WordPress.
-- Data Processing.
-- Webhook & API Automation.
-- Các tích hợp khác.
-
-Có thể bổ sung danh mục nếu repository có những nhóm workflow phù hợp hơn.
-
-### 3.3. Kiểm tra workflow
-
-Với từng file JSON:
-
-- Kiểm tra JSON hợp lệ.
-- Kiểm tra cấu trúc workflow n8n.
-- Xác định node và phiên bản node.
-- Kiểm tra node không tồn tại hoặc không tương thích.
-- Xác định community nodes cần cài.
-- Xác định credentials cần cấu hình.
-- Phát hiện API key, token hoặc thông tin nhạy cảm bị hardcode.
-- Kiểm tra Code nodes, HTTP Request và các thao tác có rủi ro.
-- Kiểm tra thao tác ghi, sửa, xóa hoặc gửi dữ liệu ra bên ngoài.
-
-Không tự động thực thi workflow sau khi tải về.
-
-### 3.4. Báo cáo kết quả nhập
-
-Thống kê chính xác:
-
-- Tổng số workflow tìm thấy.
-- Số file JSON tải thành công.
-- Số JSON hợp lệ.
-- Số workflow tương thích với n8n hiện tại.
-- Số workflow cần bổ sung node.
-- Số workflow cần kiểm duyệt bảo mật.
-- Số workflow được duyệt đưa vào Shared Library.
-- Số workflow bị loại và lý do.
-
-Không tạo số liệu giả. Phải lấy số liệu từ quá trình xử lý thực tế.
+Có thể giữ lại logic Import JSON, Export JSON và Validate JSON nếu có thể tái sử dụng.
 
 ---
 
-## 4. Giai đoạn 3 — GitHub Template Importer
+## 3. Giao diện Workflows mới
 
-Xây dựng cơ chế quản lý nguồn template.
+Thiết kế lại trang `/agents/workflows` thành một trang quản lý workflow.
 
-Luồng:
+### 3.1. Header
 
-GitHub Repository → Fetch JSON → Parse → Validate → Security Review → Compatibility Check → Import → Shared Workflow Library.
+Hiển thị:
 
-Yêu cầu:
+- Tiêu đề: Workflow Management.
+- Mô tả: Quản lý, đồng bộ và giám sát các quy trình tự động hóa thông qua n8n.
+- Trạng thái kết nối n8n:
+  - Connected.
+  - Disconnected.
+  - Connection Error.
+- Nút Refresh Connection.
+- Nút Import Workflow.
+- Nút Create Workflow.
 
-- Có khả năng nhập nhiều workflow.
-- Có thể nhập theo danh mục.
-- Hỗ trợ nhập lại mà không tạo bản ghi trùng lặp.
-- Nhận diện workflow đã tồn tại bằng source ID, file path hoặc hash phù hợp.
-- Phát hiện workflow đã được cập nhật ở GitHub.
-- Theo dõi lịch sử import.
-- Có trạng thái thành công, thất bại và cần kiểm duyệt.
-- Cho phép quản trị viên nhập lại hoặc loại bỏ template.
+### 3.2. Dashboard Statistics
 
-Thiết kế theo hướng có thể thêm nhiều GitHub repository khác trong tương lai.
+Hiển thị các thẻ thống kê:
 
-Không phụ thuộc cứng vào một repository duy nhất.
+| Chỉ số | Mô tả |
+|---|---|
+| Total Workflows | Tổng số workflow được quản lý |
+| Active Workflows | Số workflow đang kích hoạt |
+| Inactive Workflows | Số workflow chưa kích hoạt |
+| Executions Today | Tổng số lần thực thi hôm nay |
+| Failed Executions | Số lần thực thi thất bại |
 
----
+Dữ liệu phải lấy từ backend/n8n khi đã kết nối.
 
-## 5. Giai đoạn 4 — Shared Workflow Library
+Không tự tạo số liệu giả để hiển thị như dữ liệu thực tế.
 
-Tạo kho workflow dùng chung cho MindFlow.
+### 3.3. Workflow Management
 
-Có 4 nguồn template:
+Xây dựng khu vực quản lý workflow dạng danh sách hoặc card.
 
-### MindFlow Official
-Workflow do MindFlow tự xây dựng và kiểm thử.
+Mỗi workflow cần hiển thị:
 
-### GitHub External
-Workflow được nhập từ repository bên ngoài, bao gồm repository đã cung cấp.
-
-### Community
-Workflow do người dùng đóng góp và được kiểm duyệt.
-
-### My Templates
-Workflow cá nhân mà người dùng tự lưu thành template.
-
-Mỗi template phải có:
-
-- Tên.
+- Tên workflow.
 - Mô tả.
-- Danh mục.
-- Ảnh hoặc sơ đồ node.
-- Số lượng node.
-- Danh sách node.
-- Dịch vụ tích hợp.
-- AI provider nếu có.
-- Credentials cần thiết.
-- Mức độ phức tạp.
-- Phiên bản.
-- Nguồn gốc.
-- Tác giả.
-- Thông tin license và attribution.
-- Trạng thái kiểm duyệt.
-- Trạng thái tương thích.
+- Workflow ID trên n8n.
+- Trạng thái Active/Inactive.
+- Thời điểm cập nhật gần nhất.
+- Lần thực thi gần nhất.
+- Kết quả thực thi gần nhất nếu có.
 
-Giao diện cần có:
+Các thao tác:
 
-- Tìm kiếm.
-- Lọc danh mục.
-- Lọc theo nguồn.
-- Lọc theo ứng dụng tích hợp.
-- Lọc theo mức độ phức tạp.
-- Sắp xếp.
-- Phân trang.
-- Xem trước.
-- Xem chi tiết.
-- Thêm vào tài khoản.
+1. View Details.
+2. Open in n8n.
+3. Import / Update JSON.
+4. Export JSON.
+5. Activate / Deactivate.
+6. View Executions.
+7. Delete Workflow.
+
+Yêu cầu:
+- Có tìm kiếm theo tên workflow.
+- Có lọc theo trạng thái.
+- Có phân trang nếu danh sách lớn.
+- Có xác nhận trước khi xóa hoặc thực hiện thao tác quan trọng.
 
 ---
 
-## 6. Giai đoạn 5 — Shared Workflow Sync
+## 4. Chức năng Import JSON Workflow
 
-Đây là một chức năng quan trọng.
+Đây là chức năng quan trọng nhất cần giữ lại từ giao diện cũ.
 
-Tôi muốn workflow được chia sẻ trong thư viện chung nhưng mỗi user tự chọn workflow muốn thêm vào tài khoản.
+Cho phép người dùng nhập workflow JSON được export từ n8n.
 
-### 6.1. User mới
+Giao diện gồm:
 
-Khi user mới đăng nhập:
+- Khu vực upload file `.json`.
+- Textarea để dán JSON trực tiếp.
+- Nút Validate JSON.
+- Nút Import Workflow.
+- Nút Cancel.
 
-- My Workflows ban đầu có 0 workflow.
-- Không tự động thêm workflow mẫu.
-- Hiển thị nút "Đồng bộ Workflow".
+### Quy trình:
 
-### 6.2. Khi nhấn Đồng bộ
+1. Người dùng upload hoặc dán JSON.
+2. Frontend gửi dữ liệu đến backend để kiểm tra.
+3. Backend kiểm tra JSON có hợp lệ hay không.
+4. Kiểm tra các trường cấu trúc workflow cần thiết như `name`, `nodes`, `connections`.
+5. Kiểm tra dữ liệu node và connections.
+6. Hiển thị thông tin workflow trước khi import.
+7. Người dùng xác nhận import.
+8. Backend sử dụng n8n REST API để tạo workflow trên n8n.
+9. Nhận workflow ID từ n8n.
+10. Lưu thông tin liên kết workflow vào database của MindFlow AI.
 
-Ví dụ Shared Library đang có 5 workflow.
+Nếu JSON không hợp lệ:
+- Hiển thị lỗi cụ thể.
+- Không thực hiện import.
+- Không làm mất nội dung JSON người dùng đã nhập.
 
-User nhấn "Đồng bộ Workflow", hệ thống hiển thị 5 workflow đang có.
-
-Mỗi workflow có checkbox để lựa chọn.
-
-Ví dụ:
-
-- AI Research Assistant.
-- GitHub Daily Report.
-- Document Summarizer.
-- Telegram Notification.
-- Website Monitor.
-
-User chọn 2 workflow và xác nhận.
-
-Kết quả:
-
-- Chỉ 2 workflow được thêm vào tài khoản.
-- 3 workflow còn lại vẫn nằm trong Shared Library.
-- My Workflows chỉ hiển thị 2 workflow đã chọn.
-
-### 6.3. Đồng bộ lần tiếp theo
-
-Ví dụ:
-
-- Shared Library ban đầu có 5 workflow.
-- User đã cài 2 workflow.
-- Quản trị viên nhập thêm 10 workflow mới.
-- User nhấn Đồng bộ Workflow.
-- Hệ thống hiển thị các workflow chưa cài và các phiên bản mới.
-- User tự chọn workflow muốn thêm.
-
-Không tự động cài tất cả workflow mới.
-
-### 6.4. Quản lý workflow đã cài
-
-Người dùng có thể:
-
-- Mở workflow.
-- Chỉnh sửa.
-- Chạy thử.
-- Kích hoạt.
-- Tạm dừng.
-- Cập nhật phiên bản.
-- Xóa khỏi tài khoản.
-
-Xóa khỏi tài khoản không được xóa bản gốc trong Shared Library.
+Không tự ý sửa cấu trúc workflow JSON nếu chưa có sự xác nhận.
 
 ---
 
-## 7. Giai đoạn 6 — Workflow Studio trong MindFlow
+## 5. Chức năng Update JSON Workflow
 
-Tôi muốn tạo và chỉnh sửa workflow trực tiếp trong MindFlow, không phải chuyển sang n8n để thao tác.
+Cho phép cập nhật workflow đã tồn tại.
 
-Thiết kế Workflow Studio với:
+Quy trình:
 
-- Visual drag-and-drop.
-- Node catalog.
-- Kết nối các node.
-- Cấu hình node.
-- IF/ELSE.
-- Merge.
-- HTTP Request.
-- Schedule Trigger.
-- Webhook Trigger.
-- Manual Trigger.
-- AI Agent.
-- AI Model.
-- Các node tích hợp phổ biến.
-- Kiểm tra workflow.
-- Chạy thử.
-- Xem input/output.
-- Xem lỗi.
-- Lưu.
-- Kích hoạt.
-- Tạm dừng.
+1. Người dùng chọn workflow.
+2. Chọn Update JSON.
+3. Upload hoặc dán JSON mới.
+4. Validate JSON.
+5. Hiển thị thông tin thay đổi.
+6. Xác nhận cập nhật.
+7. Backend sử dụng n8n REST API cập nhật đúng workflow tương ứng.
+8. Đồng bộ thông tin mới về MindFlow AI.
 
-Sử dụng React Flow hoặc giải pháp phù hợp nếu kiến trúc hiện tại chưa có.
+Yêu cầu quan trọng:
 
-### Nguyên tắc kỹ thuật
-
-React Flow chỉ đảm nhiệm giao diện trực quan.
-
-Cần xây dựng lớp chuyển đổi có kiểm soát:
-
-MindFlow Workflow Graph → Validator → n8n Workflow JSON → n8n Execution Engine.
-
-Không giả định React Flow tự động tương thích với toàn bộ n8n nodes.
-
-Chỉ hỗ trợ các node đã có schema và adapter tương ứng. Node chưa hỗ trợ phải được giữ nguyên dữ liệu nếu có thể và thông báo rõ, không được âm thầm làm mất node khi lưu.
-
-n8n là execution engine, MindFlow quản lý trải nghiệm tạo, chỉnh sửa, thư viện, quyền và đồng bộ.
+- Phải lưu `n8n_workflow_id` để nhận diện workflow.
+- Không tạo workflow mới khi người dùng đang cập nhật workflow cũ.
+- Phân biệt rõ Create và Update.
+- Không ghi đè nhầm workflow.
+- Có cơ chế xử lý lỗi khi cập nhật thất bại.
+- Không tự động xóa workflow đang tồn tại nếu quá trình cập nhật lỗi.
 
 ---
 
-## 8. Giai đoạn 7 — AI hỗ trợ Template
+## 6. Chức năng Export JSON
 
-Tích hợp AI vào Template Library.
+Cho phép người dùng:
 
-Người dùng có thể yêu cầu:
+- Export JSON từ workflow đã lưu.
+- Tải file JSON về máy.
+- Sao lưu workflow.
+- Kiểm tra JSON trước khi export.
 
-- Giải thích workflow này làm gì.
-- Giải thích từng node.
-- Hướng dẫn cấu hình.
-- Liệt kê API key cần thiết.
-- Đề xuất thay thế một node.
-- Tùy chỉnh workflow theo yêu cầu tự nhiên.
-- Tối ưu số lần gọi AI.
-- Phát hiện cấu hình chưa hợp lý.
-- Chuyển đổi dịch vụ tích hợp nếu được hỗ trợ.
-
-Ví dụ:
-
-"Chỉnh sửa template này để thay Telegram bằng Discord."
-
-AI phải tạo ra thay đổi có thể kiểm tra và cho người dùng duyệt trước khi lưu hoặc thực thi.
+Ưu tiên lấy dữ liệu workflow mới nhất từ n8n thay vì chỉ lấy bản JSON cũ được lưu trong database.
 
 ---
 
-## 9. Giai đoạn 8 — Quản lý phiên bản và cập nhật
+## 7. Chức năng Open in n8n
 
-Mỗi Shared Workflow có version riêng.
+Mỗi workflow cần có nút:
 
-Khi workflow gốc được cập nhật:
+**Open in n8n**
 
-- So sánh JSON cũ và mới.
-- Hiển thị node được thêm, sửa hoặc xóa.
-- Thông báo người dùng có phiên bản mới.
-- Cho phép xem khác biệt.
-- User tự quyết định cập nhật.
+Khi nhấn:
+- Mở giao diện n8n Editor.
+- Điều hướng trực tiếp đến workflow tương ứng.
+- Sử dụng URL n8n được cấu hình trong hệ thống.
+- Không hardcode URL ở nhiều component.
 
-Không tự động ghi đè các chỉnh sửa riêng của user.
+Ví dụ cấu hình:
 
-Nếu có xung đột, hiển thị rõ và cho phép xử lý.
+`N8N_BASE_URL`
 
-Lưu lịch sử phiên bản để có thể khôi phục.
+Đường dẫn đến workflow phải được xây dựng theo cấu hình thực tế của phiên bản n8n đang sử dụng.
 
----
-
-## 10. Database và Backend API
-
-Audit database hiện tại trước khi tạo collection mới.
-
-Các nhóm dữ liệu cần quản lý:
-
-- Template Sources.
-- Shared Workflows.
-- User Workflows.
-- Workflow Versions.
-- Workflow Categories.
-- Workflow Sync Logs.
-- Template Import Logs.
-- Template Review Status.
-
-Có thể dùng các collection hiện có nếu phù hợp.
-
-Các nhóm API cần thiết:
-
-### Template Sources
-- Thêm và quản lý GitHub repository.
-- Import repository.
-- Đồng bộ dữ liệu.
-- Xem lịch sử import.
-
-### Shared Library
-- Lấy danh sách.
-- Tìm kiếm.
-- Lọc.
-- Xem chi tiết.
-- Xem phiên bản.
-- Quản lý kiểm duyệt.
-
-### User Sync
-- Lấy danh sách template mới.
-- So sánh template đã cài.
-- Cài đặt một hoặc nhiều template.
-- Xóa khỏi tài khoản.
-- Kiểm tra phiên bản mới.
-- Cập nhật workflow.
-
-### Workflow Studio
-- Tạo workflow.
-- Chỉnh sửa.
-- Validate.
-- Test.
-- Save.
-- Activate.
-- Deactivate.
-- Xem execution.
-
-Kiểm tra lại quyền truy cập, ownership và tenant isolation ở backend.
+Việc chỉnh sửa node, kết nối node, prompt kỹ thuật và credentials sẽ thực hiện trực tiếp trên n8n.
 
 ---
 
-## 11. Bảo mật và License
+## 8. Workflow Execution History
 
-Bắt buộc:
+Bổ sung khu vực theo dõi lịch sử chạy workflow.
 
-- Không chia sẻ credentials giữa các user.
-- Không chia sẻ lịch sử thực thi và dữ liệu cá nhân.
-- Không để lộ API key trong workflow JSON.
-- Không tự động thực thi template vừa nhập.
-- Kiểm tra các thao tác có nguy cơ phá hoại dữ liệu.
-- Kiểm tra quyền truy cập backend.
-- Template cài đặt phải có execution context riêng.
-- Ghi nhận nguồn và attribution.
-- Kiểm tra điều khoản license của repository và template gốc.
-- Không công khai template chưa được duyệt.
+Hiển thị:
 
-Với repository awesome-n8n-templates, cần lưu thông tin license nguồn và thực hiện yêu cầu ghi công tương ứng. Không mặc định mọi template bên trong đều có quyền phân phối giống nhau nếu chưa kiểm tra.
+| Thông tin | Mô tả |
+|---|---|
+| Execution ID | ID lần chạy |
+| Workflow | Tên workflow |
+| Status | Success / Error / Running / Waiting |
+| Started At | Thời gian bắt đầu |
+| Finished At | Thời gian kết thúc |
+| Duration | Thời gian thực thi |
 
----
+Cho phép:
 
-## 12. Giao diện cần xây dựng
+- Xem chi tiết execution.
+- Xem lỗi nếu thất bại.
+- Lọc theo workflow.
+- Lọc theo trạng thái.
+- Lọc theo thời gian.
 
-Thiết kế đồng bộ với MindFlow hiện tại:
+Dữ liệu phải đồng bộ từ n8n.
 
-1. My Workflows.
-2. Template Explorer.
-3. Shared Workflow Library.
-4. GitHub Template Sources.
-5. Template Import Manager.
-6. Template Detail.
-7. Workflow Sync Dialog.
-8. Workflow Version Comparison.
-9. Workflow Studio.
-10. Template Review Manager.
-
-Yêu cầu UI:
-
-- Chuyên nghiệp, hiện đại.
-- Không sơ sài.
-- Có trạng thái loading, empty, error và success.
-- Responsive.
-- Tương thích giao diện MindFlow hiện tại.
-- Không tạo thêm các trang trùng chức năng.
+Không giả lập kết quả execution khi chưa kết nối được n8n.
 
 ---
 
-## 13. Kế hoạch triển khai theo phase
+## 9. Kiến trúc Backend và n8n
 
-Không triển khai tất cả cùng lúc.
+Không gọi n8n REST API trực tiếp từ frontend.
 
-### Phase 0 — Audit
-Kiểm tra code, kiến trúc và GitHub repository.
+Luồng xử lý:
 
-### Phase 1 — GitHub Importer
-Truy cập repository, lấy JSON thực tế, phân tích và kiểm duyệt.
+`Frontend → MindFlow Backend → n8n REST API`
 
-### Phase 2 — Shared Workflow Library
-Nhập và quản lý các template đã được duyệt.
+Backend chịu trách nhiệm:
 
-### Phase 3 — Workflow Sync
-Cho phép người dùng chủ động chọn và thêm template vào tài khoản.
+- Quản lý n8n API Key.
+- Gọi n8n REST API.
+- Import workflow.
+- Update workflow.
+- Export workflow.
+- Activate / Deactivate workflow.
+- Lấy danh sách workflow.
+- Lấy execution history.
+- Kiểm tra trạng thái kết nối.
+- Đồng bộ dữ liệu với database.
 
-### Phase 4 — Workflow Studio
-Tạo và chỉnh sửa workflow trong MindFlow, kết nối n8n engine.
+### Bảo mật
 
-### Phase 5 — AI Template Assistant
-AI giải thích, cấu hình và tùy chỉnh workflow.
+- Không lưu n8n API Key trong localStorage.
+- Không gửi n8n API Key xuống frontend.
+- Không hardcode API Key trong source code.
+- Sử dụng Environment Variables hoặc cơ chế quản lý secrets an toàn.
+- Không đưa credentials bí mật vào JSON trả về frontend.
+- Kiểm tra quyền người dùng trước các thao tác quản trị workflow.
+- Không để người dùng workspace này truy cập workflow của workspace khác.
 
-### Phase 6 — Versioning & Community
-Quản lý cập nhật, đóng góp và kiểm duyệt template cộng đồng.
+### Lưu ý API
 
-Mỗi phase phải có kiểm thử và báo cáo riêng.
+Trước khi triển khai:
+- Kiểm tra phiên bản n8n đang sử dụng.
+- Đọc tài liệu REST API tương ứng.
+- Kiểm tra các endpoint thực tế hỗ trợ Create, Update, Activate, Deactivate, Delete, Executions.
+- Không tự suy đoán endpoint hoặc request body.
+- Xử lý đúng response và lỗi từ n8n.
 
 ---
 
-## 14. Yêu cầu đầu ra
+## 10. Database
 
-Trước tiên, hãy thực hiện Phase 0 và khảo sát repository GitHub.
+Kiểm tra database hiện tại trước khi thiết kế thêm bảng.
 
-Tạo báo cáo:
+Nếu chưa có cấu trúc phù hợp, xây dựng bảng quản lý liên kết workflow với các trường tham khảo:
 
-1. Audit code MindFlow.
-2. Danh sách các chức năng đã có.
-3. Danh sách phần cần bổ sung.
-4. Kết quả truy cập và thu thập template GitHub.
-5. Số lượng workflow thực tế tải được và kiểm tra được.
-6. Danh sách template được đề xuất nhập trước.
-7. Kiến trúc tổng thể.
-8. Database và API.
-9. UI/UX.
-10. Kế hoạch triển khai.
+| Field | Ý nghĩa |
+|---|---|
+| id | ID nội bộ |
+| workspace_id | Workspace sở hữu |
+| n8n_workflow_id | ID workflow trên n8n |
+| name | Tên workflow |
+| description | Mô tả |
+| active | Trạng thái |
+| tags | Nhóm workflow |
+| last_synced_at | Thời điểm đồng bộ |
+| created_at | Thời điểm tạo |
+| updated_at | Thời điểm cập nhật |
 
-Sau khi tôi duyệt thiết kế và phạm vi, mới bắt đầu triển khai từng phase.
+Đảm bảo một workflow không bị tạo trùng ngoài ý muốn.
 
-**Yêu cầu cuối cùng:**
+Không lưu credentials bí mật trong bảng workflow.
 
-Tôi không muốn một hệ thống chỉ có giao diện demo hoặc dữ liệu JSON giả.
+---
 
-Tôi muốn MindFlow thực sự lấy được các workflow từ GitHub, quản lý chúng trong Shared Library, cho phép người dùng chọn đồng bộ vào tài khoản và sau đó mở, chỉnh sửa, chạy trực tiếp trong MindFlow thông qua n8n.
+## 11. Thiết kế UI/UX
 
-Ưu tiên tận dụng code hiện tại, không xây trùng chức năng, không làm quá rộng trong một lần và phải có kết quả kiểm thử thực tế.
+Giữ nguyên Design System hiện tại của MindFlow AI:
+
+- Sidebar hiện tại.
+- Header hiện tại.
+- Màu sắc và typography hiện tại.
+- Border radius.
+- Card style.
+- Button style.
+- Responsive layout.
+
+Giao diện mới cần:
+- Chuyên nghiệp theo phong cách SaaS.
+- Dễ sử dụng.
+- Không quá nhiều thông tin trên một màn hình.
+- Có trạng thái Loading.
+- Có Empty State.
+- Có Error State.
+- Có Success Notification.
+- Có xác nhận cho các thao tác quan trọng.
+- Responsive trên desktop, tablet và mobile.
+
+Không cần tạo Canvas hoặc mô phỏng giao diện n8n.
+
+---
+
+## 12. Những điều KHÔNG ĐƯỢC LÀM
+
+1. Không xây dựng lại n8n bên trong MindFlow AI.
+2. Không tự phát triển hệ thống kéo thả node.
+3. Không tạo một hệ thống kết nối node riêng.
+4. Không chỉnh sửa node parameters trực tiếp trên MindFlow AI.
+5. Không tạo hệ thống Credentials riêng để lưu API Key của n8n.
+6. Không hardcode dữ liệu workflow giả.
+7. Không phá vỡ các module hiện có.
+8. Không thay đổi cấu trúc routing không liên quan.
+9. Không xóa các API hoặc component đang được sử dụng ở module khác.
+10. Không chỉ làm UI mà bỏ qua tích hợp backend.
+
+---
+
+## 13. Thứ tự triển khai
+
+### Phase 1 – Cleanup
+- Kiểm tra toàn bộ source code trang Workflows.
+- Xóa Workflow Builder cũ.
+- Xóa các component và logic không còn cần thiết.
+- Giữ lại các chức năng có thể tái sử dụng.
+
+### Phase 2 – New UI
+- Xây dựng Workflow Management.
+- Xây dựng Dashboard Statistics.
+- Xây dựng Workflow List.
+- Xây dựng Import/Export JSON.
+- Xây dựng Workflow Details.
+
+### Phase 3 – n8n Integration
+- Kết nối backend với n8n.
+- Implement Create / Update.
+- Implement Activate / Deactivate.
+- Implement Export.
+- Implement Open in n8n.
+- Implement Connection Status.
+
+### Phase 4 – Monitoring
+- Execution History.
+- Execution Details.
+- Error Monitoring.
+- Workflow Status Synchronization.
+
+### Phase 5 – Testing
+- Kiểm tra Import JSON hợp lệ.
+- Kiểm tra Import JSON không hợp lệ.
+- Kiểm tra tạo workflow mới.
+- Kiểm tra cập nhật workflow cũ.
+- Kiểm tra không tạo trùng workflow.
+- Kiểm tra Activate / Deactivate.
+- Kiểm tra Export JSON.
+- Kiểm tra n8n mất kết nối.
+- Kiểm tra phân quyền workspace.
+- Kiểm tra responsive.
+- Kiểm tra không ảnh hưởng các module khác.
+
+---
+
+## 14. Kết quả mong muốn
+
+Sau khi hoàn thành:
+
+**MindFlow AI**
+- Là trung tâm quản lý workflow.
+- Quản lý nhiều workflow.
+- Quản lý các workflow phục vụ AI Agents.
+- Import / Export JSON.
+- Theo dõi lịch sử chạy.
+- Theo dõi trạng thái.
+- Quản lý workspace và phân quyền.
+
+**n8n**
+- Là nơi thiết kế workflow.
+- Là nơi thêm/xóa/chỉnh sửa node.
+- Là nơi cấu hình kết nối và logic.
+- Là nơi quản lý credentials.
+- Là nơi thực thi automation.
+
+**YÊU CẦU CUỐI CÙNG:**
+
+Hãy đọc và phân tích source code hiện tại trước khi chỉnh sửa. Ưu tiên tái sử dụng API, service, database và component đang có nếu phù hợp.
+
+Thực hiện trực tiếp trên project hiện tại, không tạo project mới, không chỉ viết giao diện demo.
+
+Không tự ý thay đổi các module ngoài phạm vi.
+
+Sau khi hoàn thành, báo cáo:
+1. Những component cũ đã xóa.
+2. Những component mới đã tạo.
+3. API backend đã triển khai.
+4. Các endpoint n8n đã tích hợp.
+5. Database đã thay đổi.
+6. Các chức năng đã kiểm thử.
+7. Những phần còn cần cấu hình hoặc chưa thể kết nối thực tế.
