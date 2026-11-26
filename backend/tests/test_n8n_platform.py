@@ -65,6 +65,8 @@ class FakeN8nApi:
 
             now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             if "/executions/" in url:
+                if url.rsplit("/executions/", 1)[1].startswith("nope"):
+                    return 404, {"message": "not found"}
                 if self.execution_mode == "running":
                     return 200, {
                         "id": "e123",
@@ -267,64 +269,6 @@ async def test_workflow_detail_lists_scalar_params(owner, fake_api):
     webhook_node = body["nodes"][0]
     params = {p["path"]: p for p in webhook_node["parameters"]}
     assert params["path"] == {"path": "path", "value": "ai-team/start", "kind": "string"}
-
-
-async def test_update_parameters_changes_value(owner, fake_api):
-    fake_api.workflows = [
-        {
-            **WORKFLOW_07,
-            "nodes": [
-                {
-                    "name": "Start",
-                    "type": "n8n-nodes-base.webhook",
-                    "parameters": {"path": "ai-team/start", "options": {"timeout": 30}},
-                }
-            ],
-        }
-    ]
-    response = owner.post(
-        f"{BASE}/workflows/wf07abc/parameters",
-        json={"updates": [{"node": "Start", "path": "options.timeout", "value": 60}]},
-    )
-    assert response.status_code == 200, response.text
-    assert len(fake_api.patches) == 1
-    patch = fake_api.patches[0]
-    assert patch["url"].endswith("/api/v1/workflows/wf07abc")
-    sent_node = patch["payload"]["nodes"][0]
-    assert sent_node["parameters"]["options"]["timeout"] == 60
-    assert sent_node["parameters"]["path"] == "ai-team/start"
-    params = {p["path"]: p["value"] for p in response.json()["nodes"][0]["parameters"]}
-    assert params["options.timeout"] == 60
-
-
-async def test_update_parameters_rejects_unknown_and_type_mismatch(owner, fake_api):
-    fake_api.workflows = [
-        {
-            **WORKFLOW_07,
-            "nodes": [
-                {
-                    "name": "Start",
-                    "type": "n8n-nodes-base.webhook",
-                    "parameters": {"path": "ai-team/start"},
-                }
-            ],
-        }
-    ]
-    unknown = owner.post(
-        f"{BASE}/workflows/wf07abc/parameters",
-        json={"updates": [{"node": "Start", "path": "missing", "value": "x"}]},
-    )
-    assert unknown.status_code == 422
-    assert unknown.json()["detail"]["code"] == "n8n_parameter_not_found"
-    mismatch = owner.post(
-        f"{BASE}/workflows/wf07abc/parameters",
-        json={"updates": [{"node": "Start", "path": "path", "value": 42}]},
-    )
-    assert mismatch.status_code == 422
-    # Nothing was PATCHed for rejected updates.
-    assert fake_api.patches == []
-
-
 async def test_workflow_detail_unknown_is_404(owner, fake_api):
     response = owner.get(f"{BASE}/workflows/nope")
     assert response.status_code == 404
@@ -452,3 +396,149 @@ def test_parse_workflow_shape():
     assert item.triggers == ["webhook"]
     assert item.webhook_paths == ["ai-team/start"]
     assert item.editor_url == "http://localhost:5678/workflow/wf07abc"
+
+
+# -- Rebuild: Workflow Management (validate / update / delete / export /
+#    stats / execution history) -------------------------------------------
+
+
+async def test_validate_workflow_preview(owner):
+    workflow = {
+        "name": "Imported flow",
+        "nodes": [
+            {
+                "name": "Start",
+                "type": "n8n-nodes-base.webhook",
+                "parameters": {"path": "ai-team/start"},
+            },
+            {"name": "Code", "type": "n8n-nodes-base.code", "parameters": {}},
+        ],
+        "connections": {"Start": {"main": [[{"node": "Code"}]]}},
+    }
+    response = owner.post(f"{BASE}/workflows/validate", json={"workflow": workflow})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["valid"] is True
+    assert body["errors"] == []
+    assert body["name"] == "Imported flow"
+    assert body["node_count"] == 2
+    assert body["triggers"] == ["webhook"]
+    assert body["webhook_paths"] == ["ai-team/start"]
+
+
+async def test_validate_workflow_reports_problems(owner):
+    bad = {"nodes": [{"type": "n8n-nodes-base.code"}], "connections": []}
+    response = owner.post(f"{BASE}/workflows/validate", json={"workflow": bad})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["valid"] is False
+    assert "workflow_name_missing" in body["errors"]
+    assert "workflow_node_missing_name" in body["errors"]
+    assert "workflow_connections_invalid" in body["errors"]
+
+
+async def test_update_workflow_put(owner, fake_api):
+    response = owner.put(f"{BASE}/workflows/wf07abc", json=CREATE_BODY)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["id"] == "wf07abc"
+    assert body["name"] == "My new workflow"
+    assert len(fake_api.patches) == 1
+    assert fake_api.patches[0]["url"].endswith("/api/v1/workflows/wf07abc")
+    # An update never creates: no POST to the collection happened.
+    assert fake_api.posts == []
+
+
+async def test_update_workflow_rejects_nameless_node(owner, fake_api):
+    bad = {**CREATE_BODY, "nodes": [{"type": "n8n-nodes-base.code", "parameters": {}}]}
+    response = owner.put(f"{BASE}/workflows/wf07abc", json=bad)
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "n8n_workflow_invalid"
+    assert fake_api.patches == []
+
+
+async def test_delete_workflow(owner, fake_api):
+    response = owner.delete(f"{BASE}/workflows/wf07abc")
+    assert response.status_code == 204, response.text
+    assert any(
+        d["url"].endswith("/api/v1/workflows/wf07abc") for d in fake_api.deletes
+    )
+
+
+async def test_export_workflow_reads_live(owner, fake_api):
+    response = owner.get(f"{BASE}/workflows/wf07abc/export")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["id"] == "wf07abc"
+    assert body["workflow"]["name"] == WORKFLOW_07["name"]
+    assert len(body["workflow"]["nodes"]) == 3
+
+
+async def test_export_unknown_workflow_is_404(owner, fake_api):
+    response = owner.get(f"{BASE}/workflows/nope/export")
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "n8n_workflow_not_found"
+
+
+async def test_stats_counts(owner, fake_api):
+    response = owner.get(f"{BASE}/stats")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total_workflows"] == 2
+    assert body["active_workflows"] == 1
+    assert body["inactive_workflows"] == 1
+    # The fake reports one execution today, and it failed.
+    assert body["executions_today"] == 1
+    assert body["failed_executions_today"] == 1
+    assert body["executions_error"] is None
+    assert body["executions_truncated"] is False
+
+
+async def test_stats_unconfigured_keeps_execution_counts_empty(owner, settings):
+    settings.n8n_api_key = None
+    response = owner.get(f"{BASE}/stats")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total_workflows"] == 0
+    assert body["executions_today"] is None
+    assert body["failed_executions_today"] is None
+    assert body["executions_error"] == "n8n_api_not_configured"
+
+
+async def test_list_executions(owner, fake_api):
+    await _sync(owner)
+    response = owner.get(f"{BASE}/executions")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["error"] is None
+    assert body["total"] == 1
+    item = body["items"][0]
+    assert item["id"] == "e123"
+    assert item["workflow_id"] == "wf07abc"
+    assert item["workflow_name"] == WORKFLOW_07["name"]
+    assert item["status"] == "error"
+
+
+async def test_list_executions_status_filter(owner, fake_api):
+    response = owner.get(f"{BASE}/executions", params={"status_filter": "success"})
+    assert response.status_code == 200, response.text
+    assert response.json()["items"] == []
+    response = owner.get(f"{BASE}/executions", params={"status_filter": "error"})
+    assert response.json()["total"] == 1
+
+
+async def test_execution_detail(owner, fake_api):
+    response = owner.get(f"{BASE}/executions/e123")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "error"
+    assert body["error"] == "boom"
+    nodes = {item["name"]: item for item in body["node_statuses"]}
+    assert nodes["Code"]["status"] == "error"
+    assert nodes["Team Webhook"]["status"] == "success"
+
+
+async def test_execution_detail_unknown_is_404(owner, fake_api):
+    response = owner.get(f"{BASE}/executions/nope")
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "execution_not_found"
