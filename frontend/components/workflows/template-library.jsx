@@ -53,6 +53,48 @@ export function TemplateLibrary() {
   const [contributeOpen, setContributeOpen] = useState(false);
   const [contributeForm, setContributeForm] = useState({ name: "", category: "Community", json: "" });
   const [contributeBusy, setContributeBusy] = useState(false);
+  const [assistantBusy, setAssistantBusy] = useState("");
+  const [assistantAnswer, setAssistantAnswer] = useState(null);
+  const [assistantNode, setAssistantNode] = useState("");
+  const [assistantPrompt, setAssistantPrompt] = useState("");
+
+  async function askAssistant(task) {
+    if (!detail) return;
+    setAssistantBusy(task);
+    setError("");
+    try {
+      const data = await workflowTemplatesService.askAssistant(detail.id, {
+        task,
+        node_name: task === "explain_node" ? assistantNode || null : null,
+        prompt: task === "customize" ? assistantPrompt : null,
+      });
+      setAssistantAnswer(data);
+    } catch (err) {
+      setError(getWorkflowTemplatesError(err, "Trợ lý AI không trả lời được. Hãy thử lại."));
+    } finally {
+      setAssistantBusy("");
+    }
+  }
+
+  async function applyProposal() {
+    if (!detail || !assistantAnswer?.proposal) return;
+    setAssistantBusy("apply");
+    setError("");
+    try {
+      const installed = await workflowTemplatesService.applyAssistant(detail.id, {
+        workflow_json: assistantAnswer.proposal,
+      });
+      setSyncNote(
+        `Đã áp dụng bản tùy chỉnh "${installed.template_name}" vào tài khoản — workflow đang tắt trong n8n, mở tab n8n Platform để cấu hình và Bật.`,
+      );
+      setAssistantAnswer(null);
+      loadSync();
+    } catch (err) {
+      setError(getWorkflowTemplatesError(err, "Áp dụng đề xuất thất bại. Hãy thử lại."));
+    } finally {
+      setAssistantBusy("");
+    }
+  }
 
   useEffect(() => {
     if (!detail) {
@@ -688,6 +730,101 @@ export function TemplateLibrary() {
               ) : null}
             </p>
           ) : null}
+          <div className="n8n-node">
+            <h3>Trợ lý AI cho template này</h3>
+            <p className="fx-run-meta">
+              AI dùng provider bạn đã cấu hình ở trang Providers. Đề xuất tùy chỉnh không bao giờ
+              tự lưu — bạn xem trước rồi mới bấm Áp dụng, và bản áp dụng chỉ vào tài khoản của
+              bạn, bản gốc trong thư viện không đổi.
+            </p>
+            <div className="fx-actions">
+              <button type="button" className="fx-btn" onClick={() => askAssistant("explain")} disabled={Boolean(assistantBusy)}>
+                {assistantBusy === "explain" ? <Loader2 size={14} className="spin" /> : null} Giải thích workflow
+              </button>
+              <button type="button" className="fx-btn" onClick={() => askAssistant("setup_guide")} disabled={Boolean(assistantBusy)}>
+                {assistantBusy === "setup_guide" ? <Loader2 size={14} className="spin" /> : null} Hướng dẫn cấu hình
+              </button>
+              <button type="button" className="fx-btn" onClick={() => askAssistant("api_keys")} disabled={Boolean(assistantBusy)}>
+                {assistantBusy === "api_keys" ? <Loader2 size={14} className="spin" /> : null} API key cần thiết
+              </button>
+            </div>
+            <div className="tpl-filters">
+              <label className="fx-field">
+                Giải thích một node
+                <select
+                  className="fx-input"
+                  value={assistantNode}
+                  onChange={(event) => setAssistantNode(event.target.value)}
+                >
+                  <option value="">Chọn node…</option>
+                  {(detail.workflow_json?.nodes || []).map((node) => (
+                    <option key={node.name} value={node.name}>
+                      {node.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="fx-actions">
+                <button
+                  type="button"
+                  className="fx-btn"
+                  onClick={() => askAssistant("explain_node")}
+                  disabled={Boolean(assistantBusy) || !assistantNode}
+                >
+                  {assistantBusy === "explain_node" ? <Loader2 size={14} className="spin" /> : null} Giải thích node đã chọn
+                </button>
+              </div>
+            </div>
+            <label className="fx-field">
+              Tùy chỉnh bằng yêu cầu tự nhiên (ví dụ: thay Telegram bằng Discord)
+              <input
+                className="fx-input"
+                type="text"
+                value={assistantPrompt}
+                onChange={(event) => setAssistantPrompt(event.target.value)}
+                placeholder="Mô tả thay đổi bạn muốn…"
+              />
+            </label>
+            <div className="fx-actions">
+              <button
+                type="button"
+                className="fx-btn primary"
+                onClick={() => askAssistant("customize")}
+                disabled={Boolean(assistantBusy) || !assistantPrompt.trim()}
+              >
+                {assistantBusy === "customize" ? <Loader2 size={14} className="spin" /> : null} Tạo đề xuất tùy chỉnh
+              </button>
+            </div>
+            {assistantAnswer ? (
+              <div>
+                <p className="fx-run-meta">
+                  {assistantAnswer.provider} · {assistantAnswer.model}
+                </p>
+                <pre className="tpl-json">{assistantAnswer.answer}</pre>
+                {assistantAnswer.proposal ? (
+                  <>
+                    <details>
+                      <summary>Xem JSON đề xuất</summary>
+                      <pre className="tpl-json">{JSON.stringify(assistantAnswer.proposal, null, 2)}</pre>
+                    </details>
+                    <div className="fx-actions">
+                      <button
+                        type="button"
+                        className="fx-btn primary"
+                        onClick={applyProposal}
+                        disabled={assistantBusy === "apply"}
+                      >
+                        {assistantBusy === "apply" ? <Loader2 size={14} className="spin" /> : <Download size={14} />} Áp dụng vào tài khoản của tôi
+                      </button>
+                      <button type="button" className="fx-btn" onClick={() => setAssistantAnswer(null)}>
+                        Bỏ đề xuất
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
           {versions.length ? (
             <div className="n8n-node">
               <h3>Lịch sử phiên bản ({versions.length})</h3>
