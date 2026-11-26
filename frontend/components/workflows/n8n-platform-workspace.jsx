@@ -58,6 +58,7 @@ import {
   getN8nStatusText,
   n8nPlatformService,
 } from "../../services/n8n-platform";
+import TemplateSources from "./template-sources";
 
 const TRIGGER_LABELS = {
   webhook: "Webhook",
@@ -849,6 +850,8 @@ export function N8nPlatformWorkspace() {
           </button>
         </div>
       </section>
+
+      <TemplateSources />
     </div>
   );
 }
