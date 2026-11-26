@@ -94,9 +94,9 @@ class ListingSession:
     async def get(self, provider: str, params: dict | None = None) -> dict:
         secret = self.api_key.get_secret_value()
         headers = (
-            {"Authorization": f"Bearer {secret}"}
-            if provider in ("openai", "groq", "ollama")
-            else {"x-goog-api-key": secret}
+            {"x-goog-api-key": secret}
+            if provider == "gemini"
+            else {"Authorization": f"Bearer {secret}"}
         )
         async with self.client.stream(
             "GET", ENDPOINTS[provider], headers=headers, params=params

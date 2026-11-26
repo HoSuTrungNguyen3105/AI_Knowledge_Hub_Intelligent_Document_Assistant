@@ -121,7 +121,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.exception_handler(Exception)
     async def unexpected_error(_request: Request, exc: Exception):
-        logger.error("Request failed (%s)", type(exc).__name__)
+        # Full traceback, server-side only: logging just the exception
+        # type made production 500s undiagnosable (the analytics overview
+        # and provider-sync failures could not be traced without it).
+        # The response body stays the same generic message.
+        logger.exception(
+            "Request failed (%s) at %s", type(exc).__name__, _request.url.path
+        )
         if _request.url.path.startswith("/api/v1/ai"):
             return JSONResponse(
                 status_code=500,
