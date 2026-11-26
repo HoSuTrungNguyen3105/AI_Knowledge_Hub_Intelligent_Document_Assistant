@@ -97,6 +97,71 @@ class TemplateReviewIn(BaseModel):
     review_status: str = Field(pattern="^(approved|rejected|pending_review)$")
 
 
+class TemplateVersionOut(BaseModel):
+    version: int
+    content_hash: str
+    node_count: int = 0
+    created_at: datetime
+
+
+class TemplateVersionDetailOut(TemplateVersionOut):
+    workflow_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class TemplateNodeChangeOut(BaseModel):
+    name: str
+    changed_fields: list[str] = Field(default_factory=list)
+
+
+class TemplateDiffOut(BaseModel):
+    from_version: int
+    to_version: int
+    nodes_added: list[str] = Field(default_factory=list)
+    nodes_removed: list[str] = Field(default_factory=list)
+    nodes_changed: list[TemplateNodeChangeOut] = Field(default_factory=list)
+    connections_changed: bool = False
+
+
+class ContributeIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    category: str = Field(default="Community", max_length=120)
+    workflow_json: dict[str, Any]
+
+
+class UserWorkflowOut(BaseModel):
+    id: str
+    template_id: str
+    template_name: str
+    category: str = ""
+    n8n_workflow_id: str
+    installed_version: int
+    latest_version: int
+    update_available: bool = False
+    installed_at: datetime
+    updated_at: datetime
+
+
+class InstallIn(BaseModel):
+    template_ids: list[str] = Field(min_length=1, max_length=50)
+
+
+class InstallResultItemOut(BaseModel):
+    template_id: str
+    template_name: str = ""
+    status: str  # installed | already_installed | failed
+    error: str | None = None
+    n8n_workflow_id: str | None = None
+
+
+class InstallResultOut(BaseModel):
+    results: list[InstallResultItemOut]
+
+
+class SyncCandidatesOut(BaseModel):
+    available: list[TemplateSummaryOut] = Field(default_factory=list)
+    updates: list[UserWorkflowOut] = Field(default_factory=list)
+
+
 class TemplateStatsOut(BaseModel):
     total: int = 0
     by_category: dict[str, int] = Field(default_factory=dict)

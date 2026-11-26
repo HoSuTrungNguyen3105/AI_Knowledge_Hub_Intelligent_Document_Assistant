@@ -11,7 +11,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from app.api.deps import AppSettings, CurrentUser, Database
+from app.api.v1.n8n_platform import N8nApiHTTPDep
 from app.schemas.workflow_templates import (
+    ContributeIn,
+    InstallIn,
+    TemplateDiffOut,
+    TemplateVersionDetailOut,
+    TemplateVersionOut,
+    InstallResultOut,
+    SyncCandidatesOut,
     TemplateDetailOut,
     TemplateImportLogOut,
     TemplateListOut,
@@ -20,8 +28,14 @@ from app.schemas.workflow_templates import (
     TemplateSourceOut,
     TemplateStatsOut,
     TemplateSummaryOut,
+    UserWorkflowOut,
 )
-from app.services.workflow_templates import GitHubHTTP, WorkflowTemplateService
+from app.services.n8n_platform import N8nPlatformService
+from app.services.workflow_templates import (
+    GitHubHTTP,
+    WorkflowSyncService,
+    WorkflowTemplateService,
+)
 
 router = APIRouter(prefix="/ai/workflow-templates", tags=["workflow-templates"])
 
@@ -159,3 +173,144 @@ async def review_template(
     return await WorkflowTemplateService(db, settings, http).review_template(
         template_id, payload
     )
+
+
+# -- Phase 6: versioning & community -----------------------------------------
+
+
+@router.post("/templates/contribute", response_model=TemplateDetailOut, status_code=201)
+async def contribute_template(
+    payload: ContributeIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+) -> TemplateDetailOut:
+    return await WorkflowTemplateService(db, settings, http).contribute(user.id, payload)
+
+
+@router.get("/templates/{template_id}/versions", response_model=list[TemplateVersionOut])
+async def list_template_versions(
+    template_id: str,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+) -> list[TemplateVersionOut]:
+    return await WorkflowTemplateService(db, settings, http).list_versions(template_id)
+
+
+@router.get(
+    "/templates/{template_id}/versions/{version}",
+    response_model=TemplateVersionDetailOut,
+)
+async def get_template_version(
+    template_id: str,
+    version: int,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+) -> TemplateVersionDetailOut:
+    return await WorkflowTemplateService(db, settings, http).get_version(template_id, version)
+
+
+@router.get("/templates/{template_id}/diff", response_model=TemplateDiffOut)
+async def diff_template_versions(
+    template_id: str,
+    from_version: int,
+    to_version: int,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+) -> TemplateDiffOut:
+    return await WorkflowTemplateService(db, settings, http).diff_versions(
+        template_id, from_version, to_version
+    )
+
+
+@router.post(
+    "/templates/{template_id}/versions/{version}/restore",
+    response_model=TemplateDetailOut,
+)
+async def restore_template_version(
+    template_id: str,
+    version: int,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+) -> TemplateDetailOut:
+    return await WorkflowTemplateService(db, settings, http).restore_version(
+        template_id, version
+    )
+
+
+# -- Phase 3: per-user sync ---------------------------------------------------
+# These endpoints compose the template service with the n8n Platform
+# service: installing a template creates the workflow in the user's n8n
+# through the exact same create path as the platform tab.
+
+
+def _sync_service(db: Database, settings: AppSettings, n8n_http) -> WorkflowSyncService:
+    return WorkflowSyncService(db, N8nPlatformService(db, settings, n8n_http))
+
+
+@router.get("/mine", response_model=list[UserWorkflowOut])
+async def list_my_workflows(
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+    n8n_http: N8nApiHTTPDep,
+) -> list[UserWorkflowOut]:
+    return await _sync_service(db, settings, n8n_http).list_mine(user.id)
+
+
+@router.get("/sync-candidates", response_model=SyncCandidatesOut)
+async def sync_candidates(
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+    n8n_http: N8nApiHTTPDep,
+) -> SyncCandidatesOut:
+    return await _sync_service(db, settings, n8n_http).sync_candidates(user.id)
+
+
+@router.post("/install", response_model=InstallResultOut)
+async def install_templates(
+    payload: InstallIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+    n8n_http: N8nApiHTTPDep,
+) -> InstallResultOut:
+    return await _sync_service(db, settings, n8n_http).install(user.id, payload.template_ids)
+
+
+@router.post("/mine/{install_id}/update", response_model=UserWorkflowOut)
+async def update_my_workflow(
+    install_id: str,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+    n8n_http: N8nApiHTTPDep,
+) -> UserWorkflowOut:
+    return await _sync_service(db, settings, n8n_http).update_install(user.id, install_id)
+
+
+@router.delete("/mine/{install_id}", status_code=204)
+async def remove_my_workflow(
+    install_id: str,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+    n8n_http: N8nApiHTTPDep,
+) -> None:
+    await _sync_service(db, settings, n8n_http).remove_install(user.id, install_id)
+    return None
