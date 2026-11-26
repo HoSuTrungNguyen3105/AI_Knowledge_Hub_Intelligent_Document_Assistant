@@ -13,6 +13,7 @@ in production and in the offline test suite.
 """
 
 from datetime import UTC, timedelta
+from decimal import Decimal
 from uuid import UUID
 
 from app.models.base import utcnow
@@ -51,7 +52,7 @@ def _as_int(value) -> int:
 def _as_float(value):
     if isinstance(value, bool):
         return float(value)
-    if isinstance(value, (int, float)):
+    if isinstance(value, (int, float, Decimal)):
         return float(value)
     return None
 
@@ -66,6 +67,9 @@ class AnalyticsService:
             {"user_id": user_id}
         ).to_list(length=100)
         for credential in credentials:
+            provider = credential.get("provider")
+            if not isinstance(provider, str) or not provider:
+                continue
             models = await self.db.ai_models.find(
                 {"credential_id": credential["_id"]}
             ).to_list(length=1000)
@@ -77,9 +81,14 @@ class AnalyticsService:
                 model_id = model.get("model_id") or model.get("id")
                 if not isinstance(model_id, str) or not model_id:
                     continue
-                prices[(credential["provider"], model_id)] = (
-                    model.get("input_price_per_token"),
-                    model.get("output_price_per_token"),
+                # Prices are coerced to floats here: a price stored as a
+                # string or Decimal128 would otherwise poison the cost
+                # multiplication in _window (int * str raises TypeError)
+                # and take the whole overview down. A non-numeric price
+                # simply leaves the model unpriced.
+                prices[(provider, model_id)] = (
+                    _as_float(model.get("input_price_per_token")),
+                    _as_float(model.get("output_price_per_token")),
                 )
         return prices
 
@@ -94,7 +103,11 @@ class AnalyticsService:
         priced = False
         unpriced = 0
         for row in rows:
-            price = prices.get((row.get("provider"), row.get("model")))
+            price_key = (
+                row.get("provider") if isinstance(row.get("provider"), str) else "",
+                row.get("model") if isinstance(row.get("model"), str) else "",
+            )
+            price = prices.get(price_key)
             if price and price[0] is not None and price[1] is not None:
                 cost += _as_int(row.get("input_tokens")) * price[0]
                 cost += _as_int(row.get("output_tokens")) * price[1]
@@ -169,7 +182,11 @@ class AnalyticsService:
 
         by_model: dict[tuple[str, str], list[dict]] = {}
         for row in request_rows:
-            by_model.setdefault((row.get("provider") or "", row.get("model") or ""), []).append(row)
+            key = (
+                row.get("provider") if isinstance(row.get("provider"), str) else "",
+                row.get("model") if isinstance(row.get("model"), str) else "",
+            )
+            by_model.setdefault(key, []).append(row)
         models = []
         for (provider, model), rows in by_model.items():
             window = self._window(rows, prices)
@@ -197,8 +214,8 @@ class AnalyticsService:
                 DayUsage(
                     date=day.isoformat(),
                     requests=len(day_rows),
-                    input_tokens=sum(r.get("input_tokens") or 0 for r in day_rows),
-                    output_tokens=sum(r.get("output_tokens") or 0 for r in day_rows),
+                    input_tokens=sum(_as_int(r.get("input_tokens")) for r in day_rows),
+                    output_tokens=sum(_as_int(r.get("output_tokens")) for r in day_rows),
                 )
             )
 
