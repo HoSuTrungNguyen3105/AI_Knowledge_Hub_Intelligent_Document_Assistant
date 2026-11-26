@@ -16,6 +16,7 @@ from app.schemas.collab import (
     RoomCreate,
     RoomList,
     RoomOut,
+    RoomUsageOut,
     RoomPatch,
     RunDetail,
     RunList,
@@ -44,6 +45,13 @@ async def create_room(
     payload: RoomCreate, user: CurrentUser, db: Database, settings: AppSettings
 ) -> RoomOut:
     return await _service(db, settings).create_room(user.id, payload)
+
+
+@router.get("/ai/collab/rooms/{room_id}/usage", response_model=RoomUsageOut)
+async def room_usage(
+    room_id: UUID, user: CurrentUser, db: Database, settings: AppSettings
+) -> RoomUsageOut:
+    return await _service(db, settings).room_usage(user.id, room_id)
 
 
 @router.get("/ai/collab/rooms/{room_id}", response_model=RoomOut)

@@ -54,6 +54,9 @@ from app.schemas.collab import (
     RunOut,
     SummarizeIn,
     TaskOut,
+    RoleUsageOut,
+    RoomUsageOut,
+    RunUsageOut,
 )
 from app.services.agents import AgentService
 from app.services.ai.base_provider import ProviderError
@@ -269,6 +272,114 @@ class CollabService:
         await self.artifacts.delete_many({"room_id": room_id, "user_id": user_id})
 
     # --- messages --------------------------------------------------------------
+    async def room_usage(self, user_id: UUID, room_id: UUID) -> RoomUsageOut:
+        """Real per-room usage: tokens by Agent/role and by run.
+
+        Aggregated from the stored Agent replies (the same records the
+        room transcript shows) — a reply only counts when the provider
+        actually reported token usage for it. Cost is estimated with
+        the user's own synced model prices (the AI Usage pricing map);
+        replies whose model has no price are counted as unpriced and
+        contribute no cost, never an invented number.
+        """
+        room = await self._require_room(user_id, room_id)
+        from app.services.analytics import AnalyticsService
+
+        prices = await AnalyticsService(self.db)._price_map(user_id)
+        snapshot_roles = {
+            m.get("agent_id"): m.get("role")
+            for m in (room.get("team_snapshot") or {}).get("members") or []
+        }
+        run_docs = {
+            doc["_id"]: doc
+            async for doc in self.runs.find({"room_id": room_id})
+        }
+        totals = {"requests": 0, "input": 0, "output": 0, "cost": 0.0, "priced": 0, "unpriced": 0}
+        role_buckets: dict = {}
+        run_buckets: dict = {}
+
+        def accumulate(bucket, doc, cost):
+            bucket["requests"] += 1
+            bucket["input"] += doc.get("input_tokens") or 0
+            bucket["output"] += doc.get("output_tokens") or 0
+            if cost is not None:
+                bucket["cost"] += cost
+                bucket["priced"] += 1
+
+        cursor = self.messages.find(
+            {"room_id": room_id, "sender_type": "agent"},
+            {
+                "agent_id": 1, "agent_name": 1, "provider": 1, "model": 1,
+                "input_tokens": 1, "output_tokens": 1, "run_id": 1,
+            },
+        )
+        async for doc in cursor:
+            if doc.get("input_tokens") is None and doc.get("output_tokens") is None:
+                continue  # no usage reported for this reply — do not guess
+            price = prices.get((doc.get("provider"), doc.get("model")))
+            cost = None
+            if price is not None and (price[0] is not None or price[1] is not None):
+                cost = (doc.get("input_tokens") or 0) * (price[0] or 0.0) + (
+                    doc.get("output_tokens") or 0
+                ) * (price[1] or 0.0)
+            if cost is None:
+                totals["unpriced"] += 1
+            accumulate(totals, doc, cost)
+            agent_id = doc.get("agent_id")
+            role_bucket = role_buckets.setdefault(
+                agent_id,
+                {
+                    "requests": 0, "input": 0, "output": 0, "cost": 0.0, "priced": 0,
+                    "agent_name": doc.get("agent_name"),
+                    "provider": doc.get("provider"),
+                    "model": doc.get("model"),
+                },
+            )
+            accumulate(role_bucket, doc, cost)
+            run_id = doc.get("run_id")
+            if run_id is not None:
+                run_bucket = run_buckets.setdefault(
+                    run_id, {"requests": 0, "input": 0, "output": 0, "cost": 0.0, "priced": 0}
+                )
+                accumulate(run_bucket, doc, cost)
+
+        def bucket_out(bucket):
+            return {
+                "requests": bucket["requests"],
+                "input_tokens": bucket["input"],
+                "output_tokens": bucket["output"],
+                "estimated_cost": bucket["cost"] if bucket["priced"] else None,
+            }
+
+        by_role = [
+            RoleUsageOut(
+                role=snapshot_roles.get(agent_id),
+                agent_id=agent_id,
+                agent_name=bucket["agent_name"],
+                provider=bucket["provider"],
+                model=bucket["model"],
+                **bucket_out(bucket),
+            )
+            for agent_id, bucket in role_buckets.items()
+        ]
+        by_role.sort(key=lambda b: -(b.input_tokens + b.output_tokens))
+        by_run = [
+            RunUsageOut(
+                run_id=run_id,
+                mode=(run_docs.get(run_id) or {}).get("mode") or "directed",
+                status=(run_docs.get(run_id) or {}).get("status") or "completed",
+                **bucket_out(bucket),
+            )
+            for run_id, bucket in run_buckets.items()
+        ]
+        return RoomUsageOut(
+            room_id=room_id,
+            unpriced_requests=totals["unpriced"],
+            by_role=by_role,
+            by_run=by_run,
+            **bucket_out(totals),
+        )
+
     async def list_messages(self, user_id: UUID, room_id: UUID) -> list[CollabMessageOut]:
         await self._require_room(user_id, room_id)
         docs = (

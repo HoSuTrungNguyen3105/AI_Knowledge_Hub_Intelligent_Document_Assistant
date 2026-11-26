@@ -191,3 +191,38 @@ class ArtifactList(BaseModel):
 
 class ExportResult(BaseModel):
     artifacts: list[ArtifactOut]
+
+
+class RoleUsageOut(BaseModel):
+    role: str | None = None
+    agent_id: UUID | None = None
+    agent_name: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    requests: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    estimated_cost: float | None = None
+
+
+class RunUsageOut(BaseModel):
+    run_id: UUID
+    mode: str = "directed"
+    status: str = "completed"
+    requests: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    estimated_cost: float | None = None
+
+
+class RoomUsageOut(BaseModel):
+    room_id: UUID
+    requests: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    # Estimated from the user's own synced model prices; None when no
+    # priced model was used. Never a provider invoice.
+    estimated_cost: float | None = None
+    unpriced_requests: int = 0
+    by_role: list[RoleUsageOut] = Field(default_factory=list)
+    by_run: list[RunUsageOut] = Field(default_factory=list)
