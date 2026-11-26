@@ -296,6 +296,19 @@ class AgentTeamMember(BaseModel):
     agent_id: UUID
     role: str = "member"
     enabled: bool = True
+    # Team-level assignment detail. All optional with defaults so team
+    # documents stored before these fields existed keep parsing.
+    execution_order: int | None = None
+    priority: int = 0
+    instructions: str | None = None
+    responsibility: str | None = None
+    description: str | None = None
+    # Per-team overrides: when set, this member runs with these instead
+    # of the Agent's own provider/model/system prompt in team contexts.
+    # The Agent record itself is never modified by team configuration.
+    provider_override: str | None = None
+    model_override: str | None = None
+    system_prompt_override: str | None = None
 
 
 class AgentTeam(BaseDocument, BaseModel):

@@ -98,11 +98,13 @@ ROLE_ORDER = {
     "architect": 1,
     "researcher": 2,
     "developer": 3,
+    "designer": 3,
     "member": 4,
     "tester": 5,
     "reviewer": 6,
     "evaluator": 7,
     "coordinator": 0,
+    "leader": 0,
 }
 REVIEW_ROLES = {"reviewer", "tester"}
 # Quality roles only ever run after every production role has been processed.
@@ -119,6 +121,8 @@ ROLE_LABELS_VI = {
     "reviewer": "Đánh giá",
     "evaluator": "Chấm điểm",
     "member": "Thành viên",
+    "leader": "Lãnh đạo",
+    "designer": "Thiết kế",
 }
 
 SPECIFIC_ROLES = {
@@ -130,6 +134,7 @@ SPECIFIC_ROLES = {
     "reviewer",
     "coordinator",
     "evaluator",
+    "designer",
 }
 
 # Ordered (substring, role) hints used to infer a role from an Agent's name
@@ -173,7 +178,14 @@ def effective_role(member_role: str | None, agent_name: str | None) -> str:
     Reviewer last instead of in raw storage order.
     """
     role = (member_role or "").strip().lower()
+    if role == "leader":
+        return "coordinator"
     if role in SPECIFIC_ROLES:
+        return role
+    if role and role != "member":
+        # A user-defined custom role runs as itself at the default
+        # ordering tier; it must not be silently replaced by a guess
+        # from the Agent's name.
         return role
     return infer_role_from_name(agent_name)
 
@@ -375,9 +387,19 @@ class WorkflowService:
                     agent_id=m.agent_id,
                     role=m.role,
                     enabled=m.enabled,
+                    execution_order=getattr(m, "execution_order", None),
+                    priority=getattr(m, "priority", 0) or 0,
+                    instructions=getattr(m, "instructions", None),
+                    responsibility=getattr(m, "responsibility", None),
+                    description=getattr(m, "description", None),
+                    provider_override=getattr(m, "provider_override", None),
+                    model_override=getattr(m, "model_override", None),
+                    system_prompt_override=getattr(m, "system_prompt_override", None),
                     agent_name=agent.name if agent else None,
-                    provider=agent.provider if agent else None,
-                    model=agent.model if agent else None,
+                    provider=getattr(m, "provider_override", None)
+                    or (agent.provider if agent else None),
+                    model=getattr(m, "model_override", None)
+                    or (agent.model if agent else None),
                 )
             )
         return TeamOut(
@@ -814,9 +836,16 @@ class WorkflowService:
                     "role": role,
                     "label": ROLE_LABELS_VI.get(role, "Thành viên"),
                     "index": index,
+                    "execution_order": getattr(member, "execution_order", None),
                 }
             )
-        plan.sort(key=lambda e: (ROLE_ORDER.get(e["role"], 4), e["index"]))
+        plan.sort(
+            key=lambda e: (
+                ROLE_ORDER.get(e["role"], 4),
+                e["execution_order"] if e["execution_order"] is not None else e["index"],
+                e["index"],
+            )
+        )
         turns = int((workflow.usage or {}).get("agent_turns", 0))
         total_in = int((workflow.usage or {}).get("input_tokens") or 0)
         total_out = int((workflow.usage or {}).get("output_tokens") or 0)
