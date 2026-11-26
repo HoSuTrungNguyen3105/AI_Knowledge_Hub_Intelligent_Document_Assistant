@@ -10,11 +10,18 @@ export const ROLE_META = {
   reviewer: { label: "Reviewer", short: "Reviewer", color: "#9333ea", soft: "#f3e8ff" },
   researcher: { label: "Researcher", short: "Researcher", color: "#059669", soft: "#d1fae5" },
   evaluator: { label: "Evaluator", short: "Evaluator", color: "#db2777", soft: "#fce7f3" },
+  leader: { label: "Leader", short: "Leader", color: "#b45309", soft: "#fef3c7" },
+  designer: { label: "Designer", short: "Designer", color: "#0891b2", soft: "#cffafe" },
   member: { label: "Member", short: "Agent", color: "#64748b", soft: "#e2e8f0" },
 };
 
 export function roleMeta(role) {
-  return ROLE_META[String(role || "member").toLowerCase()] || ROLE_META.member;
+  const key = String(role || "member").toLowerCase();
+  if (ROLE_META[key]) return ROLE_META[key];
+  // Custom role: derive a readable label from the stored slug instead of
+  // mislabelling it as a generic member.
+  const label = key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return { label, short: label, color: "#64748b", soft: "#e2e8f0" };
 }
 
 // Mirror of the backend's name → role inference (same ordered hint table).
