@@ -6,6 +6,7 @@ the shared library as ``pending_review``; nothing is executed or installed
 into n8n here — that stays with the n8n Platform layer, by user choice.
 """
 
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -13,6 +14,9 @@ from fastapi import APIRouter, Depends
 from app.api.deps import AppSettings, CurrentUser, Database
 from app.api.v1.n8n_platform import N8nApiHTTPDep
 from app.schemas.workflow_templates import (
+    AssistantApplyIn,
+    AssistantIn,
+    AssistantOut,
     ContributeIn,
     InstallIn,
     TemplateDiffOut,
@@ -30,7 +34,10 @@ from app.schemas.workflow_templates import (
     TemplateSummaryOut,
     UserWorkflowOut,
 )
+from app.services.ai.base_provider import ProviderError
+from app.services.ai.chat import ChatHTTP
 from app.services.n8n_platform import N8nPlatformService
+from app.services.template_assistant import TemplateAssistantService
 from app.services.workflow_templates import (
     GitHubHTTP,
     WorkflowSyncService,
@@ -45,6 +52,14 @@ def github_http() -> GitHubHTTP:
 
 
 GitHubHTTPDep = Annotated[GitHubHTTP, Depends(github_http)]
+
+
+def assistant_http() -> ChatHTTP:
+    """Shared outbound HTTP client for provider calls (test seam)."""
+    return ChatHTTP()
+
+
+AssistantHTTPDep = Annotated[ChatHTTP, Depends(assistant_http)]
 
 
 @router.get("/sources", response_model=list[TemplateSourceOut])
@@ -244,6 +259,51 @@ async def restore_template_version(
 ) -> TemplateDetailOut:
     return await WorkflowTemplateService(db, settings, http).restore_version(
         template_id, version
+    )
+
+
+# -- Phase 5: AI template assistant -------------------------------------------
+
+
+@router.post("/templates/{template_id}/assistant", response_model=AssistantOut)
+async def ask_template_assistant(
+    template_id: str,
+    payload: AssistantIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+    chat_http: AssistantHTTPDep,
+) -> AssistantOut:
+    template = await WorkflowTemplateService(db, settings, http).get_template(template_id)
+    return await TemplateAssistantService(db, settings, chat_http).ask(
+        user.id, template, payload
+    )
+
+
+@router.post(
+    "/templates/{template_id}/assistant/apply", response_model=UserWorkflowOut, status_code=201
+)
+async def apply_template_proposal(
+    template_id: str,
+    payload: AssistantApplyIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+    n8n_http: N8nApiHTTPDep,
+) -> UserWorkflowOut:
+    service = WorkflowTemplateService(db, settings, http)
+    template = await service.templates.find_one({"_id": template_id})
+    if template is None:
+        raise ProviderError("template_not_found")
+    analysis = analyze_workflow(
+        json.dumps(payload.workflow_json, ensure_ascii=False), "proposal.json"
+    )
+    if "rejected" in analysis:
+        raise ProviderError("template_contribute_invalid")
+    return await _sync_service(db, settings, n8n_http).install_custom(
+        user.id, template, payload.workflow_json, payload.name
     )
 
 

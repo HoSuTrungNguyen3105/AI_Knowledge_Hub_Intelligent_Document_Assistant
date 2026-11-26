@@ -583,6 +583,50 @@ class N8nPlatformService:
         await self._store(item, _utcnow())
         return item
 
+    async def replace_workflow(self, workflow_id: str, payload_in: N8nWorkflowCreateIn) -> N8nWorkflowOut:
+        """Replace a workflow's definition in n8n (used by template sync
+        updates). Same PATCH path as parameter editing; only the fields the
+        n8n update API accepts are sent."""
+        key = self._require_key()
+        payload = {
+            "name": payload_in.name,
+            "nodes": payload_in.nodes,
+            "connections": payload_in.connections,
+            "settings": payload_in.settings,
+        }
+        status, data = await self.http.patch_json(
+            f"{self.base_url}/api/v1/workflows/{workflow_id}",
+            key,
+            payload,
+            self.settings.n8n_api_timeout_seconds,
+        )
+        if status == 404:
+            raise ProviderError("n8n_workflow_not_found")
+        if status in (401, 403):
+            raise ProviderError("n8n_api_unauthorized")
+        if status >= 400 or not isinstance(data, dict):
+            raise ProviderError("n8n_api_failed")
+        item = parse_workflow(data, self.base_url)
+        await self._store(item, _utcnow())
+        return item
+
+    async def delete_workflow(self, workflow_id: str) -> None:
+        """Delete a workflow from n8n. A 404 counts as success: the goal
+        state (workflow gone) is already reached."""
+        key = self._require_key()
+        status = await self.http.delete_json(
+            f"{self.base_url}/api/v1/workflows/{workflow_id}",
+            key,
+            self.settings.n8n_api_timeout_seconds,
+        )
+        if status == 404:
+            return
+        if status in (401, 403):
+            raise ProviderError("n8n_api_unauthorized")
+        if status >= 400:
+            raise ProviderError("n8n_api_failed")
+        await self.workflows.delete_one({"_id": workflow_id})
+
     async def get_workflow_detail(self, workflow_id: str) -> N8nWorkflowDetailOut:
         raw = await self._get_raw_workflow(workflow_id)
         return workflow_detail(raw, self.base_url)
