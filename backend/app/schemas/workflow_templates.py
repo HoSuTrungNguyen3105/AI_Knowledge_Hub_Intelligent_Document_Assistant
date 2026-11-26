@@ -130,7 +130,7 @@ class ContributeIn(BaseModel):
 
 class AssistantIn(BaseModel):
     task: str = Field(
-        pattern="^(explain|explain_node|setup_guide|api_keys|customize)$"
+        pattern="^(explain|explain_node|setup_guide|api_keys|customize|follow_up)$"
     )
     prompt: str | None = Field(default=None, max_length=4000)
     node_name: str | None = Field(default=None, max_length=200)

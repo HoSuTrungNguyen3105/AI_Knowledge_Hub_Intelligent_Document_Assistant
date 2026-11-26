@@ -59,6 +59,8 @@ export function TemplateLibrary() {
   const [assistantAnswer, setAssistantAnswer] = useState(null);
   const [assistantNode, setAssistantNode] = useState("");
   const [assistantPrompt, setAssistantPrompt] = useState("");
+  const [assistantThread, setAssistantThread] = useState([]);
+  const [assistantFollowUp, setAssistantFollowUp] = useState("");
   const [assistantProviders, setAssistantProviders] = useState([]);
   const [assistantProviderId, setAssistantProviderId] = useState("");
   const [assistantModels, setAssistantModels] = useState([]);
@@ -74,6 +76,11 @@ export function TemplateLibrary() {
           (provider) => provider.implemented && provider.configured && provider.enabled,
         );
         setAssistantProviders(ready);
+        // Preferred default (Nguyên's standard): Groq when available;
+        // the user can still switch back to "Tự động chọn".
+        if (ready.some((provider) => provider.id === "groq")) {
+          setAssistantProviderId((current) => current || "groq");
+        }
       })
       .catch(() => {});
     return () => {
@@ -97,9 +104,11 @@ export function TemplateLibrary() {
         );
         setAssistantModels(chatModels);
         const provider = assistantProviders.find((item) => item.id === assistantProviderId);
+        const preferred =
+          assistantProviderId === "groq" ? "openai/gpt-oss-120b" : provider?.default_model;
         setAssistantModelId(
-          chatModels.some((model) => model.id === provider?.default_model)
-            ? provider.default_model
+          chatModels.some((model) => model.id === preferred)
+            ? preferred
             : chatModels[0]?.id || "",
         );
       })
@@ -132,6 +141,41 @@ export function TemplateLibrary() {
     }
   }
 
+  async function askFollowUp() {
+    const question = assistantFollowUp.trim();
+    if (!detail || !question || assistantBusy) return;
+    setAssistantBusy("follow_up");
+    setError("");
+    try {
+      const history = assistantThread
+        .slice(-4)
+        .map(
+          (entry) =>
+            `Hỏi: ${entry.question}\nĐáp: ${entry.answer.slice(0, 600)}`,
+        )
+        .join("\n\n");
+    const prompt = (
+        (history ? `Cuộc trao đổi trước đó:\n${history}\n\n` : "") +
+        `Câu hỏi mới: ${question}`
+      ).slice(0, 3900);
+      const data = await workflowTemplatesService.askAssistant(detail.id, {
+        task: "follow_up",
+        prompt,
+        provider: assistantProviderId || null,
+        model: assistantProviderId ? assistantModelId || null : null,
+      });
+      setAssistantThread((current) => [
+        ...current,
+        { question, answer: data.answer, provider: data.provider, model: data.model },
+      ]);
+      setAssistantFollowUp("");
+    } catch (err) {
+      setError(getWorkflowTemplatesError(err, "Trợ lý AI không trả lời được câu hỏi tiếp. Hãy thử lại."));
+    } finally {
+      setAssistantBusy("");
+    }
+  }
+
   async function applyProposal() {
     if (!detail || !assistantAnswer?.proposal) return;
     setAssistantBusy("apply");
@@ -156,6 +200,7 @@ export function TemplateLibrary() {
     if (!detail) {
       setVersions([]);
       setDiffResult(null);
+      setAssistantThread([]);
       return;
     }
     workflowTemplatesService
@@ -909,6 +954,45 @@ export function TemplateLibrary() {
                 ) : null}
               </div>
             ) : null}
+            <div className="tpl-followup">
+              <h4>Hỏi tiếp về workflow này</h4>
+              {assistantThread.map((entry, index) => (
+                <div key={index} className="tpl-thread-entry">
+                  <p className="fx-run-meta">
+                    <strong>Bạn hỏi:</strong> {entry.question}
+                  </p>
+                  <p className="fx-run-meta">
+                    {entry.provider} · {entry.model}
+                  </p>
+                  <pre className="tpl-json">{entry.answer}</pre>
+                </div>
+              ))}
+              <div className="tpl-filters">
+                <label className="fx-field">
+                  Câu hỏi tiếp theo
+                  <input
+                    className="fx-input"
+                    value={assistantFollowUp}
+                    onChange={(event) => setAssistantFollowUp(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        askFollowUp();
+                      }
+                    }}
+                    placeholder="Ví dụ: Node Telegram dùng credential gì? Nếu bỏ node email thì sao?"
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="fx-btn"
+                  onClick={askFollowUp}
+                  disabled={Boolean(assistantBusy) || !assistantFollowUp.trim()}
+                >
+                  {assistantBusy === "follow_up" ? <Loader2 size={14} className="spin" /> : null} Hỏi tiếp
+                </button>
+              </div>
+            </div>
           </div>
           {versions.length ? (
             <div className="n8n-node">

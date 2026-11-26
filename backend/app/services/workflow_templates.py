@@ -1002,11 +1002,30 @@ class WorkflowSyncService:
         shared template is never modified. Marked via the name suffix so
         the user can tell it apart from a pristine install.
         """
+        # AI-generated proposals do not always match the strict create
+        # schema (connections emitted as a list, non-dict node entries,
+        # oversized names) — feeding them in raw used to surface as a
+        # pydantic ValidationError and a bare 500. Sanitise first.
+        raw_nodes = workflow_json.get("nodes")
+        nodes = (
+            [node for node in raw_nodes if isinstance(node, dict)]
+            if isinstance(raw_nodes, list)
+            else []
+        )
+        if not nodes:
+            raise ProviderError("template_contribute_invalid")
+        connections = workflow_json.get("connections")
+        if not isinstance(connections, dict):
+            connections = {}
+        settings = workflow_json.get("settings")
+        if not isinstance(settings, dict):
+            settings = {}
+        resolved_name = (name or f"{template.get('name', 'Workflow')} (tùy chỉnh)")[:200]
         payload = N8nWorkflowCreateIn(
-            name=name or f"{template.get('name', 'Workflow')} (tùy chỉnh)",
-            nodes=workflow_json.get("nodes") or [],
-            connections=workflow_json.get("connections") or {},
-            settings=workflow_json.get("settings") or {},
+            name=resolved_name,
+            nodes=nodes,
+            connections=connections,
+            settings=settings,
         )
         created = await self.platform.create_workflow(payload)
         now = _utcnow()
