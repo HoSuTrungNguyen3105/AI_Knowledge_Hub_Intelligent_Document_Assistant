@@ -107,6 +107,10 @@ ERRORS = {
         409,
         "Configure and enable an AI provider with a synced chat model first.",
     ),
+    "template_apply_failed": (
+        502,
+        "The customized workflow copy could not be installed. Please try again.",
+    ),
     "studio_graph_invalid": (
         422,
         "The Studio graph is invalid: unknown node type, duplicate names, "

@@ -151,6 +151,9 @@ export function getWorkflowTemplatesError(error, fallback) {
   if (code === "internal_server_error") {
     return "Máy chủ gặp lỗi nội bộ khi gọi AI. Hãy thử lại sau ít phút; nếu vẫn lỗi, kiểm tra log của service backend trên Render.";
   }
+  if (code === "template_apply_failed") {
+    return "Không cài được bản tùy chỉnh vào tài khoản. Hãy thử lại; nếu vẫn lỗi, kiểm tra log của service backend trên Render (dòng 'template apply failed').";
+  }
   if (code === "provider_request_rejected") {
     return "Provider AI đã từ chối yêu cầu (thường do key hết quyền gọi model này hoặc model không còn khả dụng). Hãy kiểm tra ở trang Providers: bấm Kiểm tra kết nối, hoặc chọn model khác.";
   }

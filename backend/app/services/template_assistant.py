@@ -60,8 +60,10 @@ _PREFERRED_MARKERS = (
 _SMALL_CONTEXT_MARKERS = ("allam",)
 
 
-def _candidate_rank(model_id: str) -> tuple[int, str]:
-    lowered = model_id.lower()
+def _candidate_rank(model_id: object) -> tuple[int, str]:
+    # Some providers' synced model rows carry a non-string id (a UUID
+    # record id) — never let ranking crash on it.
+    lowered = str(model_id).lower()
     if any(marker in lowered for marker in _SMALL_CONTEXT_MARKERS):
         return (2, lowered)
     if any(marker in lowered for marker in _PREFERRED_MARKERS):
@@ -218,6 +220,10 @@ class TemplateAssistantService:
                 )
                 continue
             for model in sorted(models, key=lambda item: _candidate_rank(item.id)):
+                # Only real string model ids can be called; a UUID record
+                # id from a synced row is not a callable model name.
+                if not isinstance(model.id, str) or not model.id:
+                    continue
                 candidates.append((provider_id, model.id, key))
         if not candidates:
             raise ProviderError("template_assistant_unavailable")
