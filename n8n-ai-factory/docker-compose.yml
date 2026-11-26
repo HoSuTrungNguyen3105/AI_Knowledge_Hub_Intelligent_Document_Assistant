@@ -8,6 +8,7 @@
 
 services:
   n8n:
+    restart: unless-stopped
     # Pin an exact version in production, e.g. docker.n8n.io/n8nio/n8n:1.68.0
     image: docker.n8n.io/n8nio/n8n:latest
     environment:
@@ -33,6 +34,7 @@ services:
       - n8n_data:/home/node/.n8n
 
   code-exec-service:
+    restart: unless-stopped
     build: ./code-execution-service
     environment:
       PORT: 8080
