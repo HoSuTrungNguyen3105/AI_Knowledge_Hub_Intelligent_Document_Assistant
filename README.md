@@ -1,8 +1,6 @@
 # MindFlow AI
 
-Mở rộng AI Knowledge Hub theo `update_features.md`, giữ nền tảng trong `plan_create_web.md` và triển khai từng giai đoạn. **Bản hiện tại: Foundation + Phase 2–5 — Multi-model Chat, Multi-AI Comparison và AI Agent Studio/Execution với tool calling thật.**
-
-## Đã triển khai
+## Đã triển khai ( Deploy : https://ai-knowledge-hub-intelligent-document-cmfu.onrender.com )
 
 - Frontend Next.js App Router **JavaScript/JSX**, Tailwind CSS, Axios, Zustand và Lucide.
 - Backend FastAPI **async**, Pydantic, **motor (MongoDB async)**. Dữ liệu lưu trong MongoDB (Atlas hoặc local); index được tạo tự động khi khởi động, không dùng Alembic/SQL migration.
