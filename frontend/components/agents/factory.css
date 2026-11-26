@@ -86,3 +86,15 @@
 .tpl-check { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .tpl-check input[type="checkbox"] { width: 16px; height: 16px; flex: none; }
 .tpl-json-input { font-family: monospace; font-size: 12px; width: 100%; }
+.studio-layout { display: grid; grid-template-columns: 210px 1fr; gap: 12px; }
+.studio-palette { display: flex; flex-direction: column; gap: 4px; }
+.studio-palette-btn { justify-content: flex-start; margin-bottom: 4px; }
+.studio-canvas { position: relative; min-height: 440px; border: 1px solid var(--hatch-widget-border, #d4d4d8); border-radius: 10px; overflow: hidden; touch-action: none; }
+.studio-edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; color: var(--hatch-widget-muted, #71717a); }
+.studio-empty { position: absolute; left: 14px; top: 12px; }
+.studio-node { position: absolute; min-height: 58px; padding: 7px 9px; border: 1.5px solid var(--hatch-widget-border, #a1a1aa); border-radius: 9px; background: var(--hatch-widget-surface, #fff); color: var(--hatch-widget-text, inherit); cursor: grab; display: flex; flex-direction: column; gap: 1px; font-size: 12px; user-select: none; }
+.studio-node.selected { border-color: var(--hatch-widget-accent, #7c3aed); }
+.studio-node.unsupported { border-style: dashed; }
+.studio-node span { color: var(--hatch-widget-muted, #71717a); font-size: 11px; }
+.studio-flag { color: #b45309; }
+.studio-connect { position: absolute; right: 5px; bottom: 5px; font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--hatch-widget-border, #d4d4d8); background: transparent; color: inherit; cursor: pointer; }

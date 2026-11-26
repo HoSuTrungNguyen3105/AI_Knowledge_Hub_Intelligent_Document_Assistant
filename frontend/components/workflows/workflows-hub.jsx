@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { BookOpen, CalendarClock, Factory, GitBranch, Network } from "lucide-react";
+import { BookOpen, CalendarClock, Factory, GitBranch, Network, PenTool } from "lucide-react";
 import { FactoryWorkspace } from "../agents/factory-workspace";
 import { WorkflowsList } from "./workflows-list";
 import { SchedulesWorkspace } from "./schedules-workspace";
 import { N8nPlatformWorkspace } from "./n8n-platform-workspace";
 import { TemplateLibrary } from "./template-library";
+import { WorkflowStudio } from "./workflow-studio";
 import "../agents/factory.css";
 
 // One page for the two ways the same agent team can run: inside MindFlow
@@ -15,7 +16,7 @@ import "../agents/factory.css";
 // tabs instead of living on two separate pages.
 export function WorkflowsHub({ initialTab = "workflows" }) {
   const [tab, setTab] = useState(
-    ["factory", "schedules", "n8n", "library"].includes(initialTab) ? initialTab : "workflows",
+    ["factory", "schedules", "n8n", "library", "studio"].includes(initialTab) ? initialTab : "workflows",
   );
   return <div>
     <div className="wf-hub-tabs" role="tablist" aria-label="Cách chạy đội Agent">
@@ -64,6 +65,15 @@ export function WorkflowsHub({ initialTab = "workflows" }) {
       >
         <BookOpen size={16} /> Thư viện mẫu — workflow có sẵn
       </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={tab === "studio"}
+        className={`wf-hub-tab${tab === "studio" ? " active" : ""}`}
+        onClick={() => setTab("studio")}
+      >
+        <PenTool size={16} /> Workflow Studio — dựng workflow
+      </button>
     </div>
     {tab === "workflows" ? (
       <WorkflowsList />
@@ -73,8 +83,10 @@ export function WorkflowsHub({ initialTab = "workflows" }) {
       <SchedulesWorkspace />
     ) : tab === "n8n" ? (
       <N8nPlatformWorkspace />
-    ) : (
+    ) : tab === "library" ? (
       <TemplateLibrary />
+    ) : (
+      <WorkflowStudio />
     )}
   </div>;
 }
