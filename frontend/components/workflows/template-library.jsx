@@ -20,6 +20,8 @@ import {
   getWorkflowTemplatesError,
   workflowTemplatesService,
 } from "../../services/workflow-templates";
+import { providerService } from "../../services/providers";
+import { ModelSelect } from "../model-select";
 
 const PAGE_SIZE = 24;
 
@@ -57,6 +59,58 @@ export function TemplateLibrary() {
   const [assistantAnswer, setAssistantAnswer] = useState(null);
   const [assistantNode, setAssistantNode] = useState("");
   const [assistantPrompt, setAssistantPrompt] = useState("");
+  const [assistantProviders, setAssistantProviders] = useState([]);
+  const [assistantProviderId, setAssistantProviderId] = useState("");
+  const [assistantModels, setAssistantModels] = useState([]);
+  const [assistantModelId, setAssistantModelId] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    providerService
+      .list()
+      .then((data) => {
+        if (cancelled) return;
+        const ready = (data.providers || []).filter(
+          (provider) => provider.implemented && provider.configured && provider.enabled,
+        );
+        setAssistantProviders(ready);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!assistantProviderId) {
+      setAssistantModels([]);
+      setAssistantModelId("");
+      return;
+    }
+    let cancelled = false;
+    providerService
+      .models(assistantProviderId)
+      .then((data) => {
+        if (cancelled) return;
+        const chatModels = (data.models || []).filter(
+          (model) => model.capabilities?.chat !== false,
+        );
+        setAssistantModels(chatModels);
+        const provider = assistantProviders.find((item) => item.id === assistantProviderId);
+        setAssistantModelId(
+          chatModels.some((model) => model.id === provider?.default_model)
+            ? provider.default_model
+            : chatModels[0]?.id || "",
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setAssistantModels([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assistantProviderId]);
 
   async function askAssistant(task) {
     if (!detail) return;
@@ -67,6 +121,8 @@ export function TemplateLibrary() {
         task,
         node_name: task === "explain_node" ? assistantNode || null : null,
         prompt: task === "customize" ? assistantPrompt : null,
+        provider: assistantProviderId || null,
+        model: assistantProviderId ? assistantModelId || null : null,
       });
       setAssistantAnswer(data);
     } catch (err) {
@@ -737,6 +793,35 @@ export function TemplateLibrary() {
               tự lưu — bạn xem trước rồi mới bấm Áp dụng, và bản áp dụng chỉ vào tài khoản của
               bạn, bản gốc trong thư viện không đổi.
             </p>
+            <div className="tpl-filters">
+              <label className="fx-field">
+                Provider AI
+                <select
+                  className="fx-input"
+                  value={assistantProviderId}
+                  onChange={(event) => setAssistantProviderId(event.target.value)}
+                  aria-label="Provider AI cho Trợ lý"
+                >
+                  <option value="">Tự động chọn</option>
+                  {assistantProviders.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name || provider.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="fx-field">
+                Model
+                <ModelSelect
+                  models={assistantModels}
+                  value={assistantModelId}
+                  onChange={setAssistantModelId}
+                  ariaLabel="Model AI cho Trợ lý"
+                  disabled={!assistantProviderId || assistantModels.length === 0}
+                  placeholder={assistantProviderId ? "Chọn model…" : "Tự động (chọn provider trước nếu muốn chỉ định)"}
+                />
+              </label>
+            </div>
             <div className="fx-actions">
               <button type="button" className="fx-btn" onClick={() => askAssistant("explain")} disabled={Boolean(assistantBusy)}>
                 {assistantBusy === "explain" ? <Loader2 size={14} className="spin" /> : null} Giải thích workflow
