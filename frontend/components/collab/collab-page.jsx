@@ -5,7 +5,10 @@ import {
   Bot, Copy, CornerUpLeft, Download, FileDown, Handshake, Plus, RefreshCw,
   RotateCcw, Send, Sparkles, Square, Trash2, Users, X,
 } from "lucide-react";
+import Link from "next/link";
 import { agentsService } from "../../services/agents";
+import { teamsService } from "../../services/workflows";
+import { roleMeta } from "../../utils/workflows";
 import { collabService, getCollabError } from "../../services/collab";
 import { getErrorMessage } from "../../services/api";
 import { ConfirmDialog } from "../confirm-dialog";
@@ -49,6 +52,7 @@ const sizeLabel = (bytes) => (bytes < 1024
 // auto mode runs a moderated discussion, and results export to files.
 export function CollabPage() {
   const [agents, setAgents] = useState([]);
+  const [teams, setTeams] = useState([]);
   const [rooms, setRooms] = useState([]);
   const [roomId, setRoomId] = useState(null);
   const [room, setRoom] = useState(null);
@@ -60,6 +64,7 @@ export function CollabPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [newTitle, setNewTitle] = useState("");
+  const [newTeamId, setNewTeamId] = useState("");
   const [newMembers, setNewMembers] = useState([]);
   const [newMode, setNewMode] = useState("directed");
   const [newModerator, setNewModerator] = useState("");
@@ -81,12 +86,14 @@ export function CollabPage() {
 
   const loadRooms = useCallback(async (signal) => {
     try {
-      const [roomList, agentList] = await Promise.all([
+      const [roomList, agentList, teamList] = await Promise.all([
         collabService.listRooms(signal),
         agentsService.list(signal),
+        teamsService.list(signal).catch(() => []),
       ]);
       setRooms(roomList);
       setAgents(agentList);
+      setTeams(teamList);
       setRoomId((current) => current && roomList.some((r) => r.id === current)
         ? current
         : (roomList[0]?.id ?? null));
@@ -155,11 +162,20 @@ export function CollabPage() {
 
   const byId = Object.fromEntries(messages.map((m) => [m.id, m]));
   const authorOf = (m) => (m.sender_type === "agent" ? (m.agent_name || "Agent") : "Bạn");
+  const snapshotMembers = room?.team_snapshot?.members || [];
+  const roleOfAgent = (agentId) => snapshotMembers.find((m) => m.agent_id === agentId)?.role
+    || room?.agents.find((a) => a.id === agentId)?.role || null;
+  const selectedTeam = teams.find((t) => t.id === newTeamId) || null;
 
   const createRoom = async () => {
     if (!newTitle.trim()) return;
     try {
-      const created = await collabService.createRoom({
+      const created = await collabService.createRoom(newTeamId ? {
+        title: newTitle.trim(),
+        team_id: newTeamId,
+        mode: newMode,
+        max_turns: Math.min(10, Math.max(1, Number(newMaxTurns) || 4)),
+      } : {
         title: newTitle.trim(),
         agent_ids: newMembers,
         mode: newMode,
@@ -169,6 +185,7 @@ export function CollabPage() {
       setNewTitle("");
       setNewMembers([]);
       setNewModerator("");
+      setNewTeamId("");
       await loadRooms();
       setRoomId(created.id);
     } catch (e) { setError(getCollabError(e)); }
@@ -177,7 +194,14 @@ export function CollabPage() {
   const saveSettings = async () => {
     if (!room) return;
     try {
-      const updated = await collabService.patchRoom(room.id, {
+      // Team rooms: membership/moderator are frozen in the snapshot, so
+      // only the live-room settings are sent (the backend rejects
+      // membership changes for these rooms).
+      const updated = await collabService.patchRoom(room.id, room.team_snapshot ? {
+        mode: modeDraft,
+        max_turns: Math.min(10, Math.max(1, Number(maxTurnsDraft) || 4)),
+        allow_handoff: handoffDraft,
+      } : {
         agent_ids: memberDraft,
         mode: modeDraft,
         moderator_agent_id: moderatorDraft || null,
@@ -357,6 +381,21 @@ export function CollabPage() {
               <option value="directed">Trao đổi theo chỉ định (@mention)</option>
               <option value="auto">Tự động thảo luận</option>
             </select></label>
+          <label style={{ display: "block", marginBottom: 8 }}>Nguồn thành viên
+            <select value={newTeamId} onChange={(e) => setNewTeamId(e.target.value)}
+              style={{ display: "block", width: "100%", marginTop: 4 }}>
+              <option value="">Chọn Agent thủ công</option>
+              {teams.map((t) => <option key={t.id} value={t.id}>Từ nhóm: {t.name}</option>)}
+            </select></label>
+          {selectedTeam ? <div>
+            <p className="muted" style={{ fontSize: 12.5, margin: "6px 0" }}>
+              Phòng sẽ chạy đúng phân công của nhóm — Moderator là Coordinator của nhóm. Cấu hình được chụp lại khi tạo phòng;
+              muốn đổi phân công hãy sửa ở <Link className="text-link" href="/agents/teams">Agent Teams</Link> rồi tạo phòng mới.</p>
+            {selectedTeam.members.map((m) => <p key={m.agent_id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "3px 0", margin: 0 }}>
+              <span className="wf-dot" style={{ background: roleMeta(m.role).color }} />
+              <span>{m.agent_name || m.agent_id} · {roleMeta(m.role).label}{m.agent_id === selectedTeam.coordinator_agent_id ? " · Coordinator" : ""}{m.enabled === false ? " · đang tắt (không vào phòng)" : ""}</span>
+              <small className="muted">{m.provider} · {m.model}</small></p>)}
+          </div> : <>
           <p className="muted" style={{ fontSize: 12.5, margin: "6px 0" }}><Users size={13} /> Agent thành viên:</p>
           {agents.length ? agents.map((a) => <label key={a.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "3px 0" }}>
             <input type="checkbox" checked={newMembers.includes(a.id)}
@@ -370,6 +409,7 @@ export function CollabPage() {
               {agents.filter((a) => newMembers.includes(a.id)).map((a) =>
                 <option key={a.id} value={a.id}>{a.name}</option>)}
             </select></label>
+          </>}
           <label style={{ display: "block", marginBottom: 8 }}>Giới hạn lượt nói mỗi lần chạy (1–10)
             <input type="number" min={1} max={10} value={newMaxTurns}
               onChange={(e) => setNewMaxTurns(e.target.value)}
@@ -405,6 +445,20 @@ export function CollabPage() {
             {room.message_count} tin nhắn · Token đã dùng: {(room.total_input_tokens + room.total_output_tokens).toLocaleString("vi-VN")}
             {" "}(vào {room.total_input_tokens.toLocaleString("vi-VN")} / ra {room.total_output_tokens.toLocaleString("vi-VN")})
           </p>
+          {room.team_snapshot && <div style={{ fontSize: 12.5, marginBottom: 8 }}>
+            <span className="wf-badge">Từ nhóm: {room.team_snapshot.team_name}</span>
+            <span className="muted"> — cấu hình đã chụp khi tạo phòng, chạy đúng phân công này. </span>
+            <Link className="text-link" href="/agents/teams">Sửa phân công ở Agent Teams</Link>
+            <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
+              {snapshotMembers.map((m) => <span key={m.agent_id}>
+                <span className="wf-dot" style={{ background: roleMeta(m.role).color }} />{" "}
+                {m.agent_name || m.agent_id} · {roleMeta(m.role).label}
+                {m.agent_id === room.team_snapshot.coordinator_agent_id ? " · Coordinator" : ""}
+                {m.execution_order != null ? ` · thứ tự ${m.execution_order}` : ""}
+                {m.enabled === false ? " · đang tắt" : ""}
+                {" "}<small className="muted">{m.provider} · {m.model}{m.model_override ? " (ghi đè)" : ""}</small></span>)}
+            </div>
+          </div>}
           <div ref={threadRef} style={{ maxHeight: 430, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, padding: "6px 2px" }}>
             {messages.length ? messages.map((m) => <div key={m.id} className="wf-msg">
               <span className="wf-msg-avatar" style={{ background: m.sender_type === "agent" ? "#7c3aed" : "#0ea5e9" }}>
@@ -413,6 +467,7 @@ export function CollabPage() {
                 <div className="wf-msg-meta"><b>{authorOf(m)}</b>
                   {m.sequence > 0 && <span className="muted">#{m.sequence}</span>}
                   {m.sender_type === "agent" && m.provider && <span className="muted">{m.provider} · {m.model}</span>}
+                  {m.sender_type === "agent" && roleOfAgent(m.agent_id) && <span className="wf-badge">{roleMeta(roleOfAgent(m.agent_id)).label}</span>}
                   {m.is_summary && <span className="wf-badge">Tổng hợp</span>}
                   <time>{timeLabel(m.created_at)}</time>
                   {m.status === "error" && <span className="wf-msg-type">Lỗi: {m.error_code || "không rõ"}</span>}</div>
@@ -485,7 +540,7 @@ export function CollabPage() {
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {runDetail.tasks.map((t) => <div key={t.id} className="wf-run-task">
                   <span><b>{t.agent_name || "Agent"}</b> <span className="muted">
-                    ({t.assigned_by === "user" ? "bạn giao" : t.assigned_by === "moderator" ? "Moderator" : "hệ thống giao"})</span></span>
+                    ({t.assigned_by === "user" ? "bạn giao" : t.assigned_by === "moderator" ? "Moderator" : "hệ thống giao"}){roleOfAgent(t.agent_id) ? ` · ${roleMeta(roleOfAgent(t.agent_id)).label}` : ""}</span></span>
                   <span className="muted">{TASK_STATUS[t.status] || t.status}
                     {t.attempt > 1 && ` · lần thử ${t.attempt}`}
                     {t.error_code && ` · ${t.error_code}`}</span>
@@ -521,7 +576,15 @@ export function CollabPage() {
 
         <div className="wf-card" style={{ marginTop: 12 }}>
           <h3 style={{ marginTop: 0 }}><Users size={15} /> Thành viên &amp; cài đặt phòng</h3>
-          {agents.map((a) => <label key={a.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "3px 0" }}>
+          {room.team_snapshot ? <div>
+            <p className="muted" style={{ fontSize: 12.5 }}>
+              Phòng tạo từ nhóm <b>{room.team_snapshot.team_name}</b> — thành viên và Moderator đã đóng băng theo bản chụp cấu hình,
+              không sửa tại đây. Đổi phân công ở <Link className="text-link" href="/agents/teams">Agent Teams</Link> rồi tạo phòng mới để dùng cấu hình mới.</p>
+            {room.agents.map((a) => <p key={a.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "3px 0", margin: 0 }}>
+              {a.name} <small className="muted">{a.provider} · {a.model}</small>
+              {a.role && <span className="wf-badge">{roleMeta(a.role).label}</span>}
+              {room.moderator_agent_id === a.id && <span className="wf-badge">Moderator</span>}</p>)}
+          </div> : agents.map((a) => <label key={a.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "3px 0" }}>
             <input type="checkbox" checked={memberDraft.includes(a.id)}
               onChange={() => toggleId(memberDraft, setMemberDraft, a.id)} /> {a.name}
             <small className="muted">{a.provider} · {a.model}</small>
@@ -532,13 +595,13 @@ export function CollabPage() {
               <option value="directed">Trao đổi theo chỉ định (@mention)</option>
               <option value="auto">Tự động thảo luận</option>
             </select></label>
-          <label style={{ display: "block", marginBottom: 6 }}>Moderator
+          {!room.team_snapshot && <label style={{ display: "block", marginBottom: 6 }}>Moderator
             <select value={moderatorDraft} onChange={(e) => setModeratorDraft(e.target.value)}
               style={{ display: "block", width: "100%", marginTop: 4 }}>
               <option value="">— Không chọn —</option>
               {agents.filter((a) => memberDraft.includes(a.id)).map((a) =>
                 <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select></label>
+            </select></label>}
           <label style={{ display: "block", marginBottom: 6 }}>Giới hạn lượt nói mỗi lần chạy (1–10)
             <input type="number" min={1} max={10} value={maxTurnsDraft}
               onChange={(e) => setMaxTurnsDraft(e.target.value)}

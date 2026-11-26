@@ -92,5 +92,9 @@ export function getCollabError(error) {
   if (code === "collab_no_agents") return "Phòng chưa có Agent thành viên nào.";
   if (code === "collab_artifact_not_found") return "Không tìm thấy file kết quả này.";
   if (code === "agent_not_found") return "Có Agent không thuộc về bạn.";
+  if (code === "team_not_found") return "Không tìm thấy nhóm Agent đã chọn.";
+  if (code === "collab_team_empty") return "Nhóm đã chọn không có thành viên nào đang bật — hãy bật ít nhất một Agent trong nhóm ở trang Agent Teams.";
+  if (code === "collab_team_no_leader") return "Nhóm đã chọn không có Leader đang hoạt động: Coordinator của nhóm đang bị tắt hoặc không còn là thành viên. Hãy sửa ở trang Agent Teams rồi tạo phòng mới.";
+  if (code === "collab_team_room_frozen") return "Phòng này được tạo từ một nhóm Agent: thành viên và Moderator đã đóng băng theo bản chụp cấu hình. Hãy đổi phân công ở Agent Teams và tạo phòng mới.";
   return error?.response?.data?.detail?.message || "Đã xảy ra lỗi. Vui lòng thử lại.";
 }
