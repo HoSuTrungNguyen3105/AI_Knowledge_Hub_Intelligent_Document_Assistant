@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Database, Plus, RotateCcw, Sparkles, Trash2, Users, Wand2 } from "lucide-react";
+import { Database, Pencil, Plus, RotateCcw, Sparkles, Trash2, Users, Wand2, X } from "lucide-react";
 import { agentsService } from "../../services/agents";
 import { getSeedError, seedService } from "../../services/seed";
 import { teamsService } from "../../services/workflows";
@@ -11,8 +11,182 @@ import {
   STARTER_AGENTS, createStarterSet, getWorkflowError, inferRoleFromName, missingStarterAgents, roleMeta,
 } from "../../utils/workflows";
 import { ConfirmDialog } from "../confirm-dialog";
+import { ModelSelect } from "../model-select";
+import { providerService } from "../../services/providers";
 
-const ROLES = ["coordinator", "planner", "architect", "developer", "tester", "reviewer", "researcher", "evaluator", "member"];
+const ROLES = ["coordinator", "leader", "planner", "architect", "developer", "designer", "tester", "reviewer", "researcher", "evaluator", "member"];
+
+// Role picker: the suggested roles plus a "custom role" mode with a free
+// text input. The backend normalises custom names into slugs.
+function RoleSelect({ value, onChange, label }) {
+  const [mode, setMode] = useState(() => (value && !ROLES.includes(value) ? "custom" : "list"));
+  return <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+    <select aria-label={label} value={mode === "custom" ? "__custom__" : (value || "member")}
+      onChange={(e) => {
+        if (e.target.value === "__custom__") { setMode("custom"); onChange(""); }
+        else { setMode("list"); onChange(e.target.value); }
+      }}>
+      {ROLES.map((r) => <option key={r} value={r}>{roleMeta(r).label}</option>)}
+      <option value="__custom__">Vai trò tự đặt…</option>
+    </select>
+    {mode === "custom" && <input aria-label={`${label} tự đặt`} value={value || ""} placeholder="Ví dụ: Content Writer"
+      onChange={(e) => onChange(e.target.value)} />}
+  </span>;
+}
+
+// Optional per-member model override. Empty provider = the member runs
+// with the Agent's own provider/model (no override is sent).
+function OverridePicker({ providerId, modelId, onChange }) {
+  const [providers, setProviders] = useState([]);
+  const [models, setModels] = useState([]);
+  useEffect(() => {
+    let live = true;
+    providerService.list()
+      .then((list) => { if (live) setProviders(list.filter((p) => p.implemented && p.configured && p.enabled)); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+  useEffect(() => {
+    if (!providerId) { setModels([]); return undefined; }
+    let live = true;
+    providerService.models(providerId)
+      .then((list) => {
+        if (!live) return;
+        const chat = list.filter((m) => m.capabilities?.chat !== false);
+        setModels(chat);
+        if (chat.length && !chat.some((m) => m.id === modelId)) onChange(providerId, chat[0].id);
+      })
+      .catch(() => {});
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providerId]);
+  return <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+    <select aria-label="Provider ghi đè" value={providerId || ""}
+      onChange={(e) => onChange(e.target.value, "")}>
+      <option value="">Model của Agent</option>
+      {providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+    </select>
+    <ModelSelect models={models} value={modelId || ""} disabled={!providerId}
+      onChange={(v) => onChange(providerId, v)} ariaLabel="Model ghi đè" />
+  </span>;
+}
+
+// Full assignment editor for one team: roles (incl. custom), execution
+// order, priority, instructions, responsibility, per-member model
+// override and enabled state. Saves through PATCH /ai/agent-teams/{id}.
+function MemberEditor({ team, agents, onClose, onSaved }) {
+  const [coordinator, setCoordinator] = useState(team.coordinator_agent_id);
+  const [drafts, setDrafts] = useState(() => team.members.map((m) => ({
+    agent_id: m.agent_id, agent_name: m.agent_name, role: m.role, enabled: m.enabled !== false,
+    execution_order: m.execution_order ?? "", priority: m.priority ?? 0,
+    instructions: m.instructions || "", responsibility: m.responsibility || "",
+    description: m.description || "",
+    provider_override: m.provider_override || "", model_override: m.model_override || "",
+    system_prompt_override: m.system_prompt_override || "",
+  })));
+  const [addId, setAddId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const agentById = Object.fromEntries(agents.map((a) => [a.id, a]));
+  const update = (id, patch) => setDrafts((ds) => ds.map((d) => (d.agent_id === id ? { ...d, ...patch } : d)));
+  const addable = agents.filter((a) => !drafts.some((d) => d.agent_id === a.id));
+
+  function addMember() {
+    const a = agentById[addId];
+    if (!a) return;
+    setDrafts((ds) => [...ds, {
+      agent_id: a.id, agent_name: a.name, role: inferRoleFromName(a.name) || "member", enabled: true,
+      execution_order: "", priority: 0, instructions: "", responsibility: "", description: "",
+      provider_override: "", model_override: "", system_prompt_override: "",
+    }]);
+    setAddId("");
+  }
+
+  async function save() {
+    if (drafts.some((d) => !d.role || !d.role.trim())) {
+      setErr("Mọi thành viên phải có vai trò — nhập tên vai trò tự đặt hoặc chọn vai trò có sẵn.");
+      return;
+    }
+    if (!drafts.some((d) => d.agent_id === coordinator)) {
+      setErr("Coordinator (Leader) phải là một thành viên của nhóm.");
+      return;
+    }
+    const members = drafts.map((d) => ({
+      agent_id: d.agent_id, role: d.role, enabled: d.enabled,
+      execution_order: d.execution_order === "" ? null : Number(d.execution_order),
+      priority: Number(d.priority) || 0,
+      instructions: d.instructions.trim() || null,
+      responsibility: d.responsibility.trim() || null,
+      description: d.description.trim() || null,
+      provider_override: d.provider_override || null,
+      model_override: d.provider_override ? (d.model_override || null) : null,
+      system_prompt_override: d.system_prompt_override.trim() || null,
+    }));
+    if (members.some((m) => (m.provider_override === null) !== (m.model_override === null))) {
+      setErr("Ghi đè model phải chọn đủ cả provider và model.");
+      return;
+    }
+    setSaving(true); setErr("");
+    try {
+      await teamsService.patch(team.id, { coordinator_agent_id: coordinator, members });
+      onSaved();
+    } catch (e) { setErr(getWorkflowError(e, "Không lưu được cấu hình nhóm.")); } finally { setSaving(false); }
+  }
+
+  return <div className="wf-form" style={{ marginTop: 12, borderTop: "1px solid var(--line)", paddingTop: 12 }}>
+    <h4 style={{ margin: "0 0 8px" }}>Cấu hình phân công — {team.name}</h4>
+    {err && <p className="wf-error" role="alert">{err}</p>}
+    <label>Coordinator (Leader)
+      <select value={coordinator} onChange={(e) => setCoordinator(e.target.value)}>
+        {drafts.map((d) => <option key={d.agent_id} value={d.agent_id}>{d.agent_name || d.agent_id}</option>)}
+      </select></label>
+    {drafts.map((d) => <div className="wf-member-row" key={d.agent_id} style={{ alignItems: "flex-start" }}>
+      <input type="checkbox" aria-label={`Bật ${d.agent_name || d.agent_id}`} checked={d.enabled}
+        onChange={(e) => update(d.agent_id, { enabled: e.target.checked })} />
+      <div style={{ flex: 1, display: "grid", gap: 6 }}>
+        <span><b>{d.agent_name || d.agent_id}</b>
+          {d.agent_id === coordinator ? " · Coordinator" : ""}
+          <br /><small className="muted">{agentById[d.agent_id] ? `${agentById[d.agent_id].provider} / ${agentById[d.agent_id].model}` : "Agent gốc"}</small></span>
+        <span style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <RoleSelect label={`Vai trò của ${d.agent_name || d.agent_id}`} value={d.role}
+            onChange={(v) => update(d.agent_id, { role: v })} />
+          <label style={{ fontSize: 12.5 }}>Thứ tự <input type="number" min="0" max="999" style={{ width: 70 }}
+            value={d.execution_order} onChange={(e) => update(d.agent_id, { execution_order: e.target.value })} /></label>
+          <label style={{ fontSize: 12.5 }}>Ưu tiên <input type="number" min="0" max="100" style={{ width: 70 }}
+            value={d.priority} onChange={(e) => update(d.agent_id, { priority: e.target.value })} /></label>
+        </span>
+        <input aria-label={`Trách nhiệm của ${d.agent_name || d.agent_id}`} placeholder="Trách nhiệm trong nhóm"
+          value={d.responsibility} onChange={(e) => update(d.agent_id, { responsibility: e.target.value })} />
+        <input aria-label={`Chỉ dẫn của ${d.agent_name || d.agent_id}`} placeholder="Chỉ dẫn riêng khi chạy trong nhóm này"
+          value={d.instructions} onChange={(e) => update(d.agent_id, { instructions: e.target.value })} />
+        <span style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <small className="muted">Model trong nhóm này:</small>
+          <OverridePicker providerId={d.provider_override} modelId={d.model_override}
+            onChange={(p, m) => update(d.agent_id, { provider_override: p, model_override: m })} />
+        </span>
+        <textarea aria-label={`System prompt ghi đè của ${d.agent_name || d.agent_id}`} rows={2}
+          placeholder="System prompt riêng cho nhóm này (để trống = dùng prompt của Agent)"
+          value={d.system_prompt_override} onChange={(e) => update(d.agent_id, { system_prompt_override: e.target.value })} />
+      </div>
+      <button className="wf-btn" type="button" disabled={d.agent_id === coordinator}
+        title={d.agent_id === coordinator ? "Coordinator phải ở trong nhóm — chọn Coordinator khác trước khi gỡ" : "Gỡ khỏi nhóm"}
+        onClick={() => setDrafts((ds) => ds.filter((x) => x.agent_id !== d.agent_id))}>
+        <X size={14} /> Gỡ</button>
+    </div>)}
+    {addable.length > 0 && <div className="row">
+      <select aria-label="Thêm Agent vào nhóm" value={addId} onChange={(e) => setAddId(e.target.value)}>
+        <option value="">Thêm Agent…</option>
+        {addable.map((a) => <option key={a.id} value={a.id}>{a.name} — {a.provider}/{a.model}</option>)}
+      </select>
+      <button className="wf-btn" type="button" disabled={!addId} onClick={addMember}><Plus size={14} /> Thêm vào nhóm</button>
+    </div>}
+    <div className="row">
+      <button className="wf-btn primary" type="button" disabled={saving} onClick={save}>
+        {saving ? "Đang lưu…" : "Lưu cấu hình"}</button>
+      <button className="wf-btn" type="button" onClick={onClose}>Đóng</button>
+    </div>
+  </div>;
+}
 
 export function TeamsWorkspace() {
   const [agents, setAgents] = useState([]);
@@ -29,6 +203,7 @@ export function TeamsWorkspace() {
   const [seedBusy, setSeedBusy] = useState(false);
   const [seedMsg, setSeedMsg] = useState("");
   const [deletion, setDeletion] = useState(null);
+  const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ name: "", description: "", coordinator: "", picks: {} });
   const providers = useChatProviders();
   const { available, providerId, models, modelsLoading, catalog } = providers;
@@ -128,9 +303,10 @@ export function TeamsWorkspace() {
   async function create(event) {
     event.preventDefault();
     const members = agents
-      .filter((a) => form.picks[a.id])
+      .filter((a) => form.picks[a.id] !== undefined)
       .map((a) => ({ agent_id: a.id, role: form.picks[a.id], enabled: true }));
     if (!form.name.trim() || !members.length) { setError("Nhập tên nhóm và chọn ít nhất một Agent."); return; }
+    if (members.some((m) => !m.role || !m.role.trim())) { setError("Hãy nhập tên vai trò tự đặt cho mọi Agent đã chọn, hoặc chọn vai trò có sẵn."); return; }
     if (!members.some((m) => m.agent_id === form.coordinator)) {
       members.push({ agent_id: form.coordinator, role: "coordinator", enabled: true });
     }
@@ -191,13 +367,11 @@ export function TeamsWorkspace() {
                 </select></label>
               <div className="wf-form">
                 {agents.map((a) => <div className="wf-member-row" key={a.id}>
-                  <input type="checkbox" aria-label={`Chọn ${a.name}`} checked={Boolean(form.picks[a.id])}
+                  <input type="checkbox" aria-label={`Chọn ${a.name}`} checked={form.picks[a.id] !== undefined}
                     onChange={(e) => setForm({ ...form, picks: { ...form.picks, [a.id]: e.target.checked ? (a.id === form.coordinator ? "coordinator" : (inferRoleFromName(a.name) || "member")) : undefined } })} />
                   <span><b>{a.name}</b><br /><small className="muted">{a.provider} / {a.model}</small></span>
-                  {form.picks[a.id] && <select aria-label={`Vai trò của ${a.name}`} value={form.picks[a.id]}
-                    onChange={(e) => setForm({ ...form, picks: { ...form.picks, [a.id]: e.target.value } })}>
-                    {ROLES.map((r) => <option key={r} value={r}>{roleMeta(r).label}</option>)}
-                  </select>}
+                  {form.picks[a.id] !== undefined && <RoleSelect label={`Vai trò của ${a.name}`} value={form.picks[a.id]}
+                    onChange={(v) => setForm({ ...form, picks: { ...form.picks, [a.id]: v } })} />}
                 </div>)}
               </div>
               <div><button className="wf-btn primary" type="submit" disabled={busy}><Users size={16} /> Tạo nhóm</button></div>
@@ -237,10 +411,16 @@ export function TeamsWorkspace() {
         {team.description && <p className="muted" style={{ fontSize: 12.5 }}>{team.description}</p>}
         <div>{team.members.map((m) => <div className="row" key={m.agent_id}>
           <span className="wf-dot" style={{ background: roleMeta(m.role).color }} />
-          <span>{m.agent_name || m.agent_id} · {roleMeta(m.role).label}{m.agent_id === team.coordinator_agent_id ? " · Coordinator" : ""}</span>
-          <span>{m.provider}/{m.model}</span></div>)}
+          <span>{m.agent_name || m.agent_id} · {roleMeta(m.role).label}{m.agent_id === team.coordinator_agent_id ? " · Coordinator" : ""}{m.execution_order != null ? ` · thứ tự ${m.execution_order}` : ""}{m.enabled === false ? " · đang tắt" : ""}</span>
+          <span>{m.provider}/{m.model}{m.model_override ? " (ghi đè trong nhóm)" : ""}</span></div>)}
         </div>
-        <div className="row"><button className="wf-btn" type="button" onClick={() => setDeletion(team)}><Trash2 size={15} /> Xóa nhóm</button></div>
+        <div className="row">
+          <button className="wf-btn" type="button" onClick={() => setEditingId(editingId === team.id ? null : team.id)}>
+            <Pencil size={15} /> {editingId === team.id ? "Đóng cấu hình" : "Cấu hình phân công"}</button>
+          <button className="wf-btn" type="button" onClick={() => setDeletion(team)}><Trash2 size={15} /> Xóa nhóm</button></div>
+        {editingId === team.id && <MemberEditor team={team} agents={agents}
+          onClose={() => setEditingId(null)}
+          onSaved={async () => { setEditingId(null); await loadTeams(); }} />}
       </article>)}
       {!teamsLoading && !teamsError && !teams.length && <p className="wf-empty">Chưa có nhóm nào. Tạo nhóm đầu tiên ở biểu mẫu phía trên.</p>}
     </div>
