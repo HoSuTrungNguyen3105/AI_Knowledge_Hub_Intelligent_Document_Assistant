@@ -85,3 +85,4 @@
 .tpl-json { max-height: 380px; overflow: auto; font-size: 11.5px; line-height: 1.5; padding: 10px; border: 1px solid var(--hatch-widget-border, #d4d4d8); border-radius: 8px; }
 .tpl-check { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
 .tpl-check input[type="checkbox"] { width: 16px; height: 16px; flex: none; }
+.tpl-json-input { font-family: monospace; font-size: 12px; width: 100%; }

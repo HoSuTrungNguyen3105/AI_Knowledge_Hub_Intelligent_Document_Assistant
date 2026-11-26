@@ -47,6 +47,88 @@ export function TemplateLibrary() {
   const [selected, setSelected] = useState({});
   const [syncBusy, setSyncBusy] = useState("");
   const [syncNote, setSyncNote] = useState("");
+  const [versions, setVersions] = useState([]);
+  const [diffResult, setDiffResult] = useState(null);
+  const [versionBusy, setVersionBusy] = useState("");
+  const [contributeOpen, setContributeOpen] = useState(false);
+  const [contributeForm, setContributeForm] = useState({ name: "", category: "Community", json: "" });
+  const [contributeBusy, setContributeBusy] = useState(false);
+
+  useEffect(() => {
+    if (!detail) {
+      setVersions([]);
+      setDiffResult(null);
+      return;
+    }
+    workflowTemplatesService
+      .listVersions(detail.id)
+      .then((data) => setVersions(data || []))
+      .catch(() => setVersions([]));
+  }, [detail?.id, detail?.version]);
+
+  async function showDiff(fromVersion) {
+    if (!detail) return;
+    setVersionBusy(`diff-${fromVersion}`);
+    setError("");
+    try {
+      const data = await workflowTemplatesService.diffVersions(detail.id, fromVersion, detail.version);
+      setDiffResult(data);
+    } catch (err) {
+      setError(getWorkflowTemplatesError(err, "Không so sánh được hai phiên bản."));
+    } finally {
+      setVersionBusy("");
+    }
+  }
+
+  async function restore(version) {
+    if (!detail) return;
+    setVersionBusy(`restore-${version}`);
+    setError("");
+    try {
+      const updated = await workflowTemplatesService.restoreVersion(detail.id, version);
+      setDetail(updated);
+      setDiffResult(null);
+      setSyncNote(`Đã khôi phục nội dung phiên bản ${version} thành phiên bản mới v${updated.version}.`);
+      load();
+      loadStats();
+    } catch (err) {
+      setError(getWorkflowTemplatesError(err, "Khôi phục thất bại. Hãy thử lại."));
+    } finally {
+      setVersionBusy("");
+    }
+  }
+
+  async function submitContribute() {
+    let workflowJson;
+    try {
+      workflowJson = JSON.parse(contributeForm.json);
+    } catch {
+      setError("JSON đóng góp chưa hợp lệ — hãy kiểm tra lại cú pháp JSON.");
+      return;
+    }
+    if (!contributeForm.name.trim()) {
+      setError("Hãy đặt tên cho template đóng góp.");
+      return;
+    }
+    setContributeBusy(true);
+    setError("");
+    try {
+      const created = await workflowTemplatesService.contribute({
+        name: contributeForm.name.trim(),
+        category: contributeForm.category.trim() || "Community",
+        workflow_json: workflowJson,
+      });
+      setSyncNote(`Đã đóng góp template "${created.name}" — đang ở trạng thái Chờ duyệt trong thư viện.`);
+      setContributeForm({ name: "", category: "Community", json: "" });
+      setContributeOpen(false);
+      load();
+      loadStats();
+    } catch (err) {
+      setError(getWorkflowTemplatesError(err, "Đóng góp thất bại. Hãy thử lại."));
+    } finally {
+      setContributeBusy(false);
+    }
+  }
 
   const loadSync = useCallback(async () => {
     try {
@@ -381,6 +463,71 @@ export function TemplateLibrary() {
             ))}
           </div>
         ) : null}
+        <div className="fx-actions">
+          <button
+            type="button"
+            className="fx-btn"
+            onClick={() => setContributeOpen(!contributeOpen)}
+          >
+            Đóng góp template của bạn
+          </button>
+        </div>
+        {contributeOpen ? (
+          <div className="n8n-node">
+            <h3>Đóng góp template vào thư viện chung</h3>
+            <p className="fx-run-meta">
+              Template đóng góp sẽ vào thư viện ở trạng thái Chờ duyệt, mang nhãn Community. Dán
+              JSON workflow xuất từ n8n — hệ thống kiểm tra cấu trúc và quét secret giống template
+              nhập từ GitHub.
+            </p>
+            <div className="tpl-filters">
+              <label className="fx-field">
+                Tên template
+                <input
+                  className="fx-input"
+                  type="text"
+                  value={contributeForm.name}
+                  onChange={(event) =>
+                    setContributeForm((c) => ({ ...c, name: event.target.value }))
+                  }
+                />
+              </label>
+              <label className="fx-field">
+                Danh mục
+                <input
+                  className="fx-input"
+                  type="text"
+                  value={contributeForm.category}
+                  onChange={(event) =>
+                    setContributeForm((c) => ({ ...c, category: event.target.value }))
+                  }
+                />
+              </label>
+            </div>
+            <label className="fx-field">
+              JSON workflow
+              <textarea
+                className="fx-input tpl-json-input"
+                rows={8}
+                value={contributeForm.json}
+                onChange={(event) =>
+                  setContributeForm((c) => ({ ...c, json: event.target.value }))
+                }
+                placeholder='{"name": "...", "nodes": [...], "connections": {...}}'
+              />
+            </label>
+            <div className="fx-actions">
+              <button
+                type="button"
+                className="fx-btn primary"
+                onClick={submitContribute}
+                disabled={contributeBusy}
+              >
+                {contributeBusy ? <Loader2 size={15} className="spin" /> : null} Gửi đóng góp
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div className="tpl-filters">
           <label className="fx-field tpl-search">
             <Search size={14} /> Tìm theo tên
@@ -540,6 +687,59 @@ export function TemplateLibrary() {
                 </>
               ) : null}
             </p>
+          ) : null}
+          {versions.length ? (
+            <div className="n8n-node">
+              <h3>Lịch sử phiên bản ({versions.length})</h3>
+              {versions.map((v) => (
+                <p key={v.version} className="fx-run-meta tpl-check">
+                  <span>
+                    <strong>v{v.version}</strong> · {v.node_count} node ·{" "}
+                    {v.created_at ? new Date(v.created_at).toLocaleString("vi-VN") : ""}
+                    {v.version === detail.version ? " · Bản hiện tại" : ""}
+                  </span>
+                  <span className="fx-actions">
+                    {v.version !== detail.version ? (
+                      <>
+                        <button
+                          type="button"
+                          className="fx-btn"
+                          onClick={() => showDiff(v.version)}
+                          disabled={versionBusy === `diff-${v.version}`}
+                        >
+                          So với bản hiện tại
+                        </button>
+                        <button
+                          type="button"
+                          className="fx-btn"
+                          onClick={() => restore(v.version)}
+                          disabled={versionBusy === `restore-${v.version}`}
+                        >
+                          Khôi phục
+                        </button>
+                      </>
+                    ) : null}
+                  </span>
+                </p>
+              ))}
+              {diffResult ? (
+                <div>
+                  <p className="fx-run-meta">
+                    Khác biệt v{diffResult.from_version} → v{diffResult.to_version}:
+                  </p>
+                  <p className="fx-run-meta">
+                    Node thêm: {diffResult.nodes_added.join(", ") || "không có"} · Node xóa:{" "}
+                    {diffResult.nodes_removed.join(", ") || "không có"} · Kết nối{" "}
+                    {diffResult.connections_changed ? "có thay đổi" : "không đổi"}
+                  </p>
+                  {diffResult.nodes_changed.map((change) => (
+                    <p key={change.name} className="fx-run-meta">
+                      Node sửa: <strong>{change.name}</strong> — {change.changed_fields.join(", ")}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           ) : null}
           <details>
             <summary>Xem JSON workflow</summary>
