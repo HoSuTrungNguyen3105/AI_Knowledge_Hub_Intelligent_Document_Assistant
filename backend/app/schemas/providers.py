@@ -125,3 +125,32 @@ class ProviderTestResult(BaseModel):
     provider: ProviderMetadata
     model_count: int
     scope: Literal["model_listing"] = "model_listing"
+
+
+class RateLimitSnapshot(BaseModel):
+    """Quota exactly as the provider reported it in x-ratelimit-* headers.
+
+    Every field is optional: a snapshot carries only what the provider
+    actually sent on the user's most recent recorded call. MindFlow
+    never fills these in from internal counters.
+    """
+
+    provider: str
+    model: str
+    captured_at: datetime
+    limit_requests: int | None = None
+    remaining_requests: int | None = None
+    reset_requests: str | None = None
+    limit_tokens: int | None = None
+    remaining_tokens: int | None = None
+    reset_tokens: str | None = None
+    limit_requests_day: int | None = None
+    remaining_requests_day: int | None = None
+    reset_requests_day: str | None = None
+    limit_tokens_day: int | None = None
+    remaining_tokens_day: int | None = None
+    reset_tokens_day: str | None = None
+
+
+class ProviderRateLimits(BaseModel):
+    snapshots: list[RateLimitSnapshot]

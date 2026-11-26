@@ -1,10 +1,93 @@
 "use client";
 
-import { KeyRound, LoaderCircle, PlugZap, ShieldCheck, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Gauge, KeyRound, LoaderCircle, PlugZap, ShieldCheck, Trash2 } from "lucide-react";
+import { providerService } from "../../services/providers";
 import { formatDate } from "../../utils/format";
 import { providerFailureReason, providerStatus } from "../../utils/providers";
 import { ModelSelect } from "../model-select";
 import { ModelCatalog } from "./model-catalog";
+import "./rate-limits.css";
+
+const fmtCount = (value) => (value == null ? null : value.toLocaleString("vi-VN"));
+
+function rateLimitLine(snapshot) {
+  const parts = [];
+  if (snapshot.remaining_requests_day != null) {
+    const limit = fmtCount(snapshot.limit_requests_day);
+    parts.push(`Còn ${fmtCount(snapshot.remaining_requests_day)}${limit ? `/${limit}` : ""} lượt hôm nay`);
+  } else if (snapshot.remaining_requests != null) {
+    const limit = fmtCount(snapshot.limit_requests);
+    parts.push(`Còn ${fmtCount(snapshot.remaining_requests)}${limit ? `/${limit}` : ""} lượt trong phút`);
+  }
+  if (snapshot.remaining_tokens_day != null) {
+    const limit = fmtCount(snapshot.limit_tokens_day);
+    parts.push(`còn ${fmtCount(snapshot.remaining_tokens_day)}${limit ? `/${limit}` : ""} token hôm nay`);
+  } else if (snapshot.remaining_tokens != null) {
+    const limit = fmtCount(snapshot.limit_tokens);
+    parts.push(`còn ${fmtCount(snapshot.remaining_tokens)}${limit ? `/${limit}` : ""} token trong phút`);
+  }
+  const reset =
+    snapshot.reset_requests_day || snapshot.reset_tokens_day || snapshot.reset_requests || snapshot.reset_tokens;
+  if (reset) parts.push(`reset sau ${reset}`);
+  return parts.join(" · ");
+}
+
+function ProviderRateLimits({ provider }) {
+  const [state, setState] = useState({ loading: true, items: [] });
+  useEffect(() => {
+    let cancelled = false;
+    providerService
+      .rateLimits()
+      .then((data) => {
+        if (!cancelled) {
+          setState({
+            loading: false,
+            items: (data.snapshots || []).filter((item) => item.provider === provider.id),
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setState({ loading: false, items: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [provider.id]);
+  return (
+    <div className="provider-section">
+      <div className="provider-section-heading">
+        <div>
+          <h3>
+            <Gauge size={16} />
+            Hạn mức provider báo về
+          </h3>
+          <p>
+            Số do chính {provider.name} trả về trong header x-ratelimit-* của lượt gọi gần nhất —
+            không phải ước tính nội bộ của MindFlow.
+          </p>
+        </div>
+      </div>
+      {state.loading ? (
+        <p className="field-hint">Đang tải hạn mức…</p>
+      ) : state.items.length === 0 ? (
+        <p className="field-hint">
+          Chưa có dữ liệu — hãy gọi AI một lượt (Chat, Compare, Agent…) để provider báo hạn mức về.
+        </p>
+      ) : (
+        state.items.map((snapshot) => (
+          <div key={snapshot.model} className="rate-limit-row">
+            <strong>{snapshot.model}</strong>
+            <span>{rateLimitLine(snapshot)}</span>
+            <small>
+              Số do {provider.name} báo lúc {formatDate(snapshot.captured_at)}
+            </small>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
 
 export function ProviderDetails({ controller, encryptionReady }) {
   const { provider, modelState, modelsLoading, busy, keyError, saveKey, testConnection, setEnabled, saveDefaultModel, setConfirmDelete, reload } = controller;
@@ -29,6 +112,7 @@ export function ProviderDetails({ controller, encryptionReady }) {
       <div className="provider-section-heading"><div><h3>Model mặc định</h3><p>Lựa chọn này được lưu để dùng ở các tính năng Chat, Compare và Agent sắp triển khai.</p></div></div>
       <form key={`${provider.id}-${provider.default_model || "none"}-${provider.models_synced_at || "unsynced"}`} onSubmit={saveDefaultModel} className="default-model-form"><label htmlFor={`model-${provider.id}`} className="field-label">Chọn từ model đã đồng bộ</label><div className="key-input-row"><ModelSelect id={`model-${provider.id}`} name="defaultModel" models={models} defaultValue={provider.default_model || ""} disabled={Boolean(busy) || !provider.configured || modelsLoading || models.length === 0} loading={modelsLoading} placeholder="Chưa chọn model mặc định" ariaLabel={`Model mặc định ${provider.name}`} /><button type="submit" className="button secondary" disabled={Boolean(busy) || !provider.configured || modelsLoading || models.length === 0}>{busy === "default-model" && <LoaderCircle size={16} className="spin" />}Lưu model</button></div></form>
     </div>
+    <ProviderRateLimits provider={provider} />
     <ModelCatalog key={provider.id} models={models} loading={modelsLoading} error={modelState.provider === provider.id ? modelState.error : ""} syncedAt={provider.models_synced_at} onRetry={reload} onCheck={controller.checkModel} checkingId={controller.checking} />
     {provider.configured && <div className="provider-delete-row"><p>Xóa kết nối chỉ xóa API key và model cache của provider này.</p><button type="button" className="button danger-outline" disabled={Boolean(busy)} onClick={() => setConfirmDelete(true)}><Trash2 size={15} />Xóa API key</button></div>}
   </section>;
