@@ -185,19 +185,30 @@ class TemplateAssistantService:
         for provider_id, definition in PROVIDERS.items():
             if not definition.implemented:
                 continue
-            credential = await self.providers.get(user_id, provider_id)
-            if credential is None or not credential.enabled:
+            try:
+                credential = await self.providers.get(user_id, provider_id)
+                if credential is None or not credential.enabled:
+                    continue
+                models = [
+                    model
+                    for model in await self.providers.models(user_id, provider_id)
+                    if model.capabilities.get("chat") is not False
+                ]
+                if not models:
+                    continue
+                key = self.vault.decrypt(
+                    credential.encrypted_api_key, user_id, provider_id
+                )
+            except Exception as exc:  # noqa: BLE001 - one broken provider
+                # must never take the whole assistant down: a stale or
+                # corrupt credential of an unrelated provider used to
+                # escape as an unhandled 500 before generation started.
+                logger.warning(
+                    "template assistant: skipping provider %s (%r)",
+                    provider_id,
+                    exc,
+                )
                 continue
-            models = [
-                model
-                for model in await self.providers.models(user_id, provider_id)
-                if model.capabilities.get("chat") is not False
-            ]
-            if not models:
-                continue
-            key = self.vault.decrypt(
-                credential.encrypted_api_key, user_id, provider_id
-            )
             for model in sorted(models, key=lambda item: _candidate_rank(item.id)):
                 candidates.append((provider_id, model.id, key))
         if not candidates:
@@ -205,6 +216,17 @@ class TemplateAssistantService:
         return candidates[:MAX_CANDIDATES]
 
     async def ask(
+        self, user_id, template: TemplateDetailOut, payload: AssistantIn
+    ) -> AssistantOut:
+        try:
+            return await self._ask(user_id, template, payload)
+        except ProviderError:
+            raise
+        except Exception:  # noqa: BLE001 - never leak a bare 500
+            logger.exception("template assistant failed unexpectedly")
+            raise ProviderError("generation_failed") from None
+
+    async def _ask(
         self, user_id, template: TemplateDetailOut, payload: AssistantIn
     ) -> AssistantOut:
         candidates = await self._resolve_candidates(
@@ -244,7 +266,16 @@ class TemplateAssistantService:
                 if status == "success":
                     break
                 provider, model_id = cand_provider, cand_model
-                adapter = create_provider(cand_provider, chat_http=self.chat_http)
+                try:
+                    adapter = create_provider(cand_provider, chat_http=self.chat_http)
+                except Exception as exc:  # noqa: BLE001 - try next candidate
+                    last_error_code = "generation_failed"
+                    logger.warning(
+                        "template assistant: cannot build provider %s (%r)",
+                        cand_provider,
+                        exc,
+                    )
+                    continue
                 for budget in budgets:
                     request = ChatRequest(
                         model=cand_model,
@@ -299,15 +330,19 @@ class TemplateAssistantService:
                         break
                     last_error_code = "generation_failed"
         latency_ms = int((time.monotonic() - started) * 1000)
-        await self.requests.record_request(
-            user_id,
-            provider=provider,
-            model=model_id,
-            status=status,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            latency_ms=latency_ms,
-        )
+        try:
+            await self.requests.record_request(
+                user_id,
+                provider=provider,
+                model=model_id,
+                status=status,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=latency_ms,
+            )
+        except Exception as exc:  # noqa: BLE001 - accounting must not
+            # fail an otherwise successful answer.
+            logger.warning("template assistant: record_request failed (%r)", exc)
         if status != "success":
             raise ProviderError(last_error_code or "generation_failed")
         proposal = parse_proposal(text) if payload.task == "customize" else None
