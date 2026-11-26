@@ -7,7 +7,7 @@ converts and validates; n8n stays the execution engine.
 
 from fastapi import APIRouter
 
-from app.api.deps import CurrentUser
+from app.api.dependencies import CurrentUser
 from app.schemas.workflow_studio import (
     StudioCatalogOut,
     StudioConvertOut,
