@@ -50,6 +50,29 @@ export const workflowTemplatesService = {
     );
     return data;
   },
+  async listMine(signal) {
+    const { data } = await api.get(`${path}/mine`, { signal });
+    return data;
+  },
+  async syncCandidates(signal) {
+    const { data } = await api.get(`${path}/sync-candidates`, { signal });
+    return data;
+  },
+  async install(templateIds, signal) {
+    const { data } = await api.post(
+      `${path}/install`,
+      { template_ids: templateIds },
+      { signal },
+    );
+    return data;
+  },
+  async updateMine(id, signal) {
+    const { data } = await api.post(`${path}/mine/${id}/update`, {}, { signal });
+    return data;
+  },
+  async removeMine(id, signal) {
+    await api.delete(`${path}/mine/${id}`, { signal });
+  },
 };
 
 export function getWorkflowTemplatesError(error, fallback) {
@@ -66,6 +89,18 @@ export function getWorkflowTemplatesError(error, fallback) {
   }
   if (code === "template_source_not_found") {
     return "Không tìm thấy nguồn template. Hãy tải lại danh sách.";
+  }
+  if (code === "template_not_approved") {
+    return "Template chưa được duyệt nên chưa cài được. Hãy duyệt template trước.";
+  }
+  if (code === "user_workflow_not_found") {
+    return "Không tìm thấy workflow đã cài này. Hãy tải lại danh sách.";
+  }
+  if (code === "n8n_api_not_configured") {
+    return "Server chưa có N8N_API_KEY nên chưa cài được template vào n8n. Hãy đặt key trên server trước.";
+  }
+  if (code === "n8n_workflow_not_found") {
+    return "Workflow tương ứng không còn trong n8n (có thể đã bị xóa tay). Hãy gỡ khỏi tài khoản rồi cài lại.";
   }
   if (typeof detail === "object" && detail?.message) return detail.message;
   return fallback;

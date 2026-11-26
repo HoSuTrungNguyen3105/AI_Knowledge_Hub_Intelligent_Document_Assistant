@@ -7,10 +7,13 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Download,
   ExternalLink,
   Loader2,
+  RefreshCw,
   Search,
   ShieldAlert,
+  Trash2,
   X,
 } from "lucide-react";
 import {
@@ -38,6 +41,113 @@ export function TemplateLibrary() {
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [reviewBusy, setReviewBusy] = useState(false);
+  const [mine, setMine] = useState([]);
+  const [candidates, setCandidates] = useState({ available: [], updates: [] });
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [selected, setSelected] = useState({});
+  const [syncBusy, setSyncBusy] = useState("");
+  const [syncNote, setSyncNote] = useState("");
+
+  const loadSync = useCallback(async () => {
+    try {
+      const [mineList, candidateData] = await Promise.all([
+        workflowTemplatesService.listMine(),
+        workflowTemplatesService.syncCandidates(),
+      ]);
+      setMine(mineList || []);
+      setCandidates(candidateData || { available: [], updates: [] });
+    } catch {
+      // Sync sections degrade gracefully.
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSync();
+  }, [loadSync]);
+
+  const installedByTemplate = {};
+  for (const item of mine) installedByTemplate[item.template_id] = item;
+
+  async function installSelected() {
+    const ids = Object.keys(selected).filter((id) => selected[id]);
+    if (!ids.length) return;
+    setSyncBusy("install");
+    setSyncNote("");
+    setError("");
+    try {
+      const data = await workflowTemplatesService.install(ids);
+      const installed = data.results.filter((r) => r.status === "installed").length;
+      const already = data.results.filter((r) => r.status === "already_installed").length;
+      const failed = data.results.filter((r) => r.status === "failed");
+      setSyncNote(
+        `Đã cài ${installed} workflow vào n8n (đang tắt — mở tab n8n Platform để gắn credential và Bật).` +
+          (already ? ` ${already} template đã cài từ trước.` : "") +
+          (failed.length
+            ? ` ${failed.length} template cài lỗi: ${failed.map((r) => `${r.template_name || r.template_id} (${r.error || "?"})`).join(", ")}.`
+            : ""),
+      );
+      setSelected({});
+      loadSync();
+    } catch (err) {
+      setError(getWorkflowTemplatesError(err, "Cài template thất bại. Hãy thử lại."));
+    } finally {
+      setSyncBusy("");
+    }
+  }
+
+  async function installOne(template) {
+    setSyncBusy(template.id);
+    setError("");
+    try {
+      const data = await workflowTemplatesService.install([template.id]);
+      const result = data.results[0];
+      if (result?.status === "failed") {
+        setError(
+          getWorkflowTemplatesError(
+            { response: { data: { detail: { code: result.error } } } },
+            "Cài template thất bại.",
+          ),
+        );
+      } else {
+        setSyncNote(`Đã cài "${template.name}" vào n8n (đang tắt).`);
+        loadSync();
+      }
+    } catch (err) {
+      setError(getWorkflowTemplatesError(err, "Cài template thất bại. Hãy thử lại."));
+    } finally {
+      setSyncBusy("");
+    }
+  }
+
+  async function updateInstall(item) {
+    setSyncBusy(item.id);
+    setError("");
+    try {
+      await workflowTemplatesService.updateMine(item.id);
+      setSyncNote(`Đã cập nhật "${item.template_name}" lên bản mới nhất.`);
+      loadSync();
+    } catch (err) {
+      setError(getWorkflowTemplatesError(err, "Cập nhật thất bại. Hãy thử lại."));
+    } finally {
+      setSyncBusy("");
+    }
+  }
+
+  async function removeInstall(item) {
+    setSyncBusy(item.id);
+    setError("");
+    try {
+      await workflowTemplatesService.removeMine(item.id);
+      setSyncNote(
+        `Đã gỡ "${item.template_name}" khỏi tài khoản và xóa bản sao trong n8n. Bản gốc vẫn còn trong thư viện.`,
+      );
+      loadSync();
+    } catch (err) {
+      setError(getWorkflowTemplatesError(err, "Gỡ thất bại. Hãy thử lại."));
+    } finally {
+      setSyncBusy("");
+    }
+  }
   const [filters, setFilters] = useState({
     q: "",
     category: "",
@@ -142,13 +252,134 @@ export function TemplateLibrary() {
           {stats
             ? `${stats.total} template · ${stats.by_review_status?.pending_review || 0} chờ duyệt · ${stats.by_review_status?.approved || 0} đã duyệt · ${stats.by_compatibility?.needs_community_nodes || 0} cần community node.`
             : "Đang tải thống kê…"}{" "}
-          Template được duyệt mới dùng để đồng bộ vào tài khoản (Phase 3). Muốn nhập thêm template,
-          dùng mục Nguồn template ở tab n8n Platform.
+          Chỉ template đã duyệt mới cài được vào tài khoản. Muốn nhập thêm template, dùng mục
+          Nguồn template ở tab n8n Platform.
         </p>
         {error ? (
           <p className="fx-alert" role="alert">
             {error}
           </p>
+        ) : null}
+        {syncNote ? <p className="fx-run-meta">{syncNote}</p> : null}
+        <div className="fx-actions">
+          <button
+            type="button"
+            className="fx-btn primary"
+            onClick={() => setSyncOpen(!syncOpen)}
+          >
+            <RefreshCw size={15} /> Đồng bộ Workflow
+            {candidates.available.length
+              ? ` (${candidates.available.length} mẫu mới)`
+              : ""}
+            {candidates.updates.length ? ` · ${candidates.updates.length} có bản mới` : ""}
+          </button>
+        </div>
+        {syncOpen ? (
+          <div className="n8n-node">
+            <h3>Chọn template muốn thêm vào tài khoản</h3>
+            {candidates.available.length === 0 ? (
+              <p className="fx-run-meta">
+                Không có template mới nào đang chờ — mọi template đã duyệt đều đã được cài, hoặc
+                chưa có template nào được duyệt.
+              </p>
+            ) : (
+              candidates.available.map((template) => (
+                <label key={template.id} className="tpl-check">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(selected[template.id])}
+                    onChange={(event) =>
+                      setSelected((current) => ({
+                        ...current,
+                        [template.id]: event.target.checked,
+                      }))
+                    }
+                  />
+                  <span>
+                    <strong>{template.name}</strong> · {template.category} · {template.node_count}{" "}
+                    node · v{template.version}
+                    {template.compatibility === "needs_community_nodes"
+                      ? " · Cần community node"
+                      : ""}
+                    {template.security_flag ? " · Nghi ngờ secret" : ""}
+                  </span>
+                </label>
+              ))
+            )}
+            <div className="fx-actions">
+              <button
+                type="button"
+                className="fx-btn primary"
+                onClick={installSelected}
+                disabled={syncBusy === "install" || !Object.values(selected).some(Boolean)}
+              >
+                {syncBusy === "install" ? (
+                  <Loader2 size={15} className="spin" />
+                ) : (
+                  <Download size={15} />
+                )}
+                Cài đã chọn vào n8n
+              </button>
+            </div>
+            {candidates.updates.length ? (
+              <>
+                <h3>Đã cài nhưng có phiên bản mới</h3>
+                {candidates.updates.map((item) => (
+                  <p key={item.id} className="fx-run-meta tpl-check">
+                    <span>
+                      <strong>{item.template_name}</strong> · đang v{item.installed_version} → mới
+                      v{item.latest_version}
+                    </span>
+                    <button
+                      type="button"
+                      className="fx-btn"
+                      onClick={() => updateInstall(item)}
+                      disabled={syncBusy === item.id}
+                    >
+                      Cập nhật
+                    </button>
+                  </p>
+                ))}
+              </>
+            ) : null}
+          </div>
+        ) : null}
+        {mine.length ? (
+          <div className="n8n-node">
+            <h3>Đã cài của tôi ({mine.length})</h3>
+            {mine.map((item) => (
+              <p key={item.id} className="fx-run-meta tpl-check">
+                <span>
+                  <strong>{item.template_name}</strong> · {item.category} · v
+                  {item.installed_version}
+                  {item.update_available ? ` · Có bản mới v${item.latest_version}` : ""}
+                </span>
+                <span className="fx-actions">
+                  {item.update_available ? (
+                    <button
+                      type="button"
+                      className="fx-btn"
+                      onClick={() => updateInstall(item)}
+                      disabled={syncBusy === item.id}
+                    >
+                      Cập nhật
+                    </button>
+                  ) : null}
+                  <a className="fx-btn" href="/agents/workflows?tab=n8n">
+                    Mở trong n8n Platform
+                  </a>
+                  <button
+                    type="button"
+                    className="fx-btn"
+                    onClick={() => removeInstall(item)}
+                    disabled={syncBusy === item.id}
+                  >
+                    <Trash2 size={14} /> Gỡ
+                  </button>
+                </span>
+              </p>
+            ))}
+          </div>
         ) : null}
         <div className="tpl-filters">
           <label className="fx-field tpl-search">
@@ -315,6 +546,29 @@ export function TemplateLibrary() {
             <pre className="tpl-json">{JSON.stringify(detail.workflow_json, null, 2)}</pre>
           </details>
           <div className="fx-actions">
+            {detail.review_status === "approved" && !installedByTemplate[detail.id] ? (
+              <button
+                type="button"
+                className="fx-btn primary"
+                onClick={() => installOne(detail)}
+                disabled={syncBusy === detail.id}
+              >
+                {syncBusy === detail.id ? (
+                  <Loader2 size={15} className="spin" />
+                ) : (
+                  <Download size={15} />
+                )}
+                Thêm vào tài khoản
+              </button>
+            ) : null}
+            {installedByTemplate[detail.id] ? (
+              <span className="fx-run-meta">
+                Đã cài vào tài khoản (v{installedByTemplate[detail.id].installed_version})
+                {installedByTemplate[detail.id].update_available
+                  ? ` · Có bản mới v${installedByTemplate[detail.id].latest_version} — cập nhật ở mục Đã cài của tôi.`
+                  : ""}
+              </span>
+            ) : null}
             <button
               type="button"
               className="fx-btn primary"
