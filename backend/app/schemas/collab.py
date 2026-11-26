@@ -14,6 +14,10 @@ def _strip(value: str) -> str:
 class RoomCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=200)
+    # When team_id is set the room is created FROM an Agent Team: members,
+    # moderator and the frozen configuration snapshot all come from the
+    # team, and agent_ids/moderator_agent_id in the payload are ignored.
+    team_id: UUID | None = None
     agent_ids: list[UUID] = Field(default_factory=list, max_length=20)
     mode: str = Field(default="directed", pattern="^(directed|auto)$")
     moderator_agent_id: UUID | None = None
@@ -46,11 +50,40 @@ class RoomAgentOut(BaseModel):
     name: str
     provider: str
     model: str
+    role: str | None = None
+
+
+class SnapshotMemberOut(BaseModel):
+    agent_id: UUID
+    agent_name: str | None = None
+    role: str = "member"
+    enabled: bool = True
+    execution_order: int | None = None
+    priority: int = 0
+    instructions: str | None = None
+    responsibility: str | None = None
+    description: str | None = None
+    # Effective provider/model frozen at room creation (team override
+    # when set, otherwise the Agent's own). The system-prompt override
+    # is deliberately NOT exposed here; it stays server-side.
+    provider: str | None = None
+    model: str | None = None
+    provider_override: str | None = None
+    model_override: str | None = None
+
+
+class TeamSnapshotOut(BaseModel):
+    team_id: UUID
+    team_name: str
+    coordinator_agent_id: UUID
+    members: list[SnapshotMemberOut] = Field(default_factory=list)
 
 
 class RoomOut(BaseModel):
     id: UUID
     title: str
+    team_id: UUID | None = None
+    team_snapshot: TeamSnapshotOut | None = None
     agent_ids: list[UUID] = Field(default_factory=list)
     agents: list[RoomAgentOut] = Field(default_factory=list)
     mode: str = "directed"
