@@ -73,6 +73,43 @@ export const workflowTemplatesService = {
   async removeMine(id, signal) {
     await api.delete(`${path}/mine/${id}`, { signal });
   },
+  async listVersions(id, signal) {
+    const { data } = await api.get(`${path}/templates/${id}/versions`, { signal });
+    return data;
+  },
+  async getVersion(id, version, signal) {
+    const { data } = await api.get(`${path}/templates/${id}/versions/${version}`, { signal });
+    return data;
+  },
+  async diffVersions(id, fromVersion, toVersion, signal) {
+    const { data } = await api.get(`${path}/templates/${id}/diff`, {
+      params: { from_version: fromVersion, to_version: toVersion },
+      signal,
+    });
+    return data;
+  },
+  async restoreVersion(id, version, signal) {
+    const { data } = await api.post(
+      `${path}/templates/${id}/versions/${version}/restore`,
+      {},
+      { signal },
+    );
+    return data;
+  },
+  async contribute(payload, signal) {
+    const { data } = await api.post(`${path}/templates/contribute`, payload, { signal });
+    return data;
+  },
+  async askAssistant(id, payload, signal) {
+    const { data } = await api.post(`${path}/templates/${id}/assistant`, payload, { signal });
+    return data;
+  },
+  async applyAssistant(id, payload, signal) {
+    const { data } = await api.post(`${path}/templates/${id}/assistant/apply`, payload, {
+      signal,
+    });
+    return data;
+  },
 };
 
 export function getWorkflowTemplatesError(error, fallback) {
@@ -98,6 +135,18 @@ export function getWorkflowTemplatesError(error, fallback) {
   }
   if (code === "n8n_api_not_configured") {
     return "Server chưa có N8N_API_KEY nên chưa cài được template vào n8n. Hãy đặt key trên server trước.";
+  }
+  if (code === "template_version_not_found") {
+    return "Không tìm thấy phiên bản này của template.";
+  }
+  if (code === "template_contribute_invalid") {
+    return "JSON gửi lên không phải workflow n8n hợp lệ (cần có nodes là danh sách, mỗi node có name và type).";
+  }
+  if (code === "template_assistant_unavailable") {
+    return "Chưa có provider AI nào được cấu hình và bật kèm model chat đã đồng bộ. Hãy cấu hình ở trang Providers trước.";
+  }
+  if (code === "generation_failed") {
+    return "AI không trả về kết quả. Hãy thử lại, hoặc đổi provider/model khác.";
   }
   if (code === "n8n_workflow_not_found") {
     return "Workflow tương ứng không còn trong n8n (có thể đã bị xóa tay). Hãy gỡ khỏi tài khoản rồi cài lại.";
