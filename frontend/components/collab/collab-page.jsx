@@ -60,6 +60,7 @@ export function CollabPage() {
   const [runs, setRuns] = useState([]);
   const [runDetail, setRunDetail] = useState(null);
   const [artifacts, setArtifacts] = useState([]);
+  const [usage, setUsage] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -122,6 +123,7 @@ export function CollabPage() {
         collabService.listMessages(roomId, signal),
       ]);
       setRoom(detail);
+      collabService.roomUsage(roomId, signal).then(setUsage).catch(() => setUsage(null));
       setMemberDraft(detail.agent_ids);
       setModeDraft(detail.mode || "directed");
       setModeratorDraft(detail.moderator_agent_id || "");
@@ -557,6 +559,23 @@ export function CollabPage() {
             </div>}
           </>}
         </div>
+
+        {usage && usage.requests > 0 && <div className="wf-card" style={{ marginTop: 12 }}>
+          <h3 style={{ marginTop: 0 }}>Token &amp; chi phí theo vai trò</h3>
+          <p className="muted" style={{ fontSize: 12.5, margin: "4px 0" }}>
+            Tổng {usage.requests} lượt có số liệu · {(usage.input_tokens + usage.output_tokens).toLocaleString("vi-VN")} token
+            {usage.estimated_cost != null && <> · Chi phí ước tính: <b>${usage.estimated_cost.toFixed(4)}</b> (theo bảng giá model đã đồng bộ — không phải hoá đơn của provider)</>}
+            {usage.unpriced_requests > 0 && <> · {usage.unpriced_requests} lượt chưa có giá nên chưa tính chi phí</>}
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {usage.by_role.map((b) => <div key={b.agent_id || b.agent_name} className="wf-run-task">
+              <span><b>{b.agent_name || "Agent"}</b>{b.role ? <span className="muted"> · {b.role}</span> : null}
+                <span className="muted"> · {b.provider} · {b.model}</span></span>
+              <span className="muted">{b.requests} lượt · {(b.input_tokens + b.output_tokens).toLocaleString("vi-VN")} token
+                {b.estimated_cost != null && ` · $${b.estimated_cost.toFixed(4)}`}</span>
+            </div>)}
+          </div>
+        </div>}
 
         <div className="wf-card" style={{ marginTop: 12 }}>
           <h3 style={{ marginTop: 0 }}><FileDown size={15} /> File kết quả</h3>

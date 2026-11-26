@@ -22,6 +22,10 @@ export const collabService = {
   async deleteRoom(id) {
     await api.delete(`/ai/collab/rooms/${id}`);
   },
+  async roomUsage(roomId, signal) {
+    const { data } = await api.get(`/ai/collab/rooms/${roomId}/usage`, { signal });
+    return data;
+  },
   async listMessages(roomId, signal) {
     const { data } = await api.get(`/ai/collab/rooms/${roomId}/messages`, { signal });
     return data.messages;
