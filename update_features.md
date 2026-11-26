@@ -1,427 +1,553 @@
-# UPGRADE AI MODEL & AGENT EVALUATION CENTER – MINDFLOW
+# TASK: XÂY DỰNG AI TOKEN & API USAGE ANALYTICS CHO MINDFLOW
 
 ## 1. Mục tiêu
 
-Hãy kiểm tra và nâng cấp toàn diện tính năng và có tên là **AI Model & Agent Evaluation Center** ( hiện đang là trang /compare ) hiện đang tồn tại trong website MindFlow.
+Xây dựng module **AI Usage & Cost Analytics** trong MindFlow để theo dõi toàn bộ mức sử dụng API của các nhà cung cấp AI.
 
-Hiện tại tính năng đã có nhưng còn sơ sài, chưa đủ chiều sâu để trở thành một hệ thống đánh giá, kiểm thử và giám sát chất lượng AI Model và AI Agent chuyên nghiệp.
+Các nhà cung cấp cần hỗ trợ:
 
-Mục tiêu là biến nó thành một nền tảng Evaluation & Observability thực sự, có thể sử dụng để đánh giá các mô hình LLM, so sánh nhiều Model, kiểm tra Agent, theo dõi hiệu suất và phát hiện vấn đề trong quá trình vận hành.
+- OpenAI
+- Anthropic Claude
+- Google Gemini
+- DeepSeek
+- Groq
+- Custom OpenAI-compatible API
 
-**Yêu cầu quan trọng:**
-- Không tạo thêm một trang Evaluation Center mới nếu trang hiện tại đã tồn tại.
-- Không xóa bỏ hoặc phá vỡ các tính năng đang hoạt động.
-- Không chỉ làm đẹp giao diện. Phải kiểm tra và hoàn thiện cả logic, dữ liệu, API, backend và cơ chế đánh giá.
-- Tái sử dụng kiến trúc, component, design system và các module hiện có.
-- Không tạo dữ liệu giả để hiển thị thành kết quả đánh giá thật.
-- Nếu chưa có API hoặc provider thật, phải thể hiện rõ trạng thái chưa cấu hình.
+Mục tiêu là giúp người quản trị biết:
 
-## 2. Khảo sát hiện trạng trước khi code
+- Đã sử dụng bao nhiêu token?
+- Input Token và Output Token là bao nhiêu?
+- Đã tiêu tốn bao nhiêu tiền cho API?
+- Model nào đang được sử dụng nhiều nhất?
+- AI Agent nào tiêu tốn nhiều token nhất?
+- Workflow nào tiêu tốn nhiều chi phí nhất?
+- Chi phí theo ngày, tuần, tháng.
+- Nhà cung cấp nào đang được sử dụng nhiều nhất?
 
-Trước tiên hãy đọc source code và xác định:
+**Lưu ý:** Đây là module phân tích dữ liệu sử dụng API, không phải hệ thống thay thế LLM Gateway hiện tại.
 
-1. Trang AI Model & Agent Evaluation Center đang nằm ở đâu.
-2. Các component, API, service, database và state management liên quan.
-3. Những chức năng đã có và những chức năng đang thiếu.
-4. Model provider nào đang được tích hợp.
-5. Agent nào có thể được đánh giá.
-6. Cơ chế lưu lịch sử đánh giá hiện tại.
-7. Các vấn đề về UI/UX, hiệu suất, bảo mật và xử lý lỗi.
+---
 
-Sau khi khảo sát, lập danh sách:
-- Existing features.
-- Missing features.
-- Broken features.
-- Technical debt.
-- Implementation plan.
+## 2. Yêu cầu bắt buộc trước khi code
 
-Sau đó tiến hành nâng cấp trực tiếp.
+Trước tiên, hãy kiểm tra toàn bộ codebase MindFlow để xác định:
 
-## 3. Các module cần hoàn thiện
+1. Cấu trúc LLM Gateway hiện tại.
+2. Các provider đã tích hợp.
+3. Các service gọi API AI.
+4. Cách xử lý streaming.
+5. Cấu trúc database hiện tại.
+6. Cách quản lý API Key.
+7. Agent Studio và Agent Conversations.
+8. Workflow Automation và hệ thống Execution Logs.
+9. Các module Dashboard và quản lý người dùng.
 
-### A. Evaluation Dashboard
+Sau khi kiểm tra, lập bảng:
 
-Xây dựng dashboard tổng quan với các chỉ số:
+| Chức năng | Đã có | Cần bổ sung |
+|---|---|---|
+| LLM Gateway | Kiểm tra code | |
+| Provider Management | Kiểm tra code | |
+| Token Tracking | Kiểm tra code | |
+| Cost Calculation | Kiểm tra code | |
+| Usage Dashboard | Kiểm tra code | |
+| Agent Usage Tracking | Kiểm tra code | |
+| Workflow Usage Tracking | Kiểm tra code | |
 
-- Total Evaluations.
-- Total Models Tested.
-- Total Agents Evaluated.
-- Average Accuracy.
-- Average Latency.
-- Average Token Usage.
-- Average Cost per Evaluation.
-- Pass Rate.
-- Failure Rate.
-- Regression Rate.
+Không được tạo thêm hệ thống trùng với các chức năng đã tồn tại.
 
-Biểu đồ:
-- Chất lượng Model theo thời gian.
-- So sánh hiệu suất giữa các Model.
-- Chi phí sử dụng Model.
-- Latency và token usage.
-- Tỷ lệ thành công của Agent.
-- Chất lượng đánh giá theo từng bộ Dataset.
+---
 
-Cho phép lọc theo thời gian, Model, Agent, Project và Evaluation Run.
+## 3. Thiết kế giao diện
 
-Các số liệu phải lấy từ dữ liệu thực tế. Không tự tạo KPI giả.
+Tạo một khu vực mới có tên:
 
-### B. LLM Model Evaluation
+**AI Usage & Analytics**
 
-Cho phép đánh giá và so sánh các Model như:
+Có thể đặt trong khu vực Settings / AI Providers / Usage hoặc vị trí phù hợp với kiến trúc giao diện hiện tại.
 
-- OpenAI GPT.
-- Anthropic Claude.
-- Google Gemini.
-- Các Model tương thích OpenAI API.
-- Local Model nếu hệ thống hỗ trợ.
+### 3.1. Overview Dashboard
 
-Các tiêu chí đánh giá:
+Hiển thị các thống kê:
 
-**Quality**
-- Answer Correctness.
-- Relevance.
-- Faithfulness.
-- Context Precision.
-- Context Recall.
-- Hallucination Rate.
-- Instruction Following.
+- Total Tokens
+- Input Tokens
+- Output Tokens
+- Total Estimated Cost
+- Total API Requests
+- Average Cost per Request
 
-**Performance**
-- Time to First Token.
-- Total Latency.
-- Tokens per Second.
-- Input Tokens.
-- Output Tokens.
+Có bộ lọc:
 
-**Cost**
-- Input Cost.
-- Output Cost.
-- Total Cost.
-- Cost per Successful Task.
+- Hôm nay
+- 7 ngày
+- 30 ngày
+- Tháng này
+- Tháng trước
+- Tùy chỉnh thời gian
 
-**Reliability**
-- Success Rate.
-- Timeout Rate.
-- Error Rate.
-- Retry Rate.
+Các số liệu phải lấy từ database thực tế, không dùng dữ liệu mock trong production.
 
-Cho phép chạy cùng một Dataset trên nhiều Model để so sánh kết quả trong cùng điều kiện.
+### 3.2. Biểu đồ sử dụng Token
 
-Lưu ý: Các tiêu chí cần có cách đo phù hợp. Không được coi kết quả LLM-as-a-Judge là ground truth. Cần hỗ trợ dữ liệu đáp án chuẩn, assertion hoặc đánh giá của con người khi phù hợp.
+Tạo biểu đồ thể hiện:
 
-### C. Agent Evaluation
+- Input Tokens theo thời gian.
+- Output Tokens theo thời gian.
+- Total Tokens theo thời gian.
+- Chi phí API theo ngày.
 
-Đây là phần quan trọng nhất.
+Cho phép chuyển đổi giữa các chế độ xem.
 
-Cho phép kiểm tra Agent không chỉ dựa trên câu trả lời cuối cùng mà còn dựa trên toàn bộ quá trình thực hiện nhiệm vụ.
+### 3.3. Provider Usage
 
-Các tiêu chí:
+Hiển thị mức sử dụng theo nhà cung cấp:
 
-- Task Completion Rate.
-- Goal Achievement.
-- Tool Calling Accuracy.
-- Tool Selection Accuracy.
-- Planning Quality.
-- Reasoning Process Quality.
-- Context Retention.
-- Memory Retrieval Accuracy.
-- Workflow Execution Success.
-- Error Recovery.
-- Agent Handoff Accuracy.
-- Human Intervention Rate.
+| Provider | Requests | Input Tokens | Output Tokens | Estimated Cost |
+|---|---:|---:|---:|---:|
+| OpenAI | | | | |
+| Claude | | | | |
+| Gemini | | | | |
+| DeepSeek | | | | |
+| Groq | | | | |
 
-Mỗi Evaluation Run cần hiển thị:
+Có thể nhấn vào từng Provider để xem chi tiết.
 
-- Input Task.
-- Expected Outcome.
-- Actual Output.
-- Agent được sử dụng.
-- Model được sử dụng.
-- Các Tool đã gọi.
-- Thời gian thực hiện từng bước.
-- Token Usage.
-- Chi phí.
-- Lỗi phát sinh.
-- Kết quả đánh giá.
-- Evidence và lý do chấm điểm.
+### 3.4. Model Usage
 
-Không được đánh giá Agent chỉ bằng cách kiểm tra câu trả lời cuối cùng.
+Thống kê theo từng model:
 
-### D. Dataset Management
+- Model Name
+- Provider
+- Total Requests
+- Input Tokens
+- Output Tokens
+- Total Tokens
+- Estimated Cost
+- Average Latency
 
-Xây dựng khu vực quản lý bộ dữ liệu kiểm thử.
+Cho phép sắp xếp theo:
 
-Chức năng:
+- Token sử dụng nhiều nhất.
+- Chi phí cao nhất.
+- Request nhiều nhất.
+- Latency cao nhất.
 
-- Tạo Dataset.
-- Chỉnh sửa Dataset.
-- Xóa Dataset.
-- Import JSON/CSV.
-- Export Dataset.
-- Quản lý phiên bản Dataset.
-- Gắn tag theo lĩnh vực.
-- Phân loại theo loại nhiệm vụ.
+### 3.5. Agent Usage
 
-Ví dụ Dataset:
+Thống kê mức tiêu thụ của từng AI Agent:
 
-1. General Question Answering.
-2. Coding Tasks.
-3. RAG Evaluation.
-4. Tool Calling.
-5. Multi-Agent Collaboration.
-6. Workflow Execution.
-7. Customer Support.
-8. Structured Output.
-9. Vietnamese Language Evaluation.
+- Agent Name
+- Provider
+- Model
+- Total Requests
+- Total Tokens
+- Estimated Cost
+- Success Rate
 
-Mỗi test case cần có:
-- Input.
-- Expected Output hoặc Expected Behavior.
-- Evaluation Criteria.
-- Ground Truth nếu có.
-- Metadata.
-- Tags.
+Mục đích: biết Agent nào đang tiêu tốn nhiều tài nguyên nhất.
 
-Hỗ trợ chạy thử một test case hoặc toàn bộ Dataset.
+### 3.6. Workflow Usage
 
-### E. Model Comparison Lab
+Thống kê chi phí của từng workflow:
 
-Xây dựng giao diện so sánh Model trực quan.
+- Workflow Name
+- Execution Count
+- AI Requests
+- Total Tokens
+- Estimated Cost
+- Average Execution Time
 
-Cho phép:
-- Chọn từ 2 đến 5 Model.
-- Chọn Dataset.
-- Chọn Evaluation Metrics.
-- Chạy cùng một bài kiểm thử trên nhiều Model.
-- Xem kết quả song song.
+Đặc biệt phải phân biệt chi phí AI API với chi phí hạ tầng hoặc chi phí dịch vụ bên ngoài.
 
-Kết quả hiển thị:
+### 3.7. Usage History
 
-| Metric | Model A | Model B | Model C |
-|---|---|---|---|
-| Accuracy | Actual | Actual | Actual |
-| Latency | Actual | Actual | Actual |
-| Cost | Actual | Actual | Actual |
-| Hallucination | Actual | Actual | Actual |
-| Pass Rate | Actual | Actual | Actual |
+Tạo bảng lịch sử từng lần gọi AI:
 
-Có biểu đồ và phân tích ưu nhược điểm.
+| Thông tin | Mô tả |
+|---|---|
+| Time | Thời gian gọi API |
+| Provider | Nhà cung cấp |
+| Model | Model được sử dụng |
+| Agent | Agent thực hiện |
+| Workflow | Workflow liên quan |
+| Input Tokens | Token đầu vào |
+| Output Tokens | Token đầu ra |
+| Total Tokens | Tổng token |
+| Cost | Chi phí ước tính |
+| Latency | Thời gian phản hồi |
+| Status | Thành công / Thất bại |
 
-Cho phép xác định Model phù hợp nhất theo từng mục tiêu:
-- Best Quality.
-- Lowest Cost.
-- Fastest Response.
-- Best Reliability.
-- Best Overall Trade-off.
+Yêu cầu:
 
-Không mặc định Model đắt nhất là tốt nhất.
+- Tìm kiếm.
+- Lọc theo Provider.
+- Lọc theo Model.
+- Lọc theo Agent.
+- Lọc theo thời gian.
+- Phân trang.
+- Xuất CSV.
 
-### F. Evaluation History & Regression Testing
+Không lưu toàn bộ nội dung prompt và response nếu không thực sự cần thiết. Ưu tiên lưu metadata và usage.
 
-Lưu toàn bộ lịch sử Evaluation Run.
+---
 
-Cho phép:
-- Xem lại từng lần chạy.
-- So sánh hai lần đánh giá.
-- Phát hiện chất lượng giảm sau khi thay đổi Model.
-- Phát hiện regression khi thay đổi Prompt.
-- Phát hiện regression khi thay đổi Agent hoặc Tool.
-- Theo dõi lịch sử phiên bản.
+## 4. Backend Architecture
+
+Tận dụng LLM Gateway hiện tại để ghi nhận usage sau mỗi lần gọi API.
+
+Luồng đề xuất:
+
+User Request
+→ LLM Gateway
+→ Provider Adapter
+→ AI Provider
+→ Response
+→ Extract Usage Metadata
+→ Calculate Cost
+→ Save Usage Record
+→ Analytics Dashboard
+
+Không tạo một service gọi API AI mới.
+
+### 4.1. Usage Tracking Service
+
+Tạo hoặc mở rộng service phù hợp với kiến trúc hiện tại.
+
+Các nhiệm vụ:
+
+- Nhận usage metadata từ provider.
+- Chuẩn hóa dữ liệu.
+- Ghi nhận token.
+- Tính chi phí.
+- Gắn thông tin Agent.
+- Gắn thông tin Workflow.
+- Ghi nhận trạng thái request.
+- Tổng hợp dữ liệu thống kê.
+
+### 4.2. Chuẩn hóa Usage Metadata
+
+Thiết kế cấu trúc dữ liệu thống nhất:
+
+```json
+{
+  "provider": "openai",
+  "model": "gpt-model",
+  "inputTokens": 1200,
+  "outputTokens": 450,
+  "totalTokens": 1650,
+  "cachedInputTokens": 0,
+  "reasoningTokens": 0,
+  "estimatedCost": 0,
+  "currency": "USD",
+  "latencyMs": 2400,
+  "status": "success",
+  "agentId": null,
+  "workflowId": null,
+  "conversationId": null,
+  "userId": null,
+  "createdAt": "ISO_DATE"
+}
+```
+
+Đây là schema minh họa. Hãy điều chỉnh theo cấu trúc database hiện tại.
+
+Không phải provider nào cũng trả về đầy đủ các trường. Những trường không có dữ liệu phải được xử lý đúng, không tự tạo số liệu.
+
+### 4.3. Database
+
+Kiểm tra database hiện tại trước khi tạo collection mới.
+
+Nếu đang sử dụng MongoDB, có thể bổ sung collection:
+
+**ai_usage_logs**
+
+Các trường đề xuất:
+
+- userId
+- provider
+- model
+- inputTokens
+- outputTokens
+- totalTokens
+- cachedInputTokens
+- reasoningTokens
+- estimatedCost
+- currency
+- latencyMs
+- status
+- agentId
+- workflowId
+- conversationId
+- requestId
+- createdAt
+
+Tạo index phù hợp cho:
+
+- userId + createdAt
+- provider + createdAt
+- model + createdAt
+- agentId + createdAt
+- workflowId + createdAt
+
+Không lưu API Key dạng plaintext.
+
+Không lưu dữ liệu usage trùng lặp nếu đã có hệ thống logging phù hợp.
+
+---
+
+## 5. Tính toán chi phí API
+
+Đây là phần rất quan trọng.
+
+Không được sử dụng một mức giá chung cho tất cả model.
+
+Xây dựng cơ chế quản lý bảng giá:
+
+**AI Model Pricing**
+
+Mỗi model cần có:
+
+- Provider
+- Model ID
+- Input Price per 1M Tokens
+- Output Price per 1M Tokens
+- Cached Input Price nếu có
+- Effective Date
+- Currency
+- Pricing Version
+
+Công thức cơ bản:
+
+```text
+Input Cost = Input Tokens / 1,000,000 * Input Price
+
+Output Cost = Output Tokens / 1,000,000 * Output Price
+
+Estimated Cost = Input Cost + Output Cost
+```
+
+Đối với model có cached tokens, reasoning tokens hoặc các loại token tính phí riêng, phải áp dụng đúng quy tắc giá của provider.
+
+Yêu cầu:
+
+1. Có thể cập nhật bảng giá mà không phải sửa code.
+2. Không ghi đè bảng giá cũ đã sử dụng để tính lịch sử.
+3. Mỗi usage record cần lưu pricing version hoặc đơn giá áp dụng.
+4. Phân biệt Estimated Cost và Actual Provider Billing.
+5. Không tuyên bố số liệu ước tính là hóa đơn thực tế.
+6. Có thể hiển thị chi phí bằng USD và quy đổi VND nếu có tỷ giá hợp lệ.
+
+---
+
+## 6. Xử lý Streaming
+
+Kiểm tra tất cả các provider đang hỗ trợ streaming.
+
+Yêu cầu:
+
+- Thu thập usage metadata từ response cuối cùng.
+- Đối với OpenAI, xử lý đúng cơ chế include_usage khi dùng Chat Completions streaming.
+- Đối với các provider khác, tuân thủ định dạng streaming riêng.
+- Không ghi nhận token nhiều lần khi nhận nhiều chunk.
+- Có cơ chế xử lý khi stream bị ngắt giữa chừng.
+- Phân biệt request thành công, thất bại và bị hủy.
+- Không tự ước lượng token nếu provider không cung cấp usage, trừ khi có cơ chế tính riêng được đánh dấu rõ là estimated.
+
+---
+
+## 7. API Endpoints
+
+Kiểm tra quy ước API hiện tại trước khi triển khai.
+
+Các endpoint đề xuất:
+
+```http
+GET /api/ai-usage/overview
+GET /api/ai-usage/timeseries
+GET /api/ai-usage/providers
+GET /api/ai-usage/models
+GET /api/ai-usage/agents
+GET /api/ai-usage/workflows
+GET /api/ai-usage/history
+GET /api/ai-usage/export
+GET /api/ai-usage/pricing
+PUT /api/ai-usage/pricing/:id
+```
+
+Các API cần hỗ trợ:
+
+- Date range.
+- Provider filter.
+- Model filter.
+- Agent filter.
+- Workflow filter.
+- Pagination.
+- Sorting.
+
+Phải kiểm tra quyền truy cập để người dùng không xem được usage của người dùng khác.
+
+---
+
+## 8. Quản lý ngân sách và cảnh báo
+
+Bổ sung chức năng quản lý ngân sách:
+
+- Đặt giới hạn chi phí theo tháng.
+- Đặt giới hạn theo Provider.
+- Đặt giới hạn theo Agent.
+- Cảnh báo khi đạt 50%, 80%, 100%.
+- Hiển thị phần ngân sách còn lại.
 
 Ví dụ:
 
-Model GPT sau khi cập nhật Prompt:
-- Accuracy giảm 8%.
-- Latency tăng 15%.
-- Cost tăng 12%.
+```text
+Monthly Budget: $50
 
-Hệ thống phải cảnh báo và chỉ rõ các test case bị ảnh hưởng.
+Current Usage: $35
 
-Hỗ trợ thiết lập Baseline để làm mốc so sánh.
+Remaining: $15
 
-### G. Prompt Evaluation
+Usage: 70%
+```
 
-Xây dựng chức năng kiểm tra chất lượng Prompt.
+Có thể tích hợp thông báo vào hệ thống Notification hiện tại.
 
-- Lưu nhiều phiên bản Prompt.
-- Chạy cùng một Dataset trên nhiều Prompt.
-- So sánh đầu ra.
-- Đánh giá độ chính xác.
-- Phát hiện Prompt Regression.
-- So sánh chi phí và latency.
-- Cho phép chọn phiên bản tốt hơn.
+Lưu ý: Cảnh báo ngân sách không đồng nghĩa với việc tự động ngắt API. Chỉ bổ sung cơ chế chặn request khi người quản trị chủ động bật giới hạn cứng và hệ thống đã xử lý an toàn.
 
-Không tự động thay Prompt production khi chưa có sự phê duyệt.
+---
 
-### H. AI Evaluation Report
+## 9. Giao diện và trải nghiệm người dùng
 
-Tạo báo cáo sau mỗi Evaluation Run.
+Yêu cầu UI:
 
-Báo cáo cần có:
+- Đồng bộ hoàn toàn với design system hiện tại của MindFlow.
+- Responsive Desktop / Tablet / Mobile.
+- Không tạo giao diện tách biệt khỏi hệ thống.
+- Biểu đồ dễ đọc.
+- Có loading state.
+- Có empty state.
+- Có error state.
+- Có tooltip giải thích Token và Cost.
+- Có khả năng cập nhật dữ liệu.
+- Không sử dụng dữ liệu giả để hiển thị như dữ liệu thật.
 
-1. Executive Summary.
-2. Evaluation Configuration.
-3. Model / Agent Information.
-4. Dataset Information.
-5. Evaluation Metrics.
-6. Performance Analysis.
-7. Cost Analysis.
-8. Failed Test Cases.
-9. Error Analysis.
-10. Recommendations.
+Ưu tiên giao diện chuyên nghiệp, gọn, dễ quan sát.
 
-Cho phép:
-- Xuất PDF.
-- Xuất Excel/CSV.
-- Xuất JSON.
-- Chia sẻ báo cáo nếu hệ thống có chức năng phân quyền phù hợp.
+Không nhồi quá nhiều biểu đồ vào cùng một màn hình.
 
-## 4. Evaluation Engine và kiến trúc xử lý
+---
 
-Thiết kế Evaluation Engine có khả năng mở rộng.
+## 10. Bảo mật và tối ưu
 
-Quy trình:
+- Chỉ người có quyền phù hợp mới được xem thống kê tổng thể.
+- Người dùng thông thường chỉ xem dữ liệu của chính mình.
+- Không trả API Key về frontend.
+- Không lưu prompt và response đầy đủ nếu không cần thiết.
+- Không cho phép người dùng sửa usage logs.
+- Chống ghi nhận trùng request.
+- Có requestId để đối soát.
+- Tối ưu aggregate query.
+- Phân trang lịch sử.
+- Có thể dùng cache cho dashboard.
+- Không gọi API provider liên tục chỉ để cập nhật dashboard.
 
-1. Người dùng chọn Model hoặc Agent.
-2. Chọn Dataset.
-3. Chọn Metrics.
-4. Tạo Evaluation Run.
-5. Engine thực thi test case.
-6. Thu thập kết quả và telemetry.
-7. Chấm điểm.
-8. Lưu kết quả.
-9. Tổng hợp báo cáo.
-10. So sánh với Baseline.
+---
 
-Yêu cầu kỹ thuật:
+## 11. Testing
 
-- Tách Evaluation Engine khỏi UI.
-- Hỗ trợ chạy bất đồng bộ cho các bộ test lớn.
-- Có trạng thái Pending, Running, Completed, Failed, Cancelled.
-- Có Progress Tracking.
-- Có Retry hợp lý.
-- Có Timeout.
-- Có kiểm soát concurrency.
-- Có giới hạn token và chi phí.
-- Có khả năng dừng Evaluation Run.
-- Không chạy trùng lặp khi người dùng gửi request nhiều lần.
-- Lưu đầy đủ execution trace.
-- Phân biệt lỗi từ Provider, Model, Agent, Tool và Evaluation Engine.
+Phải kiểm tra:
 
-Có thể sử dụng LangGraph cho các luồng Agent Evaluation phức tạp nếu kiến trúc hiện tại phù hợp. Không bắt buộc sử dụng LangGraph cho mọi bài kiểm thử.
+1. Gọi OpenAI API và ghi nhận token.
+2. Gọi Claude API và ghi nhận token.
+3. Gọi Gemini API và ghi nhận token.
+4. Gọi DeepSeek API và ghi nhận token.
+5. Gọi API qua streaming.
+6. Request thất bại.
+7. Request bị hủy.
+8. Request thiếu usage metadata.
+9. Tính toán chi phí theo đúng model.
+10. Lọc thống kê theo ngày.
+11. Thống kê theo Agent.
+12. Thống kê theo Workflow.
+13. Phân quyền dữ liệu người dùng.
+14. Xuất CSV.
+15. Kiểm tra không ghi nhận usage trùng lặp.
 
-## 5. Observability
+Đối chiếu một số request thực tế với dashboard của provider để kiểm tra độ chính xác.
 
-Bổ sung khả năng quan sát hoạt động của Model và Agent:
+---
 
-- Trace ID.
-- Run ID.
-- Model ID.
-- Agent ID.
-- Prompt Version.
-- Tool Calls.
-- Latency.
-- Token Usage.
-- Cost.
-- Error Details.
-- Retry History.
+## 12. Kế hoạch triển khai
 
-Cho phép xem chi tiết một Trace theo dạng timeline.
+### Phase 1: Audit và Usage Tracking
+- Kiểm tra LLM Gateway.
+- Xác định nơi nhận usage metadata.
+- Chuẩn hóa dữ liệu.
+- Lưu usage logs.
+- Xử lý streaming.
 
-Phải bảo vệ dữ liệu nhạy cảm, API Key và nội dung riêng tư của khách hàng. Không ghi log bí mật hoặc dữ liệu nhạy cảm không cần thiết.
+### Phase 2: Cost Calculation
+- Xây dựng model pricing.
+- Tính toán chi phí.
+- Lưu lịch sử giá.
+- Kiểm tra tính chính xác.
 
-## 6. UI/UX Requirements
+### Phase 3: Analytics Dashboard
+- Overview.
+- Provider Usage.
+- Model Usage.
+- Token Charts.
+- Usage History.
 
-Thiết kế lại giao diện theo phong cách Enterprise SaaS hiện đại.
+### Phase 4: Agent & Workflow Analytics
+- Thống kê theo Agent.
+- Thống kê theo Workflow.
+- Phân tích chi phí từng tác vụ.
 
-Yêu cầu:
-- Chuyên nghiệp, rõ ràng, trực quan.
-- Không nhồi nhét quá nhiều thông tin.
-- Có hệ thống Tabs hoặc Sidebar hợp lý.
-- Có bộ lọc và tìm kiếm.
-- Có bảng dữ liệu chuyên nghiệp.
-- Có biểu đồ dễ đọc.
-- Có Detail View cho từng Evaluation Run.
-- Có Loading, Empty, Error và Success States.
-- Responsive Desktop, Tablet và Mobile.
-- Tái sử dụng design system hiện tại của MindFlow.
+### Phase 5: Budget & Notifications
+- Quản lý ngân sách.
+- Cảnh báo chi phí.
+- Tích hợp Notification.
 
-Đề xuất cấu trúc:
+---
 
-1. Overview.
-2. Model Evaluation.
-3. Agent Evaluation.
-4. Comparison Lab.
-5. Datasets.
-6. Prompt Evaluation.
-7. History & Regression.
-8. Traces & Observability.
-9. Reports.
-10. Settings.
+## 13. Yêu cầu bàn giao
 
-Không nhất thiết tạo tất cả thành các trang độc lập. Có thể tổ chức dưới dạng tab hoặc sub-navigation nếu phù hợp với kiến trúc hiện tại.
+Sau khi hoàn thành, cần cung cấp:
 
-## 7. Testing và Acceptance Criteria
+1. Source code frontend.
+2. Source code backend.
+3. Database schema.
+4. API documentation.
+5. Tài liệu kiến trúc.
+6. Danh sách file mới và file đã chỉnh sửa.
+7. Danh sách chức năng hoàn thành.
+8. Báo cáo test.
+9. Những vấn đề còn tồn tại.
+10. Hướng dẫn cấu hình và triển khai.
 
-Phải kiểm thử thực tế:
+Xuất toàn bộ báo cáo kỹ thuật thành file Markdown và Word.
 
-- Đánh giá một Model.
-- So sánh nhiều Model.
-- Đánh giá một Agent.
-- Kiểm thử Tool Calling.
-- Kiểm thử RAG.
-- Kiểm thử Structured Output.
-- Import Dataset.
-- Export Dataset.
-- Lưu Evaluation History.
-- Phát hiện Regression.
-- So sánh Prompt.
-- Xử lý Provider Timeout.
-- Xử lý API Error.
-- Retry và Cancel Run.
-- Giới hạn chi phí.
-- Kiểm tra quyền truy cập dữ liệu.
-- Kiểm tra giao diện Responsive.
+Nếu có nhiều file tài liệu, đóng gói thành ZIP.
 
-Không được đánh dấu chức năng Completed nếu chỉ có giao diện mà chưa có logic thực thi.
+---
 
-## 8. Báo cáo và bàn giao
+## 14. Nguyên tắc quan trọng
 
-Sau khi hoàn thành:
+- Không xây lại LLM Gateway.
+- Không xây lại Provider Management.
+- Không tạo một hệ thống API Key riêng.
+- Không thay đổi kiến trúc hiện tại nếu không cần thiết.
+- Không phá vỡ các chức năng Chat, Agent, Streaming và Workflow hiện có.
+- Không sử dụng dữ liệu mock trong môi trường production.
+- Không tuyên bố đã tích hợp nếu chưa có request thực tế.
+- Ưu tiên tái sử dụng service, database và component hiện tại.
+- Chia nhỏ công việc theo từng phase.
+- Sau mỗi phase phải kiểm tra build, test và regression.
 
-1. Chạy build và kiểm tra lỗi.
-2. Chạy các test liên quan.
-3. Kiểm tra lại các chức năng cũ.
-4. Ghi lại những chức năng đã hoàn thành.
-5. Ghi lại chức năng chưa thể hoàn thiện do thiếu API, provider hoặc cấu hình.
-6. Xuất báo cáo Word (.docx) chuyên nghiệp, có:
-   - Tổng quan hệ thống.
-   - Các chức năng đã nâng cấp.
-   - Kiến trúc kỹ thuật.
-   - Database/API thay đổi.
-   - Hướng dẫn sử dụng.
-   - Kết quả kiểm thử.
-   - Hạn chế còn tồn tại.
-   - Hướng phát triển tiếp theo.
-7. Đóng gói source code và báo cáo Word thành file ZIP.
+**Mục tiêu cuối cùng:**
 
-ZIP cần chứa source code cần thiết, tài liệu, báo cáo và file cấu hình mẫu `.env.example`.
+MindFlow phải có một hệ thống theo dõi AI Usage tập trung, giúp quản trị viên biết chính xác lượng token được provider báo cáo, ước tính chi phí, theo dõi từng model, Agent và Workflow, đồng thời kiểm soát ngân sách API.
 
-Không đưa `node_modules`, API Key, mật khẩu, token hoặc thông tin bí mật vào ZIP.
-
-## 9. Nguyên tắc thực hiện
-
-Đây là nhiệm vụ nâng cấp một sản phẩm đang tồn tại, không phải tạo một prototype mới.
-
-Ưu tiên:
-- Tính chính xác.
-- Khả năng kiểm chứng.
-- Khả năng mở rộng.
-- Hiệu quả thực tế.
-- Bảo mật.
-- Trải nghiệm người dùng.
-
-Hãy bắt đầu bằng việc khảo sát source code, lập kế hoạch nâng cấp, sau đó triển khai trực tiếp trên hệ thống hiện tại.
-
-**Kết quả cuối cùng phải là một AI Model & Agent Evaluation Center có thể thực sự chạy kiểm thử, đo lường, so sánh, phát hiện lỗi và đánh giá chất lượng AI — không chỉ là một dashboard đẹp với các con số minh họa.**
+Hãy bắt đầu bằng việc audit codebase và đề xuất phương án tích hợp trước khi chỉnh sửa code. Không tự ý xây toàn bộ module mới khi chưa xác định những phần đã có.
