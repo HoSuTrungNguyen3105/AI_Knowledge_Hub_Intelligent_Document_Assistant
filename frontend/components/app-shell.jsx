@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { LayoutDashboard, LibraryBig, MessagesSquare, Bot, NotebookPen, Settings2, Menu, X, LogOut, ChevronRight, PanelLeftClose, ShieldCheck, Columns2, Users, GitBranch, Search, Bell, Building2, Handshake, CheckCircle2, Briefcase, ClipboardList, Network, UserRound,
+import { LayoutDashboard, LibraryBig, MessagesSquare, Bot, NotebookPen, Settings2, Menu, X, LogOut, ChevronRight, PanelLeftClose, ShieldCheck, Columns2, Users, GitBranch, Search, Bell, Building2, Handshake, CheckCircle2, Briefcase, ClipboardList, Network, UserRound, Activity,
 } from "lucide-react";
 import { Brand } from "./brand";
 import { useSession } from "../stores/session";
@@ -54,6 +54,7 @@ const navigationGroups = [
     label: "Administration",
     items: [
       { href: "/settings", label: "Cài đặt AI", icon: Settings2 },
+      { href: "/analytics", label: "AI Usage", icon: Activity },
       { href: "/profile", label: "Hồ sơ cá nhân", icon: UserRound },
     ],
   },
