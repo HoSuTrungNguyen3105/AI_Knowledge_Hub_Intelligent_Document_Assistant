@@ -32,6 +32,7 @@ ERRORS = {
     "generation_failed": (502, "The provider returned an invalid generation response."),
     "model_tools_unsupported": (400, "The selected model does not support tool calling."),
     "provider_request_rejected": (400, "The provider rejected the generation request."),
+    "model_not_found": (422, "The selected model is not available at this provider."),
     "comparison_not_found": (404, "Comparison not found."),
     "invalid_comparison_targets": (422, "Select 2-4 distinct synced chat models to compare."),
     "no_successful_runs": (409, "Synthesis needs at least one successful answer."),
@@ -232,20 +233,23 @@ ERRORS = {
 
 # Bounded markers used to classify a provider 4xx error object. Upstream error
 # text is inspected in memory only to pick one fixed public code; it is never
-# copied into an exception, a log line or a response, so a credential echoed
-# by the provider cannot leak through this path.
+# copied into an exception or a response, so a credential echoed by the
+# provider cannot leak through the API. A short summary of the same fields
+# may be logged server-side with the credential redacted (see
+# describe_provider_error) — without it, generic rejections are impossible
+# to diagnose from production logs.
 _TOOL_ERROR_MARKERS = ("tool", "function call", "function_call", "function-calling")
+_MODEL_ERROR_MARKERS = (
+    "model_not_found",
+    "model not found",
+    "no such model",
+    "unknown model",
+    "does not exist",
+)
 _MAX_ERROR_FIELD_CHARS = 512
 
 
-def classify_provider_error(error: object) -> str:
-    """Classify a provider error object into a fixed public code.
-
-    Accepts the OpenAI-style ``{"code", "type", "message"}`` dict (Gemini uses
-    ``{"code", "message", "status"}``) or a bare string. Only an error that
-    clearly blames tool/function calling maps to ``model_tools_unsupported``;
-    everything else is a generic ``provider_request_rejected``.
-    """
+def _error_fields(error: object) -> list[str]:
     fields: list[str] = []
     if isinstance(error, dict):
         for key in ("code", "type", "message", "status"):
@@ -254,10 +258,34 @@ def classify_provider_error(error: object) -> str:
                 fields.append(value[:_MAX_ERROR_FIELD_CHARS])
     elif isinstance(error, str):
         fields.append(error[:_MAX_ERROR_FIELD_CHARS])
-    text = " ".join(fields).lower()
+    return fields
+
+
+def classify_provider_error(error: object) -> str:
+    """Classify a provider error object into a fixed public code.
+
+    Accepts the OpenAI-style ``{"code", "type", "message"}`` dict (Gemini uses
+    ``{"code", "message", "status"}``) or a bare string. Only an error that
+    clearly blames tool/function calling maps to ``model_tools_unsupported``;
+    an error that clearly names a missing model maps to ``model_not_found``;
+    everything else is a generic ``provider_request_rejected``.
+    """
+    text = " ".join(_error_fields(error)).lower()
     if any(marker in text for marker in _TOOL_ERROR_MARKERS):
         return "model_tools_unsupported"
+    if any(marker in text for marker in _MODEL_ERROR_MARKERS):
+        return "model_not_found"
     return "provider_request_rejected"
+
+
+def describe_provider_error(error: object) -> str:
+    """Short log-only summary of a provider error object.
+
+    Returns the code/type/message/status fields joined and capped. The
+    caller MUST redact the credential before logging; this text never
+    crosses the API boundary and is never stored on a record.
+    """
+    return " | ".join(_error_fields(error))[:_MAX_ERROR_FIELD_CHARS]
 
 
 class ProviderError(Exception):
