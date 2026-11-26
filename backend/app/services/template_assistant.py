@@ -174,31 +174,57 @@ class TemplateAssistantService:
             parts.append(f"Yêu cầu của người dùng: {payload.prompt}")
         prompt = "\n".join(parts)
         adapter = create_provider(provider, chat_http=self.chat_http)
-        request = ChatRequest(
-            model=model_id,
-            turns=(ChatTurn("user", prompt),),
-            max_output_tokens=8192 if payload.task == "customize" else 4096,
+        # Token ladder: some models reject a large max_output_tokens
+        # outright (e.g. a 4k-context model asked for 4096 output tokens),
+        # so retry with smaller budgets before giving up — the same
+        # failure mode the Code Analyzer hit with allam-2-7b.
+        budgets = (
+            (8192, 4096, 2048, 1024)
+            if payload.task == "customize"
+            else (4096, 2048, 1024, 512)
         )
         started = time.monotonic()
-        chunks: list[str] = []
+        text = ""
         input_tokens = output_tokens = None
-        status = "success"
+        status = "error"
+        last_error_code: str | None = None
+        for budget in budgets:
+            request = ChatRequest(
+                model=model_id,
+                turns=(ChatTurn("user", prompt),),
+                max_output_tokens=budget,
+            )
+            chunks: list[str] = []
+            attempt_in = attempt_out = None
 
-        async def collect() -> None:
-            nonlocal input_tokens, output_tokens
-            async for event in adapter.stream_chat(key, request):
-                if event.kind == "delta":
-                    chunks.append(event.text)
-                elif event.kind == "usage":
-                    if event.input_tokens is not None:
-                        input_tokens = event.input_tokens
-                    if event.output_tokens is not None:
-                        output_tokens = event.output_tokens
+            async def collect() -> None:
+                nonlocal attempt_in, attempt_out
+                async for event in adapter.stream_chat(key, request):
+                    if event.kind == "delta":
+                        chunks.append(event.text)
+                    elif event.kind == "usage":
+                        if event.input_tokens is not None:
+                            attempt_in = event.input_tokens
+                        if event.output_tokens is not None:
+                            attempt_out = event.output_tokens
 
-        try:
-            await asyncio.wait_for(collect(), timeout=TIMEOUT_SECONDS)
-        except Exception:
-            status = "error"
+            try:
+                await asyncio.wait_for(collect(), timeout=TIMEOUT_SECONDS)
+            except ProviderError as exc:
+                # Keep the provider's real error code instead of masking
+                # it as a generic generation failure.
+                last_error_code = exc.code
+                continue
+            except Exception:  # noqa: BLE001 - retried with a smaller budget
+                last_error_code = "generation_failed"
+                continue
+            candidate = "".join(chunks)
+            if candidate.strip():
+                text = candidate
+                input_tokens, output_tokens = attempt_in, attempt_out
+                status = "success"
+                break
+            last_error_code = "generation_failed"
         latency_ms = int((time.monotonic() - started) * 1000)
         await self.requests.record_request(
             user_id,
@@ -209,9 +235,8 @@ class TemplateAssistantService:
             output_tokens=output_tokens,
             latency_ms=latency_ms,
         )
-        text = "".join(chunks)
-        if status != "success" or not text.strip():
-            raise ProviderError("generation_failed")
+        if status != "success":
+            raise ProviderError(last_error_code or "generation_failed")
         proposal = parse_proposal(text) if payload.task == "customize" else None
         answer = text
         if proposal is not None:
