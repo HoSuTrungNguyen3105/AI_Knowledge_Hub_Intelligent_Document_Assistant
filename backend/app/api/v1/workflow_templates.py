@@ -8,6 +8,7 @@ into n8n here — that stays with the n8n Platform layer, by user choice.
 
 import asyncio
 import json
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -46,6 +47,7 @@ from app.services.workflow_templates import (
 )
 
 router = APIRouter(prefix="/ai/workflow-templates", tags=["workflow-templates"])
+logger = logging.getLogger(__name__)
 
 
 def github_http() -> GitHubHTTP:
@@ -319,9 +321,15 @@ async def apply_template_proposal(
     )
     if "rejected" in analysis:
         raise ProviderError("template_contribute_invalid")
-    return await _sync_service(db, settings, n8n_http).install_custom(
-        user.id, template, payload.workflow_json, payload.name
-    )
+    try:
+        return await _sync_service(db, settings, n8n_http).install_custom(
+            user.id, template, payload.workflow_json, payload.name
+        )
+    except ProviderError:
+        raise
+    except Exception:  # noqa: BLE001 - log the real cause, answer coded
+        logger.exception("template apply failed")
+        raise ProviderError("template_apply_failed") from None
 
 
 # -- Phase 3: per-user sync ---------------------------------------------------
