@@ -4,6 +4,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models import AIRequest, Conversation, Message
 from app.models.base import utcnow
+from app.services.rate_limits import persist_rate_limit_snapshot
 
 
 class ChatRepository:
@@ -147,3 +148,4 @@ class ChatRepository:
                 "created_at": utcnow(),
             }
         )
+        await persist_rate_limit_snapshot(self.db, user_id, provider, model)
