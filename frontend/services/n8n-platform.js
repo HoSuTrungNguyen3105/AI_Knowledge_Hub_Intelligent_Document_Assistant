@@ -23,12 +23,42 @@ export const n8nPlatformService = {
     const { data } = await api.get(`${path}/workflows/${id}`, { signal });
     return data;
   },
-  async updateParameters(id, updates, signal) {
-    const { data } = await api.post(`${path}/workflows/${id}/parameters`, { updates }, { signal });
-    return data;
-  },
   async createWorkflow(payload, signal) {
     const { data } = await api.post(`${path}/workflows`, payload, { signal });
+    return data;
+  },
+  // Workflow Management (rebuild): validate-only preview, full-JSON
+  // update of an existing workflow, delete, live export, dashboard
+  // statistics and the n8n execution history.
+  async validateWorkflow(workflow, signal) {
+    const { data } = await api.post(`${path}/workflows/validate`, { workflow }, { signal });
+    return data;
+  },
+  async updateWorkflow(id, payload, signal) {
+    const { data } = await api.put(`${path}/workflows/${id}`, payload, { signal });
+    return data;
+  },
+  async deleteWorkflow(id, signal) {
+    await api.delete(`${path}/workflows/${id}`, { signal });
+  },
+  async exportWorkflow(id, signal) {
+    const { data } = await api.get(`${path}/workflows/${id}/export`, { signal });
+    return data;
+  },
+  async getStats(signal) {
+    const { data } = await api.get(`${path}/stats`, { signal });
+    return data;
+  },
+  async listExecutions(params = {}, signal) {
+    const query = {};
+    if (params.workflowId) query.workflow_id = params.workflowId;
+    if (params.status) query.status_filter = params.status;
+    if (params.limit) query.limit = params.limit;
+    const { data } = await api.get(`${path}/executions`, { params: query, signal });
+    return data;
+  },
+  async getExecution(id, signal) {
+    const { data } = await api.get(`${path}/executions/${id}`, { signal });
     return data;
   },
   async startRun(payload, signal) {
@@ -64,8 +94,8 @@ export function getN8nStatusText(code) {
   if (code === "n8n_api_failed") {
     return "n8n API trả lỗi. Hãy mở n8n để kiểm tra trạng thái của instance.";
   }
-  if (code === "n8n_parameter_not_found") {
-    return "Node hoặc tham số không còn tồn tại trong workflow (có thể workflow vừa được sửa trong n8n). Hãy đóng panel, bấm Làm mới rồi mở lại Cấu hình.";
+  if (code === "execution_not_found") {
+    return "Không tìm thấy execution này trong n8n (có thể đã bị n8n dọn theo chính sách lưu trữ).";
   }
   if (code === "n8n_workflow_not_found") {
     return "Workflow không còn tồn tại trong n8n. Hãy bấm Làm mới để đồng bộ lại danh sách.";
@@ -93,4 +123,17 @@ export function getN8nPlatformError(error, fallback) {
   if (typeof detail === "string") return detail;
   if (!error?.response) return "Không kết nối được máy chủ MindFlow. Hãy kiểm tra backend đang chạy.";
   return fallback;
+}
+
+// Human-readable text for the validate endpoint's problem codes.
+export function getN8nValidateErrorText(code) {
+  const texts = {
+    workflow_not_an_object: "JSON phải là một object workflow của n8n.",
+    workflow_name_missing: "Thiếu tên workflow (trường name).",
+    workflow_nodes_missing: "Thiếu danh sách node (trường nodes) hoặc danh sách rỗng.",
+    workflow_node_missing_name: "Có node chưa đặt tên (thiếu trường name).",
+    workflow_node_missing_type: "Có node thiếu loại (trường type).",
+    workflow_connections_invalid: "Trường connections phải là một object.",
+  };
+  return texts[code] || code;
 }
