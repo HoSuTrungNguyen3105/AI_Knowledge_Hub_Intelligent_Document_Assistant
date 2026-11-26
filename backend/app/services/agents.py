@@ -260,8 +260,28 @@ class AgentService:
         *,
         max_output_tokens_override: int | None = None,
         token_budget_override: int | None = None,
+        provider_override: str | None = None,
+        model_override: str | None = None,
+        system_prompt_override: str | None = None,
     ) -> PreparedAgent:
         agent = await self._require_agent(user_id, agent_id)
+        if (
+            provider_override is not None
+            or model_override is not None
+            or system_prompt_override is not None
+        ):
+            # Team-level assignment: run a copy of the Agent carrying the
+            # configured provider/model/system prompt. The stored Agent
+            # record is never modified, and the execution record shows
+            # the effective values because the copy is what actually runs.
+            updates: dict = {}
+            if provider_override is not None:
+                updates["provider"] = provider_override
+            if model_override is not None:
+                updates["model"] = model_override
+            if system_prompt_override is not None:
+                updates["system_prompt"] = system_prompt_override
+            agent = agent.model_copy(update=updates)
         credential, model = await self._require_target(user_id, agent.provider, agent.model)
         self._check_tools_capability(model, agent.tools)
         key = self.vault.decrypt(credential.encrypted_api_key, user_id, agent.provider)

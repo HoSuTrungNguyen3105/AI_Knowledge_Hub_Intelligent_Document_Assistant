@@ -1,19 +1,40 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+import re
+from typing import Self
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ROLES = {
     "coordinator",
+    "leader",
     "planner",
     "architect",
     "developer",
     "tester",
     "reviewer",
     "researcher",
+    "designer",
     "evaluator",
     "member",
 }
+
+# Suggested roles are offered in the UI, but users may define their own
+# (Custom Role). A custom role is stored as a slug: lowercase, spaces as
+# underscores, letters/digits/'-'/'_' only, at most 40 characters.
+_CUSTOM_ROLE = re.compile(r"^[\w\- ]+$", re.UNICODE)
+
+
+def _normalize_role(value: str) -> str:
+    role = " ".join(value.strip().lower().split())
+    if not role:
+        raise ValueError("Role cannot be empty")
+    if len(role) > 40:
+        raise ValueError("Role is too long (max 40 characters)")
+    if not _CUSTOM_ROLE.fullmatch(role):
+        raise ValueError("Role may only contain letters, digits, spaces, '-' and '_'")
+    return role.replace(" ", "_")
 MESSAGE_TYPES = {
     "USER_REQUEST",
     "TASK_ASSIGNMENT",
@@ -42,14 +63,25 @@ class TeamMemberIn(BaseModel):
     agent_id: UUID
     role: str = "member"
     enabled: bool = True
+    execution_order: int | None = Field(default=None, ge=0, le=999)
+    priority: int = Field(default=0, ge=0, le=100)
+    instructions: str | None = Field(default=None, max_length=4000)
+    responsibility: str | None = Field(default=None, max_length=1000)
+    description: str | None = Field(default=None, max_length=1000)
+    provider_override: str | None = Field(default=None, min_length=1, max_length=64)
+    model_override: str | None = Field(default=None, min_length=1, max_length=512)
+    system_prompt_override: str | None = Field(default=None, max_length=8000)
 
     @field_validator("role")
     @classmethod
     def valid_role(cls, value: str) -> str:
-        role = value.strip().lower()
-        if role not in ROLES:
-            raise ValueError("Invalid role")
-        return role
+        return _normalize_role(value)
+
+    @model_validator(mode="after")
+    def override_pair(self) -> Self:
+        if (self.provider_override is None) != (self.model_override is None):
+            raise ValueError("provider_override and model_override must be set together")
+        return self
 
 
 class TeamCreate(BaseModel):
@@ -84,7 +116,17 @@ class TeamMemberOut(BaseModel):
     agent_id: UUID
     role: str
     enabled: bool = True
+    execution_order: int | None = None
+    priority: int = 0
+    instructions: str | None = None
+    responsibility: str | None = None
+    description: str | None = None
+    provider_override: str | None = None
+    model_override: str | None = None
+    system_prompt_override: str | None = None
     agent_name: str | None = None
+    # Effective provider/model: the team override when set, otherwise
+    # the Agent's own. These are the values an execution will use.
     provider: str | None = None
     model: str | None = None
 
