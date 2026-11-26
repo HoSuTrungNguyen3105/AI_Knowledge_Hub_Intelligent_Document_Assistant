@@ -107,6 +107,11 @@ ERRORS = {
         409,
         "Configure and enable an AI provider with a synced chat model first.",
     ),
+    "studio_graph_invalid": (
+        422,
+        "The Studio graph is invalid: unknown node type, duplicate names, "
+        "a missing required parameter or an edge to an unknown node.",
+    ),
     "template_not_approved": (
         409,
         "Only approved templates can be installed. Review the template first.",
