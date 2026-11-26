@@ -148,6 +148,12 @@ export function getWorkflowTemplatesError(error, fallback) {
   if (code === "generation_failed") {
     return "AI không trả về kết quả. Hãy thử lại, hoặc đổi provider/model khác.";
   }
+  if (code === "provider_request_rejected") {
+    return "Provider AI đã từ chối yêu cầu (thường do key hết quyền gọi model này hoặc model không còn khả dụng). Hãy kiểm tra ở trang Providers: bấm Kiểm tra kết nối, hoặc chọn model khác.";
+  }
+  if (code === "provider_unauthorized" || code === "invalid_api_key") {
+    return "API key của provider không hợp lệ. Hãy cập nhật key ở trang Providers.";
+  }
   if (code === "n8n_workflow_not_found") {
     return "Workflow tương ứng không còn trong n8n (có thể đã bị xóa tay). Hãy gỡ khỏi tài khoản rồi cài lại.";
   }
