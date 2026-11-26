@@ -12,8 +12,7 @@ export default async function AgentWorkflowsPage({ searchParams }) {
     params?.tab === "factory" ||
     params?.tab === "schedules" ||
     params?.tab === "n8n" ||
-    params?.tab === "library" ||
-    params?.tab === "studio"
+    params?.tab === "library"
       ? params.tab
       : "workflows";
   return <WorkflowsHub initialTab={initialTab} />;
