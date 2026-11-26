@@ -42,7 +42,14 @@ class AnalyticsService:
                 {"credential_id": credential["_id"]}
             ).to_list(length=1000)
             for model in models:
-                prices[(credential["provider"], model["model_id"])] = (
+                # Some providers' synced rows carry a non-string record
+                # id instead of a model name (the same malformed rows
+                # that crashed the template assistant's auto-pick) —
+                # skip anything that is not a callable model name.
+                model_id = model.get("model_id") or model.get("id")
+                if not isinstance(model_id, str) or not model_id:
+                    continue
+                prices[(credential["provider"], model_id)] = (
                     model.get("input_price_per_token"),
                     model.get("output_price_per_token"),
                 )
@@ -99,7 +106,11 @@ class AnalyticsService:
             },
         ).to_list(length=100000)
         prices = await self._price_map(user_id)
-        rows7 = [r for r in request_rows if r["created_at"] >= since7]
+        rows7 = [
+            r
+            for r in request_rows
+            if r.get("created_at") is not None and r["created_at"] >= since7
+        ]
 
         by_model: dict[tuple[str, str], list[dict]] = {}
         for row in request_rows:
@@ -122,7 +133,11 @@ class AnalyticsService:
         daily = []
         for offset in range(13, -1, -1):
             day = (now - timedelta(days=offset)).date()
-            day_rows = [r for r in request_rows if r["created_at"].date() == day]
+            day_rows = [
+                r
+                for r in request_rows
+                if r.get("created_at") is not None and r["created_at"].date() == day
+            ]
             daily.append(
                 DayUsage(
                     date=day.isoformat(),
@@ -194,10 +209,11 @@ class AnalyticsService:
             recent_activity=[
                 ActivityResponse(
                     id=row["_id"],
-                    action=row["action"],
-                    description=row["description"],
+                    action=row.get("action") or "",
+                    description=row.get("description") or "",
                     created_at=row["created_at"],
                 )
                 for row in activity_rows
+                if row.get("created_at") is not None
             ],
         )
