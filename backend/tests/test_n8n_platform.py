@@ -53,7 +53,7 @@ class FakeN8nApi:
         self.status = status
         self.gets = []
         self.posts = []
-        self.patches = []
+        self.puts = []
         self.deletes = []
 
     execution_mode = "error"
@@ -133,8 +133,8 @@ class FakeN8nApi:
         self.deletes.append({"url": url, "api_key": api_key})
         return 204
 
-    async def patch_json(self, url, api_key, payload, timeout_seconds):
-        self.patches.append({"url": url, "api_key": api_key, "payload": payload})
+    async def put_json(self, url, api_key, payload, timeout_seconds):
+        self.puts.append({"url": url, "api_key": api_key, "payload": payload})
         if self.status != 200:
             return self.status, {"message": "nope"}
         workflow_id = url.rsplit("/workflows/", 1)[1]
@@ -445,8 +445,8 @@ async def test_update_workflow_put(owner, fake_api):
     body = response.json()
     assert body["id"] == "wf07abc"
     assert body["name"] == "My new workflow"
-    assert len(fake_api.patches) == 1
-    assert fake_api.patches[0]["url"].endswith("/api/v1/workflows/wf07abc")
+    assert len(fake_api.puts) == 1
+    assert fake_api.puts[0]["url"].endswith("/api/v1/workflows/wf07abc")
     # An update never creates: no POST to the collection happened.
     assert fake_api.posts == []
 
@@ -456,7 +456,7 @@ async def test_update_workflow_rejects_nameless_node(owner, fake_api):
     response = owner.put(f"{BASE}/workflows/wf07abc", json=bad)
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "n8n_workflow_invalid"
-    assert fake_api.patches == []
+    assert fake_api.puts == []
 
 
 async def test_delete_workflow(owner, fake_api):
@@ -611,13 +611,31 @@ async def test_restore_writes_the_snapshot_back(owner, fake_api):
         f"{BASE}/workflows/wf07abc/snapshots/{snapshot['id']}/restore"
     )
     assert restored.status_code == 200, restored.text
-    # The PATCH carried the snapshot's original 3 nodes, not the broken 4.
-    patch = fake_api.patches[-1]
-    assert len(patch["payload"]["nodes"]) == 3
+    # The PUT carried the snapshot's original 3 nodes, not the broken 4.
+    put = fake_api.puts[-1]
+    assert len(put["payload"]["nodes"]) == 3
     # And the restore itself is recorded as a snapshot.
     snapshots = owner.get(f"{BASE}/workflows/wf07abc/snapshots").json()
     assert snapshots[0]["source"] == "restore"
     assert snapshots[0]["node_count"] == 3
+
+
+async def test_restore_uses_put_with_exactly_the_update_fields(owner, fake_api):
+    """Regression: the n8n public API has no PATCH for workflows — a
+    restore must write the snapshot back with one PUT carrying exactly
+    the four fields the update endpoint accepts."""
+    await _sync(owner)
+    snapshot = owner.get(f"{BASE}/workflows/wf07abc/snapshots").json()[0]
+
+    restored = owner.post(
+        f"{BASE}/workflows/wf07abc/snapshots/{snapshot['id']}/restore"
+    )
+    assert restored.status_code == 200, restored.text
+
+    assert len(fake_api.puts) == 1
+    put = fake_api.puts[0]
+    assert put["url"].endswith("/api/v1/workflows/wf07abc")
+    assert set(put["payload"]) == {"name", "nodes", "connections", "settings"}
 
 
 async def test_restore_unknown_snapshot_is_404(owner, fake_api):

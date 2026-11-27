@@ -33,12 +33,12 @@ async def owner(client, register):
 
 class FakeN8n:
     """Stand-in for the n8n REST API: credentials list, workflow
-    create/fetch/patch. Created workflows are stored so the bulk
+    create/fetch/put. Created workflows are stored so the bulk
     re-apply endpoint can fetch them back."""
 
     def __init__(self):
         self.posts = []
-        self.patches = []
+        self.puts = []
         self.workflows = {}
         self.counter = 0
 
@@ -59,8 +59,8 @@ class FakeN8n:
         self.workflows[workflow_id] = raw
         return 201, raw
 
-    async def patch_json(self, url, api_key, payload, timeout_seconds):
-        self.patches.append({"url": url, "payload": payload})
+    async def put_json(self, url, api_key, payload, timeout_seconds):
+        self.puts.append({"url": url, "payload": payload})
         workflow_id = url.rsplit("/workflows/", 1)[1]
         raw = {**payload, "id": workflow_id, "active": False, "tags": []}
         self.workflows[workflow_id] = raw
@@ -295,7 +295,7 @@ async def test_apply_installed_rewrites_existing_workflows(owner, fake_n8n, db):
     noop = owner.post(f"{BASE}/apply-installed")
     assert noop.status_code == 200, noop.text
     assert noop.json()["unchanged"] == 1
-    assert fake_n8n.patches == []
+    assert fake_n8n.puts == []
 
     owner.put(
         BASE, json={"cred_type": "openAiApi", "n8n_credential_id": "cred-openai-1"}
@@ -304,12 +304,12 @@ async def test_apply_installed_rewrites_existing_workflows(owner, fake_n8n, db):
     body = applied.json()
     assert body["updated"] == 1, body
     assert body["results"][0]["bound_types"] == ["openAiApi"]
-    patched_nodes = {n["name"]: n for n in fake_n8n.patches[0]["payload"]["nodes"]}
-    assert patched_nodes["Summarize"]["credentials"]["openAiApi"] == {
+    put_nodes = {n["name"]: n for n in fake_n8n.puts[0]["payload"]["nodes"]}
+    assert put_nodes["Summarize"]["credentials"]["openAiApi"] == {
         "id": "cred-openai-1",
         "name": "OpenAI key",
     }
-    assert patched_nodes["Read mail"]["credentials"]["gmailOAuth2"]["id"] == (
+    assert put_nodes["Read mail"]["credentials"]["gmailOAuth2"]["id"] == (
         "author-machine-id"
     )
 

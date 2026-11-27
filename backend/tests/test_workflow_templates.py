@@ -250,15 +250,15 @@ class FakeN8n:
 
     def __init__(self):
         self.posts = []
-        self.patches = []
+        self.puts = []
         self.deletes = []
 
     async def post_json_body(self, url, api_key, payload, timeout_seconds):
         self.posts.append({"url": url, "payload": payload})
         return 201, {**payload, "id": "n8n-new-1", "active": False, "tags": []}
 
-    async def patch_json(self, url, api_key, payload, timeout_seconds):
-        self.patches.append({"url": url, "payload": payload})
+    async def put_json(self, url, api_key, payload, timeout_seconds):
+        self.puts.append({"url": url, "payload": payload})
         workflow_id = url.rsplit("/workflows/", 1)[1]
         return 200, {**payload, "id": workflow_id, "active": False, "tags": []}
 
@@ -344,8 +344,8 @@ async def test_sync_update_and_remove(owner, fake_github, fake_n8n):
     assert updated.status_code == 200, updated.text
     assert updated.json()["installed_version"] == 2
     assert updated.json()["update_available"] is False
-    assert len(fake_n8n.patches) == 1
-    assert fake_n8n.patches[0]["payload"]["name"] == "Daily Report v2"
+    assert len(fake_n8n.puts) == 1
+    assert fake_n8n.puts[0]["payload"]["name"] == "Daily Report v2"
 
     removed = owner.delete(f"{BASE}/mine/{mine['id']}")
     assert removed.status_code == 204
