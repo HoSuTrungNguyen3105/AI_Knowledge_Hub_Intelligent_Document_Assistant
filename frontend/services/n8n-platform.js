@@ -45,6 +45,25 @@ export const n8nPlatformService = {
     const { data } = await api.get(`${path}/workflows/${id}/export`, { signal });
     return data;
   },
+  // Duplicate + definition snapshots (backup/restore): snapshots are
+  // kept by the backend on every sync/create/update; restoring writes
+  // one back onto the same workflow in n8n.
+  async duplicateWorkflow(id, signal) {
+    const { data } = await api.post(`${path}/workflows/${id}/duplicate`, {}, { signal });
+    return data;
+  },
+  async listSnapshots(id, signal) {
+    const { data } = await api.get(`${path}/workflows/${id}/snapshots`, { signal });
+    return data;
+  },
+  async restoreSnapshot(id, snapshotId, signal) {
+    const { data } = await api.post(
+      `${path}/workflows/${id}/snapshots/${snapshotId}/restore`,
+      {},
+      { signal },
+    );
+    return data;
+  },
   async getStats(signal) {
     const { data } = await api.get(`${path}/stats`, { signal });
     return data;
@@ -99,6 +118,9 @@ export function getN8nStatusText(code) {
   }
   if (code === "n8n_workflow_not_found") {
     return "Workflow không còn tồn tại trong n8n. Hãy bấm Làm mới để đồng bộ lại danh sách.";
+  }
+  if (code === "n8n_snapshot_not_found") {
+    return "Bản lưu này không còn tồn tại. Hãy mở lại danh sách bản lưu rồi thử lại.";
   }
   if (code === "n8n_workflow_inactive") {
     return "Workflow đang tắt trong n8n. Hãy Bật (Publish) workflow trước khi chạy.";

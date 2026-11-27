@@ -9,7 +9,10 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import SecretStr
 
-from app.services.credential_bindings import apply_bindings_to_nodes
+from app.services.credential_bindings import (
+    apply_bindings_to_nodes,
+    credential_coverage,
+)
 from app.services.workflow_templates import _parse_translation_lines
 
 BASE = "/api/v1/ai/credential-bindings"
@@ -137,6 +140,18 @@ def test_apply_bindings_rewrites_only_bound_types_and_never_mutates_input():
     assert nodes[0]["credentials"]["gmailOAuth2"]["id"] == "author-machine-id"
 
 
+def test_credential_coverage_splits_rewritten_and_missing():
+    nodes = [_node("A", "gmailOAuth2"), _node("B", "openAiApi"), _node("C")]
+    bindings = {"gmailOAuth2": {"id": "cred-gmail-1", "name": "Gmail của tôi"}}
+    rewritten, missing = credential_coverage(nodes, bindings)
+    assert rewritten == ["gmailOAuth2"]
+    assert missing == ["openAiApi"]
+    # Nothing bound: everything the definition references is missing.
+    assert credential_coverage(nodes, {}) == ([], ["gmailOAuth2", "openAiApi"])
+    # Nothing referenced: nothing to report.
+    assert credential_coverage([_node("C")], bindings) == ([], [])
+
+
 def test_parse_translation_lines_requires_every_index():
     text = "1. Tóm tắt email buổi sáng\n2. Gửi tin Telegram\n"
     assert _parse_translation_lines(text, 2) == [
@@ -227,6 +242,48 @@ async def test_install_rewrites_bound_credentials_and_uses_vietnamese_name(
     }
     # Unbound types keep the template's original reference.
     assert nodes["Summarize"]["credentials"]["openAiApi"]["id"] == "author-machine-id"
+
+
+async def test_install_reports_missing_credential_types(owner, fake_n8n, db):
+    await _seed_template(db)
+    owner.put(
+        BASE, json={"cred_type": "gmailOAuth2", "n8n_credential_id": "cred-gmail-1"}
+    )
+    response = owner.post(f"{TEMPLATES}/install", json={"template_ids": ["tpl-1"]})
+    assert response.status_code == 200, response.text
+    result = response.json()["results"][0]
+    # The install still succeeds — the gap is reported, not blocking.
+    assert result["status"] == "installed"
+    assert result["rewritten_credential_types"] == ["gmailOAuth2"]
+    assert result["missing_credential_types"] == ["openAiApi"]
+
+    # The installed list carries the same warning until the type is bound.
+    mine = owner.get(f"{TEMPLATES}/mine").json()
+    assert mine[0]["missing_credential_types"] == ["openAiApi"]
+
+    owner.put(
+        BASE, json={"cred_type": "openAiApi", "n8n_credential_id": "cred-openai-1"}
+    )
+    mine = owner.get(f"{TEMPLATES}/mine").json()
+    assert mine[0]["missing_credential_types"] == []
+
+    # Re-installing reports already_installed with the coverage attached.
+    again = owner.post(f"{TEMPLATES}/install", json={"template_ids": ["tpl-1"]})
+    result = again.json()["results"][0]
+    assert result["status"] == "already_installed"
+    assert result["missing_credential_types"] == []
+    assert result["rewritten_credential_types"] == ["gmailOAuth2", "openAiApi"]
+
+
+async def test_install_without_any_binding_reports_everything_missing(
+    owner, fake_n8n, db
+):
+    await _seed_template(db)
+    response = owner.post(f"{TEMPLATES}/install", json={"template_ids": ["tpl-1"]})
+    result = response.json()["results"][0]
+    assert result["status"] == "installed"
+    assert result["rewritten_credential_types"] == []
+    assert result["missing_credential_types"] == ["gmailOAuth2", "openAiApi"]
 
 
 async def test_apply_installed_rewrites_existing_workflows(owner, fake_n8n, db):

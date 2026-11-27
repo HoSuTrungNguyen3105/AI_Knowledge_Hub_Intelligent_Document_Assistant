@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Download,
   ExternalLink,
   Eye,
@@ -16,6 +17,7 @@ import {
   Plus,
   Power,
   RefreshCw,
+  RotateCcw,
   Search,
   Trash2,
   Upload,
@@ -71,6 +73,14 @@ const EXEC_STATUS_TEXT = {
   running: "Đang chạy",
   waiting: "Đang chờ",
   stopped: "Đã dừng",
+};
+
+const SNAPSHOT_SOURCE_LABELS = {
+  sync: "Đồng bộ từ n8n",
+  create: "Lúc tạo trong MindFlow",
+  update: "Lúc cập nhật",
+  duplicate: "Từ bản sao",
+  restore: "Từ khôi phục",
 };
 
 const PAGE_SIZE = 10;
@@ -156,6 +166,13 @@ export function N8nPlatformWorkspace() {
 
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+
+  const [duplicating, setDuplicating] = useState("");
+  const [restoreTarget, setRestoreTarget] = useState(null);
+  const [snapshots, setSnapshots] = useState([]);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
+  const [confirmRestore, setConfirmRestore] = useState(null);
+  const [restoring, setRestoring] = useState(false);
 
   const [executions, setExecutions] = useState(null);
   const [execLoading, setExecLoading] = useState(false);
@@ -349,6 +366,57 @@ export function N8nPlatformWorkspace() {
       setConfirmDelete(null);
     } finally {
       setDeleting(false);
+    }
+  }
+
+  async function duplicateWorkflow(workflow) {
+    setDuplicating(workflow.id);
+    setError("");
+    try {
+      const copy = await n8nPlatformService.duplicateWorkflow(workflow.id);
+      setNotice(
+        `Đã nhân bản thành "${copy.name}" (đang tắt — mở n8n để kiểm tra rồi bật khi sẵn sàng).`,
+      );
+      load();
+    } catch (err) {
+      setError(getN8nPlatformError(err, "Không nhân bản được workflow. Hãy thử lại."));
+    } finally {
+      setDuplicating("");
+    }
+  }
+
+  async function openRestore(workflow) {
+    setRestoreTarget(workflow);
+    setSnapshots([]);
+    setSnapshotsLoading(true);
+    setError("");
+    try {
+      const data = await n8nPlatformService.listSnapshots(workflow.id);
+      setSnapshots(data || []);
+    } catch (err) {
+      setError(getN8nPlatformError(err, "Không tải được danh sách bản lưu. Hãy thử lại."));
+    } finally {
+      setSnapshotsLoading(false);
+    }
+  }
+
+  async function doRestore() {
+    if (!restoreTarget || !confirmRestore) return;
+    setRestoring(true);
+    setError("");
+    try {
+      await n8nPlatformService.restoreSnapshot(restoreTarget.id, confirmRestore.id);
+      setNotice(
+        `Đã khôi phục "${restoreTarget.name}" về bản lưu lúc ${formatTime(confirmRestore.created_at)}.`,
+      );
+      setConfirmRestore(null);
+      setRestoreTarget(null);
+      load();
+    } catch (err) {
+      setError(getN8nPlatformError(err, "Không khôi phục được workflow. Hãy thử lại."));
+      setConfirmRestore(null);
+    } finally {
+      setRestoring(false);
     }
   }
 
@@ -659,6 +727,11 @@ export function N8nPlatformWorkspace() {
                             #{tag}
                           </span>
                         ))}
+                        {workflow.snapshot_count > 0 ? (
+                          <span className="fx-chip">
+                            {workflow.snapshot_count} bản lưu
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                     <span className={`fx-status ${workflow.active ? "completed" : "cancelled"}`}>
@@ -702,6 +775,33 @@ export function N8nPlatformWorkspace() {
                           <Download size={15} />
                         )}{" "}
                         Export
+                      </button>
+                      <button
+                        type="button"
+                        className="fx-btn"
+                        onClick={() => duplicateWorkflow(workflow)}
+                        disabled={!healthy || duplicating === workflow.id}
+                        title={healthy ? "" : "Cần kết nối được n8n trước"}
+                      >
+                        {duplicating === workflow.id ? (
+                          <Loader2 size={15} className="spin" />
+                        ) : (
+                          <Copy size={15} />
+                        )}{" "}
+                        Nhân bản
+                      </button>
+                      <button
+                        type="button"
+                        className="fx-btn"
+                        onClick={() => openRestore(workflow)}
+                        disabled={!workflow.snapshot_count}
+                        title={
+                          workflow.snapshot_count
+                            ? "Khôi phục định nghĩa từ một bản lưu"
+                            : "Chưa có bản lưu nào cho workflow này"
+                        }
+                      >
+                        <RotateCcw size={15} /> Khôi phục
                       </button>
                       <button
                         type="button"
@@ -1148,6 +1248,114 @@ export function N8nPlatformWorkspace() {
                 disabled={deleting}
               >
                 {deleting ? <Loader2 size={15} className="spin" /> : <Trash2 size={15} />} Xóa hẳn
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {restoreTarget ? (
+        <div
+          className="wm-modal-backdrop"
+          role="presentation"
+          onClick={() => !restoring && setRestoreTarget(null)}
+        >
+          <div
+            className="wm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Khôi phục workflow từ bản lưu"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2>
+              <RotateCcw size={17} /> Khôi phục “{restoreTarget.name}”
+            </h2>
+            <p className="fx-run-meta">
+              MindFlow giữ các bản lưu định nghĩa gần nhất của workflow này.
+              Khôi phục sẽ ghi định nghĩa của bản được chọn đè lên workflow
+              trong n8n; định nghĩa hiện tại cũng được lưu lại trước khi ghi
+              đè nên khôi phục vẫn hoàn tác được.
+            </p>
+            {snapshotsLoading ? (
+              <p className="fx-run-meta">Đang tải danh sách bản lưu…</p>
+            ) : !snapshots.length ? (
+              <p className="fx-run-meta">
+                Chưa có bản lưu nào cho workflow này.
+              </p>
+            ) : (
+              <ul className="wm-snapshot-list">
+                {snapshots.map((snapshot) => (
+                  <li key={snapshot.id} className="wm-snapshot-item">
+                    <span>
+                      <strong>{formatTime(snapshot.created_at)}</strong> ·{" "}
+                      {snapshot.node_count} node ·{" "}
+                      {SNAPSHOT_SOURCE_LABELS[snapshot.source] || snapshot.source}
+                    </span>
+                    <button
+                      type="button"
+                      className="fx-btn"
+                      onClick={() => setConfirmRestore(snapshot)}
+                      disabled={!healthy || restoring}
+                      title={healthy ? "" : "Cần kết nối được n8n trước"}
+                    >
+                      <RotateCcw size={15} /> Khôi phục bản này
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="fx-actions">
+              <button
+                type="button"
+                className="fx-btn"
+                onClick={() => setRestoreTarget(null)}
+                disabled={restoring}
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {confirmRestore && restoreTarget ? (
+        <div className="wm-modal-backdrop" role="presentation" onClick={() => !restoring && setConfirmRestore(null)}>
+          <div
+            className="wm-modal wm-modal-sm"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="Xác nhận khôi phục workflow"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2>
+              <AlertTriangle size={17} /> Ghi đè định nghĩa hiện tại?
+            </h2>
+            <p className="fx-run-meta">
+              Workflow <strong>{restoreTarget.name}</strong> trong n8n sẽ bị
+              ghi đè bằng bản lưu lúc{" "}
+              <strong>{formatTime(confirmRestore.created_at)}</strong> (
+              {confirmRestore.node_count} node). Credential đã gán trong các
+              node được giữ theo bản lưu — nếu bản lưu cũ hơn lần gán
+              credential gần nhất, hãy kiểm tra lại credential sau khi khôi
+              phục.
+            </p>
+            <div className="fx-actions">
+              <button
+                type="button"
+                className="fx-btn"
+                onClick={() => setConfirmRestore(null)}
+                disabled={restoring}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                className="fx-btn primary"
+                onClick={doRestore}
+                disabled={restoring}
+              >
+                {restoring ? <Loader2 size={15} className="spin" /> : <RotateCcw size={15} />}{" "}
+                Khôi phục
               </button>
             </div>
           </div>

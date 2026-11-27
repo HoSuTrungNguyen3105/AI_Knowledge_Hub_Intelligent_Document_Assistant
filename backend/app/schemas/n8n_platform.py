@@ -45,6 +45,31 @@ class N8nWorkflowOut(BaseModel):
     n8n_created_at: str | None = None
     n8n_updated_at: str | None = None
     editor_url: str
+    # Definition snapshots MindFlow keeps for this workflow (see
+    # N8nWorkflowSnapshotOut). Filled in on list responses; single-item
+    # responses report whether this workflow has at least one snapshot.
+    has_snapshot: bool = False
+    snapshot_count: int = 0
+
+
+class N8nWorkflowSnapshotOut(BaseModel):
+    """One stored definition snapshot of an n8n workflow.
+
+    Snapshots are the safety net for workflows that live in n8n: the
+    newest definition seen on sync/create/update is kept (plus a short
+    history) so a workflow broken or edited badly in n8n can be
+    restored from MindFlow. The definition itself is not in this
+    summary shape — restoring uses it server-side.
+    """
+
+    id: str
+    workflow_id: str
+    name: str
+    node_count: int = 0
+    content_hash: str
+    # sync | create | update | duplicate | restore
+    source: str
+    created_at: datetime
 
 
 class N8nWorkflowListOut(BaseModel):

@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { ConfirmDialog } from "../confirm-dialog";
 import { agentsService } from "../../services/agents";
+import { n8nPlatformService } from "../../services/n8n-platform";
 import {
   getScheduleError,
   workflowSchedulesService,
@@ -78,6 +79,9 @@ function emptyForm() {
     id: null,
     name: "",
     description: "",
+    targetKind: "factory",
+    workflowId: "",
+    payloadText: "",
     requirement: "",
     domain: "",
     scheduleType: "daily",
@@ -115,6 +119,13 @@ function formFromSchedule(schedule) {
   form.id = schedule.id;
   form.name = schedule.name;
   form.description = schedule.description || "";
+  const target = schedule.target || { kind: "factory" };
+  form.targetKind = target.kind || "factory";
+  form.workflowId = target.workflow_id || "";
+  form.payloadText =
+    target.payload && Object.keys(target.payload).length
+      ? JSON.stringify(target.payload, null, 2)
+      : "";
   form.requirement = schedule.factory_request?.requirement || "";
   form.domain = (schedule.factory_request?.domain || []).join(", ");
   form.assignments = schedule.factory_request?.assignments || {};
@@ -157,24 +168,38 @@ function buildTiming(form) {
   };
 }
 
-function buildPayload(form) {
-  const chosen = {};
-  for (const { role } of ROLES) {
-    if (form.assignments[role]) chosen[role] = form.assignments[role];
-  }
-  return {
+function buildPayload(form, payloadJson = {}) {
+  const base = {
     name: form.name.trim(),
     description: form.description.trim(),
-    factory_request: {
-      requirement: form.requirement.trim(),
-      domain: form.domain.split(",").map((d) => d.trim()).filter(Boolean),
-      assignments: chosen,
-    },
     ...buildTiming(form),
     concurrency_policy: form.concurrency,
     notify_on_success: form.notifySuccess,
     notify_on_failure: form.notifyFailure,
     max_runs: form.maxRuns === "" ? null : Number(form.maxRuns),
+  };
+  if (form.targetKind === "n8n_workflow") {
+    return {
+      ...base,
+      target: {
+        kind: "n8n_workflow",
+        workflow_id: form.workflowId,
+        payload: payloadJson,
+      },
+    };
+  }
+  const chosen = {};
+  for (const { role } of ROLES) {
+    if (form.assignments[role]) chosen[role] = form.assignments[role];
+  }
+  return {
+    ...base,
+    target: { kind: "factory" },
+    factory_request: {
+      requirement: form.requirement.trim(),
+      domain: form.domain.split(",").map((d) => d.trim()).filter(Boolean),
+      assignments: chosen,
+    },
   };
 }
 
@@ -198,6 +223,8 @@ export function SchedulesWorkspace() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [agents, setAgents] = useState([]);
+  const [workflows, setWorkflows] = useState([]);
+  const [health, setHealth] = useState(null);
   const [form, setForm] = useState(null);
   const [formError, setFormError] = useState("");
   const [preview, setPreview] = useState(null);
@@ -231,6 +258,19 @@ export function SchedulesWorkspace() {
     load(controller.signal);
     return () => controller.abort();
   }, [load]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    n8nPlatformService
+      .listWorkflows(controller.signal)
+      .then((data) => setWorkflows(data.items || []))
+      .catch(() => {});
+    workflowSchedulesService
+      .getHealth(controller.signal)
+      .then((data) => setHealth(data))
+      .catch(() => {});
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -286,7 +326,36 @@ export function SchedulesWorkspace() {
     setBusy(true);
     setFormError("");
     try {
-      const payload = buildPayload(form);
+      let payloadJson = {};
+      if (form.targetKind === "n8n_workflow") {
+        if (!form.workflowId) {
+          setFormError("Hãy chọn workflow đích cho lịch này.");
+          setBusy(false);
+          return;
+        }
+        const text = form.payloadText.trim();
+        if (text) {
+          try {
+            payloadJson = JSON.parse(text);
+          } catch {
+            setFormError(
+              "Dữ liệu gửi kèm chưa phải JSON hợp lệ — sửa lại hoặc để trống.",
+            );
+            setBusy(false);
+            return;
+          }
+          if (
+            typeof payloadJson !== "object" ||
+            payloadJson === null ||
+            Array.isArray(payloadJson)
+          ) {
+            setFormError("Dữ liệu gửi kèm phải là một đối tượng JSON.");
+            setBusy(false);
+            return;
+          }
+        }
+      }
+      const payload = buildPayload(form, payloadJson);
       if (form.id) {
         await workflowSchedulesService.update(form.id, payload);
         showNotice("Đã cập nhật lịch chạy.");
@@ -331,6 +400,10 @@ export function SchedulesWorkspace() {
         showNotice("Lịch đang có lượt chạy chưa xong nên lần này bị bỏ qua.");
       } else if (execution.status === "failed") {
         showNotice("Không kích hoạt được — kiểm tra n8n ở máy của bạn.");
+      } else if (schedule.target?.kind === "n8n_workflow") {
+        showNotice(
+          "Đã kích hoạt chạy ngay — xem tiến trình ở tab Workflow Management.",
+        );
       } else {
         showNotice("Đã kích hoạt chạy ngay — xem tiến trình ở tab AI Factory.");
       }
@@ -386,8 +459,9 @@ export function SchedulesWorkspace() {
             <CalendarClock size={26} /> Lịch chạy Workflow
           </h1>
           <p className="muted">
-            Đặt lịch để AI Factory tự chạy qua n8n — cấu hình một lần, hệ thống
-            tự kích hoạt đúng giờ và báo kết quả qua chuông thông báo.
+            Đặt lịch để hệ thống tự kích hoạt đúng giờ qua n8n — cho đội Agent
+            (AI Factory) hoặc bất kỳ workflow webhook nào — và báo kết quả qua
+            chuông thông báo.
           </p>
         </div>
         <div className="wf-actions">
@@ -429,6 +503,47 @@ export function SchedulesWorkspace() {
           <span>Đã hoàn thành</span>
         </div>
       </div>
+
+      {health && (
+        <div className="wf-sched-stats" aria-label="Sức khỏe đường chạy">
+          <div className="wf-card">
+            <strong>
+              {health.external_tick_configured ? "Đã cấu hình" : "Chưa cấu hình"}
+            </strong>
+            <span>
+              Tick ngoài (cron đánh thức backend) —{" "}
+              {health.external_tick_configured
+                ? "lịch chạy kể cả khi backend đang ngủ"
+                : "chưa có: lịch chỉ chạy khi backend đang thức"}
+            </span>
+          </div>
+          <div className="wf-card">
+            <strong>
+              {health.last_tick_at ? formatTime(health.last_tick_at) : "Chưa rõ"}
+            </strong>
+            <span>
+              Lần tick gần nhất
+              {health.last_tick_source
+                ? health.last_tick_source === "external"
+                  ? " (từ cron ngoài)"
+                  : " (vòng lặp trong backend)"
+                : ""}
+            </span>
+          </div>
+          <div className="wf-card">
+            <strong>
+              {!health.n8n_configured
+                ? "Chưa cấu hình"
+                : health.n8n_reachable === null
+                  ? "Chưa rõ"
+                  : health.n8n_reachable
+                    ? "Đang kết nối"
+                    : "Không kết nối được"}
+            </strong>
+            <span>Kết nối n8n</span>
+          </div>
+        </div>
+      )}
 
       <div className="wf-sched-toolbar">
         <input
@@ -478,6 +593,63 @@ export function SchedulesWorkspace() {
             />
           </label>
           <label>
+            Đích chạy
+            <select
+              value={form.targetKind}
+              onChange={(e) => set("targetKind", e.target.value)}
+            >
+              <option value="factory">Đội Agent (AI Factory — workflow 07)</option>
+              <option value="n8n_workflow">
+                Một workflow n8n bất kỳ (qua Webhook)
+              </option>
+            </select>
+          </label>
+          {form.targetKind === "n8n_workflow" && (
+            <>
+              <label>
+                Workflow đích
+                <select
+                  required
+                  value={form.workflowId}
+                  onChange={(e) => set("workflowId", e.target.value)}
+                >
+                  <option value="">— Chọn workflow —</option>
+                  {workflows.map((workflow) => (
+                    <option key={workflow.id} value={workflow.id}>
+                      {workflow.name}
+                      {workflow.active ? "" : " (đang tắt)"}
+                      {workflow.triggers?.includes("webhook")
+                        ? ""
+                        : " — chưa có Webhook trigger"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {!workflows.length && (
+                <p className="muted">
+                  Chưa lấy được danh sách workflow từ n8n — kiểm tra kết nối ở
+                  tab Workflow Management.
+                </p>
+              )}
+              <label>
+                Dữ liệu gửi kèm (JSON, không bắt buộc)
+                <textarea
+                  rows={3}
+                  value={form.payloadText}
+                  onChange={(e) => set("payloadText", e.target.value)}
+                  placeholder='{"topic": "tin sáng"}'
+                />
+              </label>
+              <p className="muted">
+                Tới giờ, lịch sẽ gọi Webhook của workflow đích kèm dữ liệu
+                trên. Workflow cần đang bật và có node Webhook trigger thì mới
+                chạy được.
+              </p>
+            </>
+          )}
+          {form.targetKind === "factory" && (
+            <>
+          <label>
             Yêu cầu cho đội Agent (nội dung lượt chạy)
             <textarea
               required
@@ -516,6 +688,8 @@ export function SchedulesWorkspace() {
               </label>
             ))}
           </div>
+            </>
+          )}
           <div className="wf-sched-row">
             <label>
               Loại lịch
@@ -771,9 +945,18 @@ export function SchedulesWorkspace() {
                   <dd>{schedule.run_count} lần</dd>
                 </div>
               </dl>
-              <p className="wf-sched-req">
-                Yêu cầu: {schedule.factory_request?.requirement}
-              </p>
+              {schedule.target?.kind === "n8n_workflow" ? (
+                <p className="wf-sched-req">
+                  Đích: workflow “
+                  {workflows.find((w) => w.id === schedule.target.workflow_id)
+                    ?.name || schedule.target.workflow_id}
+                  ”
+                </p>
+              ) : (
+                <p className="wf-sched-req">
+                  Yêu cầu: {schedule.factory_request?.requirement}
+                </p>
+              )}
               <div className="wf-actions">
                 {schedule.status === "active" && (
                   <button

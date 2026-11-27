@@ -184,6 +184,10 @@ class UserWorkflowOut(BaseModel):
     update_available: bool = False
     installed_at: datetime
     updated_at: datetime
+    # Credential types the installed definition needs but the user has
+    # not bound (see InstallResultItemOut). Filled where the definition
+    # is known server-side; stays empty when it is not.
+    missing_credential_types: list[str] = []
 
 
 class InstallIn(BaseModel):
@@ -196,6 +200,13 @@ class InstallResultItemOut(BaseModel):
     status: str  # installed | already_installed | failed
     error: str | None = None
     n8n_workflow_id: str | None = None
+    # Credential types the template needs but the user has not bound:
+    # those nodes keep the author's credential ids, which do not exist
+    # in the user's n8n, so the workflow cannot run until they bind or
+    # pick a credential. Reported only — installs are never blocked.
+    missing_credential_types: list[str] = []
+    # Credential types whose ids were rewritten from the user's bindings.
+    rewritten_credential_types: list[str] = []
 
 
 class InstallResultOut(BaseModel):

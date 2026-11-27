@@ -171,3 +171,103 @@ def test_schedules_are_owner_scoped(owner, client, register):
     assert register(client, email="second@example.com").status_code == 201
     assert client.get(f"{BASE}/{created['id']}").status_code == 404
     assert client.get(BASE).json()["total"] == 0
+
+
+# -- firing targets (task 2) ---------------------------------------------------
+
+
+def platform_payload(**overrides):
+    body = payload()
+    body.pop("factory_request")
+    body["target"] = {
+        "kind": "n8n_workflow",
+        "workflow_id": "wf-hook-1",
+        "payload": {"topic": "tin sáng"},
+    }
+    body.update(overrides)
+    return body
+
+
+def test_legacy_schedule_defaults_to_factory_target(owner):
+    created = owner.post(BASE, json=payload())
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["target"] == {"kind": "factory", "workflow_id": None, "payload": {}}
+    assert body["factory_request"] is not None
+
+
+def test_create_platform_target_schedule(owner):
+    created = owner.post(BASE, json=platform_payload())
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["factory_request"] is None
+    assert body["target"]["kind"] == "n8n_workflow"
+    assert body["target"]["workflow_id"] == "wf-hook-1"
+    assert body["target"]["payload"] == {"topic": "tin sáng"}
+    assert body["next_run_at"] is not None
+
+
+def test_platform_target_requires_workflow_id(owner):
+    body = platform_payload(target={"kind": "n8n_workflow", "payload": {}})
+    created = owner.post(BASE, json=body)
+    assert created.status_code == 422
+    assert created.json()["detail"]["code"] == "schedule_invalid"
+
+
+def test_factory_target_requires_factory_request(owner):
+    body = payload()
+    body.pop("factory_request")
+    body["target"] = {"kind": "factory"}
+    created = owner.post(BASE, json=body)
+    assert created.status_code == 422
+    assert created.json()["detail"]["code"] == "schedule_invalid"
+
+
+def test_patch_can_switch_target(owner):
+    created = owner.post(BASE, json=payload()).json()
+    patched = owner.patch(
+        f"{BASE}/{created['id']}",
+        json={
+            "target": {
+                "kind": "n8n_workflow",
+                "workflow_id": "wf-hook-9",
+                "payload": {},
+            }
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["target"]["workflow_id"] == "wf-hook-9"
+
+    back = owner.patch(
+        f"{BASE}/{created['id']}", json={"target": {"kind": "factory"}}
+    )
+    assert back.status_code == 200
+    assert back.json()["target"]["kind"] == "factory"
+
+
+# -- firing-chain health (task 2) ----------------------------------------------
+
+
+def test_health_reports_unconfigured_chain_honestly(owner):
+    response = owner.get(f"{BASE}/health")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["external_tick_configured"] is False
+    assert body["last_tick_at"] is None
+    assert body["last_tick_source"] is None
+    assert body["n8n_configured"] is False
+    # Unknown, not invented: reachable stays null while unconfigured.
+    assert body["n8n_reachable"] is None
+    assert body["checked_at"] is not None
+
+
+def test_health_reflects_tick_secret_presence_only(owner, settings):
+    settings.scheduler_tick_secret = "a-secret-value"
+    body = owner.get(f"{BASE}/health").json()
+    assert body["external_tick_configured"] is True
+    # The secret value itself never appears anywhere in the payload.
+    assert "a-secret-value" not in str(body)
+
+
+def test_health_requires_auth(client):
+    assert client.get(f"{BASE}/health").status_code == 401
