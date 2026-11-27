@@ -238,9 +238,10 @@ class ServiceKeysService:
         status_code = None
         response = None
         if credential_id:
-            # The update endpoint takes {name, data} only — the credential
-            # type is immutable in n8n, and sending it back is rejected.
-            status_code, response = await self.http.patch_json(
+            # The update endpoint (PUT /credentials/{id} — n8n has no
+            # PATCH) takes {name, data} only — the credential type is
+            # immutable in n8n, and sending it back is rejected.
+            status_code, response = await self.http.put_json(
                 f"{base}/api/v1/credentials/{credential_id}",
                 api_key,
                 {"name": body["name"], "data": body["data"]},

@@ -1001,8 +1001,8 @@ class WorkflowSyncService:
     the mapping per user.
 
     Installing reuses the n8n Platform create path (workflow lands
-    inactive in n8n); updating PATCHes the installed copy with the new
-    template definition; removing deletes the copy from n8n and then the
+    inactive in n8n); updating PUTs the new template definition over
+    the installed copy; removing deletes the copy from n8n and then the
     mapping — the shared template itself is never touched. Because the
     current platform is one shared n8n instance, ownership lives in this
     mapping, exactly as audited in the Phase 0 report.

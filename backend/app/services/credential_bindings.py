@@ -199,8 +199,9 @@ class CredentialBindingService:
     async def apply_to_installed(self, user_id: str) -> ApplyInstalledOut:
         """Re-apply the user's bindings to every workflow they already
         installed from the library. Each workflow is fetched live from
-        n8n, rewritten in memory and PATCHed back only when at least one
-        node actually changed."""
+        n8n, rewritten in memory and written back (a PUT through the
+        platform replace path) only when at least one node actually
+        changed."""
         bindings = await self.bindings_map(user_id)
         results: list[ApplyInstalledItemOut] = []
         updated = unchanged = failed = 0

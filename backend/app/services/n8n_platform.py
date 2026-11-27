@@ -252,7 +252,10 @@ class N8nApiHTTP:
             raise ProviderError("n8n_unreachable") from None
         return response.status_code
 
-    async def patch_json(self, url: str, api_key: str, payload: dict, timeout_seconds: float):
+    async def put_json(self, url: str, api_key: str, payload: dict, timeout_seconds: float):
+        # The n8n public API has no PATCH endpoints at all: updating a
+        # workflow or a credential is a PUT. A PATCH is rejected by n8n,
+        # which is why this client deliberately offers no patch helper.
         headers = {"Accept": "application/json"}
         if api_key:
             headers["X-N8N-API-KEY"] = api_key
@@ -263,7 +266,7 @@ class N8nApiHTTP:
                 trust_env=False,
                 headers=headers,
             ) as client:
-                response = await client.patch(url, json=payload)
+                response = await client.put(url, json=payload)
         except (httpx.TimeoutException, httpx.RequestError):
             raise ProviderError("n8n_unreachable") from None
         try:
@@ -869,8 +872,10 @@ class N8nPlatformService:
         snapshot_source: str = "update",
     ) -> N8nWorkflowOut:
         """Replace a workflow's definition in n8n (used by template sync
-        updates). Same PATCH path as parameter editing; only the fields the
-        n8n update API accepts are sent."""
+        updates and snapshot restores). Updating a workflow is a PUT to
+        /workflows/{id} — the n8n public API has no PATCH — carrying
+        exactly the fields the update API accepts (name, nodes,
+        connections, settings)."""
         key = self._require_key()
         payload = {
             "name": payload_in.name,
@@ -878,7 +883,7 @@ class N8nPlatformService:
             "connections": payload_in.connections,
             "settings": payload_in.settings,
         }
-        status, data = await self.http.patch_json(
+        status, data = await self.http.put_json(
             f"{self.base_url}/api/v1/workflows/{workflow_id}",
             key,
             payload,

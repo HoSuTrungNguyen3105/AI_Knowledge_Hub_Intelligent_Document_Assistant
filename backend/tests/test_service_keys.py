@@ -25,10 +25,10 @@ TELEGRAM_FIELDS = {"bot_token": "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"}
 class FakeN8nCredentialsApi:
     """Stands in for the n8n public REST API (credentials endpoints)."""
 
-    def __init__(self, patch_status=200):
-        self.patch_status = patch_status
+    def __init__(self, put_status=200):
+        self.put_status = put_status
         self.posts = []
-        self.patches = []
+        self.puts = []
         self._seq = 0
 
     async def post_json_body(self, url, api_key, payload, timeout_seconds):
@@ -38,10 +38,10 @@ class FakeN8nCredentialsApi:
         self._seq += 1
         return 201, {**payload, "id": f"cred-{self._seq}"}
 
-    async def patch_json(self, url, api_key, payload, timeout_seconds):
-        self.patches.append({"url": url, "api_key": api_key, "payload": payload})
-        if self.patch_status != 200:
-            return self.patch_status, {"message": "nope"}
+    async def put_json(self, url, api_key, payload, timeout_seconds):
+        self.puts.append({"url": url, "api_key": api_key, "payload": payload})
+        if self.put_status != 200:
+            return self.put_status, {"message": "nope"}
         return 200, {**payload, "id": url.rsplit("/", 1)[1]}
 
 
@@ -164,11 +164,11 @@ def test_push_creates_then_updates_credential(owner, fake_n8n):
     assert pushed2.status_code == 200, pushed2.text
     assert pushed2.json()["n8n_credential_id"] == "cred-1"
     assert len(fake_n8n.posts) == 1
-    assert len(fake_n8n.patches) == 1
-    patch = fake_n8n.patches[0]
-    assert patch["url"].endswith("/api/v1/credentials/cred-1")
-    assert "type" not in patch["payload"]
-    assert patch["payload"]["data"]["value"] == ZALO_FIELDS["access_token"]
+    assert len(fake_n8n.puts) == 1
+    put = fake_n8n.puts[0]
+    assert put["url"].endswith("/api/v1/credentials/cred-1")
+    assert "type" not in put["payload"]
+    assert put["payload"]["data"]["value"] == ZALO_FIELDS["access_token"]
 
     listed = owner.get(BASE).json()
     assert listed["total"] == 1
@@ -184,7 +184,7 @@ def test_push_recreates_when_credential_deleted_in_n8n(owner, app, settings):
     entry = _create_zalo(owner)
     assert owner.post(f"{BASE}/{entry['id']}/push").status_code == 200
 
-    fake.patch_status = 404
+    fake.put_status = 404
     pushed = owner.post(f"{BASE}/{entry['id']}/push")
     assert pushed.status_code == 200, pushed.text
     assert pushed.json()["n8n_credential_id"] == "cred-2"
