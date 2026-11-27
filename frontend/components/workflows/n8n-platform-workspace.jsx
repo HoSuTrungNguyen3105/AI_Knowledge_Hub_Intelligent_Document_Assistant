@@ -717,6 +717,9 @@ export function N8nPlatformWorkspace() {
                           : "chưa có dữ liệu"}
                       </div>
                       <div className="fx-chip-row">
+                        <span className={`fx-status ${workflow.active ? "completed" : "cancelled"}`}>
+                          {workflow.active ? "Đang bật" : "Đang tắt"}
+                        </span>
                         {workflow.triggers.map((trigger) => (
                           <span key={trigger} className="fx-chip">
                             {TRIGGER_LABELS[trigger] || trigger}
@@ -734,10 +737,7 @@ export function N8nPlatformWorkspace() {
                         ) : null}
                       </div>
                     </div>
-                    <span className={`fx-status ${workflow.active ? "completed" : "cancelled"}`}>
-                      {workflow.active ? "Đang bật" : "Đang tắt"}
-                    </span>
-                    <span className="fx-actions wm-row-actions">
+                    <div className="wm-row-actions">
                       <button
                         type="button"
                         className="fx-btn"
@@ -833,7 +833,7 @@ export function N8nPlatformWorkspace() {
                       >
                         <Trash2 size={15} /> Xóa
                       </button>
-                    </span>
+                    </div>
                   </div>
                 );
               })}
