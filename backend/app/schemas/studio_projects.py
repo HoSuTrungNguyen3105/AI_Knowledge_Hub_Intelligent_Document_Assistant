@@ -117,6 +117,11 @@ class RunStepOut(BaseModel):
     files_changed: list[str] = Field(default_factory=list)
     input_tokens: int | None = None
     output_tokens: int | None = None
+    # Context transparency: how much of the project this Agent actually
+    # received as file contents (the rest it only saw as names).
+    files_read: int = 0
+    files_total: int = 0
+    files_omitted: list[str] = Field(default_factory=list)
 
 
 class RunOut(BaseModel):
@@ -127,6 +132,9 @@ class RunOut(BaseModel):
     steps: list[RunStepOut] = Field(default_factory=list)
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    # Live progress while status == "running": which Agent is working now.
+    current_agent_id: UUID | None = None
+    current_agent_name: str | None = None
     created_at: datetime
     finished_at: datetime | None = None
 

@@ -212,6 +212,11 @@ def test_run_applies_agent_edits_in_order(owner, mock_agent):
     step = run["steps"][0]
     assert step["status"] == "completed"
     assert sorted(step["files_changed"]) == ["src/extra.txt", "src/hello.txt"]
+    # Context transparency: the only project file fits the budget.
+    assert step["files_total"] == 1
+    assert step["files_read"] == 1
+    assert step["files_omitted"] == []
+    assert run["current_agent_id"] is None
 
     r = owner.get(
         f"{PROJECTS}/{project['id']}/file", params={"path": "src/hello.txt"}
@@ -222,6 +227,34 @@ def test_run_applies_agent_edits_in_order(owner, mock_agent):
     agent_changes = [c for c in r.json()["changes"] if c["source"] == "agent"]
     assert {c["path"] for c in agent_changes} == {"src/extra.txt", "src/hello.txt"}
     assert all(c["agent_name"] == "Dev Một" for c in agent_changes)
+
+
+def test_run_reports_files_omitted_from_context(owner, mock_agent):
+    big = "x" * 20000  # one block larger than the 15000-char context budget
+    project = make_project(
+        owner,
+        files=[
+            {"path": "a-small.txt", "content": "nhỏ"},
+            {"path": "z-big.txt", "content": big},
+        ],
+    )
+    agent = make_agent(owner, "Dev Ba")
+    edit_set = json.dumps({"summary": "không sửa gì", "files": []})
+    mock_agent(
+        lambda _: httpx.Response(
+            200, text=sse(chunk(f"```json\n{edit_set}\n```"), "[DONE]")
+        )
+    )
+    r = owner.post(
+        f"{PROJECTS}/{project['id']}/runs",
+        json={"agent_ids": [agent["id"]], "instruction": "Đọc project giúp tôi"},
+    )
+    assert r.status_code == 201, r.text
+    step = r.json()["steps"][0]
+    assert step["status"] == "completed"
+    assert step["files_total"] == 2
+    assert step["files_read"] == 1
+    assert step["files_omitted"] == ["z-big.txt"]
 
 
 def test_run_with_unparseable_reply_fails_only_the_step(owner, mock_agent):
