@@ -95,6 +95,11 @@ ERRORS = {
         "The workflow has no webhook trigger, so it cannot be started from MindFlow yet.",
     ),
     "n8n_run_not_found": (404, "That n8n run does not exist."),
+    "service_key_not_found": (404, "That service key does not exist."),
+    "service_key_invalid": (
+        422,
+        "That service key entry is invalid: a required field is missing or a value cannot be stored.",
+    ),
     "template_source_not_found": (404, "That template source does not exist."),
     "template_not_found": (404, "That workflow template does not exist."),
     "template_source_invalid": (
