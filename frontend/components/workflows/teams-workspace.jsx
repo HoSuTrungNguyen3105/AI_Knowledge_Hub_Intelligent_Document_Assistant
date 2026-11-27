@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Database, Pencil, Plus, RotateCcw, Sparkles, Trash2, Users, Wand2, X } from "lucide-react";
 import { agentsService } from "../../services/agents";
 import { getSeedError, seedService } from "../../services/seed";
-import { rolesService, teamsService } from "../../services/workflows";
+import { teamsService } from "../../services/workflows";
 import { useChatProviders } from "../../hooks/use-chat-providers";
 import {
   STARTER_AGENTS, createStarterSet, getWorkflowError, inferRoleFromName, missingStarterAgents, roleMeta,
@@ -16,25 +16,17 @@ import { providerService } from "../../services/providers";
 
 const ROLES = ["coordinator", "leader", "planner", "architect", "developer", "designer", "tester", "reviewer", "researcher", "evaluator", "member"];
 
-// Role picker: the role catalog (Chức danh page — system roles plus the
-// user's own roles, loaded by the parent) plus a "custom role" mode with
-// a free text input for one-off roles. Falls back to the built-in list
-// when the catalog has not loaded. The backend normalises custom names
-// into slugs.
-function RoleSelect({ value, onChange, label, catalog }) {
-  const options = catalog && catalog.length
-    ? catalog.map((r) => ({ slug: r.slug, label: r.name }))
-    : ROLES.map((r) => ({ slug: r, label: roleMeta(r).label }));
-  const known = options.some((o) => o.slug === value);
-  const [mode, setMode] = useState(() => (value && !known ? "custom" : "list"));
+// Role picker: the suggested roles plus a "custom role" mode with a free
+// text input. The backend normalises custom names into slugs.
+function RoleSelect({ value, onChange, label }) {
+  const [mode, setMode] = useState(() => (value && !ROLES.includes(value) ? "custom" : "list"));
   return <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
     <select aria-label={label} value={mode === "custom" ? "__custom__" : (value || "member")}
       onChange={(e) => {
         if (e.target.value === "__custom__") { setMode("custom"); onChange(""); }
         else { setMode("list"); onChange(e.target.value); }
       }}>
-      {options.map((o) => <option key={o.slug} value={o.slug}>{o.label}</option>)}
-      {!known && value && mode !== "custom" && <option value={value}>{roleMeta(value).label}</option>}
+      {ROLES.map((r) => <option key={r} value={r}>{roleMeta(r).label}</option>)}
       <option value="__custom__">Vai trò tự đặt…</option>
     </select>
     {mode === "custom" && <input aria-label={`${label} tự đặt`} value={value || ""} placeholder="Ví dụ: Content Writer"
@@ -50,7 +42,10 @@ function OverridePicker({ providerId, modelId, onChange }) {
   useEffect(() => {
     let live = true;
     providerService.list()
-      .then((list) => { if (live) setProviders(list.filter((p) => p.implemented && p.configured && p.enabled)); })
+      // list() resolves to the response body { providers: [...] }, not a
+      // bare array — filtering the body itself threw and the catch below
+      // silently left the picker empty forever.
+      .then((data) => { if (live) setProviders((data?.providers ?? []).filter((p) => p.implemented && p.configured && p.enabled)); })
       .catch(() => {});
     return () => { live = false; };
   }, []);
@@ -58,9 +53,10 @@ function OverridePicker({ providerId, modelId, onChange }) {
     if (!providerId) { setModels([]); return undefined; }
     let live = true;
     providerService.models(providerId)
-      .then((list) => {
+      .then((data) => {
         if (!live) return;
-        const chat = list.filter((m) => m.capabilities?.chat !== false);
+        // Same shape as list(): the body is { models: [...] }.
+        const chat = (data?.models ?? []).filter((m) => m.capabilities?.chat !== false);
         setModels(chat);
         if (chat.length && !chat.some((m) => m.id === modelId)) onChange(providerId, chat[0].id);
       })
@@ -82,7 +78,7 @@ function OverridePicker({ providerId, modelId, onChange }) {
 // Full assignment editor for one team: roles (incl. custom), execution
 // order, priority, instructions, responsibility, per-member model
 // override and enabled state. Saves through PATCH /ai/agent-teams/{id}.
-function MemberEditor({ team, agents, catalog, onClose, onSaved }) {
+function MemberEditor({ team, agents, onClose, onSaved }) {
   const [coordinator, setCoordinator] = useState(team.coordinator_agent_id);
   const [drafts, setDrafts] = useState(() => team.members.map((m) => ({
     agent_id: m.agent_id, agent_name: m.agent_name, role: m.role, enabled: m.enabled !== false,
@@ -156,7 +152,7 @@ function MemberEditor({ team, agents, catalog, onClose, onSaved }) {
           {d.agent_id === coordinator ? " · Coordinator" : ""}
           <br /><small className="muted">{agentById[d.agent_id] ? `${agentById[d.agent_id].provider} / ${agentById[d.agent_id].model}` : "Agent gốc"}</small></span>
         <span style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <RoleSelect label={`Vai trò của ${d.agent_name || d.agent_id}`} value={d.role} catalog={catalog}
+          <RoleSelect label={`Vai trò của ${d.agent_name || d.agent_id}`} value={d.role}
             onChange={(v) => update(d.agent_id, { role: v })} />
           <label style={{ fontSize: 12.5 }}>Thứ tự <input type="number" min="0" max="999" style={{ width: 70 }}
             value={d.execution_order} onChange={(e) => update(d.agent_id, { execution_order: e.target.value })} /></label>
@@ -248,18 +244,11 @@ export function TeamsWorkspace() {
     try { setSeedStatus(await seedService.status(signal)); } catch { /* card hides itself */ }
   }, []);
 
-  // Role catalog for the pickers (Chức danh page data). Best-effort: when
-  // it cannot load, RoleSelect falls back to the built-in role list.
-  const [roleCatalog, setRoleCatalog] = useState(null);
-  const loadRoleCatalog = useCallback(async (signal) => {
-    try { setRoleCatalog(await rolesService.list(signal)); } catch { /* pickers fall back */ }
-  }, []);
-
   useEffect(() => {
     const controller = new AbortController();
-    (async () => { await Promise.allSettled([loadAgents(controller.signal), loadTeams(controller.signal), loadSeedStatus(controller.signal), loadRoleCatalog(controller.signal)]); })();
+    (async () => { await Promise.allSettled([loadAgents(controller.signal), loadTeams(controller.signal), loadSeedStatus(controller.signal)]); })();
     return () => controller.abort();
-  }, [loadAgents, loadTeams, loadSeedStatus, loadRoleCatalog]);
+  }, [loadAgents, loadTeams, loadSeedStatus]);
 
   async function applySeed() {
     setSeedBusy(true); setSeedMsg(""); setError("");
@@ -385,7 +374,7 @@ export function TeamsWorkspace() {
                   <input type="checkbox" aria-label={`Chọn ${a.name}`} checked={form.picks[a.id] !== undefined}
                     onChange={(e) => setForm({ ...form, picks: { ...form.picks, [a.id]: e.target.checked ? (a.id === form.coordinator ? "coordinator" : (inferRoleFromName(a.name) || "member")) : undefined } })} />
                   <span><b>{a.name}</b><br /><small className="muted">{a.provider} / {a.model}</small></span>
-                  {form.picks[a.id] !== undefined && <RoleSelect label={`Vai trò của ${a.name}`} value={form.picks[a.id]} catalog={roleCatalog}
+                  {form.picks[a.id] !== undefined && <RoleSelect label={`Vai trò của ${a.name}`} value={form.picks[a.id]}
                     onChange={(v) => setForm({ ...form, picks: { ...form.picks, [a.id]: v } })} />}
                 </div>)}
               </div>
@@ -433,7 +422,7 @@ export function TeamsWorkspace() {
           <button className="wf-btn" type="button" onClick={() => setEditingId(editingId === team.id ? null : team.id)}>
             <Pencil size={15} /> {editingId === team.id ? "Đóng cấu hình" : "Cấu hình phân công"}</button>
           <button className="wf-btn" type="button" onClick={() => setDeletion(team)}><Trash2 size={15} /> Xóa nhóm</button></div>
-        {editingId === team.id && <MemberEditor team={team} agents={agents} catalog={roleCatalog}
+        {editingId === team.id && <MemberEditor team={team} agents={agents}
           onClose={() => setEditingId(null)}
           onSaved={async () => { setEditingId(null); await loadTeams(); }} />}
       </article>)}
