@@ -4,11 +4,11 @@
 // Both Render services sleep when idle. Three signals now race to
 // start the backend's wake-up as early as possible:
 //   1. instrumentation register() — when this server process boots;
-//   2. middleware nudge — when a page is requested while this process
+//   2. proxy nudge — when a page is requested while this process
 //      is warm but the backend has fallen asleep again;
 //   3. the inline script in the root layout — as soon as the HTML
 //      reaches the browser (that one only needs WAKE_PING_PATH).
-// This module is server-runtime code (instrumentation + middleware);
+// This module is server-runtime code (instrumentation + proxy);
 // it must stay free of React/browser-only APIs. The browser banner
 // imports only the WAKE_PING_PATH constant from here.
 
