@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { setServerStatus } from "../utils/server-status";
+import { WAKE_PING_PATH } from "../utils/wake-backend";
 
 // Wake-up strip shown only while the backend is still starting
 // (Render free tier sleeps after ~15 idle minutes and needs
@@ -16,7 +17,7 @@ const GIVE_UP_MS = 120000;
 
 async function pingServer() {
   try {
-    const response = await fetch("/api/v1/health/ping", { cache: "no-store" });
+    const response = await fetch(WAKE_PING_PATH, { cache: "no-store" });
     return response.ok;
   } catch {
     return false;
