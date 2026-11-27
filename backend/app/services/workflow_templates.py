@@ -42,16 +42,26 @@ from app.schemas.workflow_templates import (
     TemplateDetailOut,
     TemplateImportLogOut,
     TemplateListOut,
+    TemplateNameViIn,
     TemplateReviewIn,
     TemplateSourceCreateIn,
     TemplateSourceOut,
     TemplateStatsOut,
     TemplateSummaryOut,
+    TranslateNamesIn,
+    TranslateNamesOut,
     UserWorkflowOut,
 )
 from app.schemas.n8n_platform import N8nWorkflowCreateIn
+from app.services.ai.ai_factory import create_provider
 from app.services.ai.base_provider import ProviderError
+from app.services.ai.chat_types import ChatRequest, ChatTurn
+from app.services.credential_bindings import (
+    CredentialBindingService,
+    apply_bindings_to_nodes,
+)
 from app.services.n8n_platform import N8nPlatformService
+from app.services.template_assistant import TemplateAssistantService
 
 SOURCES_COLLECTION = "workflow_template_sources"
 TEMPLATES_COLLECTION = "shared_workflows"
@@ -61,6 +71,23 @@ IMPORT_LOGS_COLLECTION = "workflow_import_logs"
 MAX_FILE_BYTES = 2_000_000
 DOWNLOAD_CONCURRENCY = 10
 MAX_RECORDED_FAILURES = 100
+TRANSLATE_BATCH_SIZE = 40
+
+_TRANSLATION_LINE = re.compile(r"^\s*(\d+)[.)]\s*(.+?)\s*$")
+
+
+def _parse_translation_lines(text: str, expected: int) -> list[str] | None:
+    """Parse a numbered translation reply. Every index 1..expected must
+    be present exactly — a partial or merged reply is rejected whole so
+    a translation can never land on the wrong template."""
+    found: dict[int, str] = {}
+    for line in text.splitlines():
+        match = _TRANSLATION_LINE.match(line)
+        if match:
+            found[int(match.group(1))] = match.group(2).strip().strip('"')
+    if set(found) != set(range(1, expected + 1)):
+        return None
+    return [found[index] for index in range(1, expected + 1)]
 
 _SECRET_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9_\-]{20,}"),  # OpenAI-style keys
@@ -729,6 +756,7 @@ class WorkflowTemplateService:
         return TemplateSummaryOut(
             id=str(doc["_id"]),
             name=doc.get("name", ""),
+            name_vi=doc.get("name_vi"),
             category=doc.get("category", ""),
             source_kind=doc.get("source_kind", "github"),
             source_id=doc.get("source_id"),
@@ -774,13 +802,23 @@ class WorkflowTemplateService:
             query["compatibility"] = compatibility
         if complexity:
             query["complexity"] = complexity
+        or_groups = []
         if service:
-            query["$or"] = [
-                {"credential_types": service},
-                {"node_types": {"$regex": re.escape(service), "$options": "i"}},
-            ]
+            or_groups.append(
+                {
+                    "$or": [
+                        {"credential_types": service},
+                        {"node_types": {"$regex": re.escape(service), "$options": "i"}},
+                    ]
+                }
+            )
         if q:
-            query["name"] = {"$regex": re.escape(q), "$options": "i"}
+            pattern = {"$regex": re.escape(q), "$options": "i"}
+            or_groups.append({"$or": [{"name": pattern}, {"name_vi": pattern}]})
+        if len(or_groups) == 1:
+            query.update(or_groups[0])
+        elif or_groups:
+            query["$and"] = or_groups
         total = await self.templates.count_documents(query)
         sort_field = {
             "name": ("name", 1),
@@ -844,6 +882,113 @@ class WorkflowTemplateService:
         doc = await self.templates.find_one({"_id": template_id}, {"workflow_json": 0})
         return self._summary_out(doc)
 
+    async def rename_name_vi(
+        self, template_id: str, payload: TemplateNameViIn
+    ) -> TemplateSummaryOut:
+        cleaned = (payload.name_vi or "").strip() or None
+        result = await self.templates.update_one(
+            {"_id": template_id},
+            {"$set": {"name_vi": cleaned, "updated_at": _utcnow()}},
+        )
+        if result.matched_count == 0:
+            raise ProviderError("template_not_found")
+        doc = await self.templates.find_one({"_id": template_id}, {"workflow_json": 0})
+        return self._summary_out(doc)
+
+    async def translate_names(
+        self, user_id, chat_http, payload: TranslateNamesIn
+    ) -> TranslateNamesOut:
+        """Bulk-translate template names into Vietnamese with the user's
+        own configured AI provider (same candidate resolution as the
+        template assistant). Only templates without a Vietnamese name
+        are touched, so re-running is cheap and idempotent; a batch
+        whose reply does not parse completely is skipped, never
+        half-applied."""
+        query = {
+            "$or": [
+                {"name_vi": {"$exists": False}},
+                {"name_vi": None},
+                {"name_vi": ""},
+            ]
+        }
+        total_pending = await self.templates.count_documents(query)
+        docs: list[tuple[str, str]] = []
+        cursor = (
+            self.templates.find(query, {"name": 1}).sort("name", 1).limit(payload.limit)
+        )
+        async for doc in cursor:
+            if doc.get("name"):
+                docs.append((str(doc["_id"]), doc["name"]))
+        if not docs:
+            return TranslateNamesOut(translated=0, remaining=total_pending)
+        assistant = TemplateAssistantService(self.db, self.settings, chat_http)
+        candidates = await assistant._resolve_candidates(
+            user_id, payload.provider, payload.model
+        )
+        if not candidates:
+            raise ProviderError("credentials_missing")
+        translated = 0
+        failed_batches = 0
+        for start in range(0, len(docs), TRANSLATE_BATCH_SIZE):
+            batch = docs[start : start + TRANSLATE_BATCH_SIZE]
+            mapping = await self._translate_batch(
+                chat_http, candidates, [name for _id, name in batch]
+            )
+            if mapping is None:
+                failed_batches += 1
+                continue
+            for (template_id, _name), translated_name in zip(batch, mapping):
+                await self.templates.update_one(
+                    {"_id": template_id},
+                    {"$set": {"name_vi": translated_name, "updated_at": _utcnow()}},
+                )
+                translated += 1
+        return TranslateNamesOut(
+            translated=translated,
+            remaining=max(0, total_pending - translated),
+            failed_batches=failed_batches,
+            provider=candidates[0][0],
+            model=candidates[0][1],
+        )
+
+    async def _translate_batch(self, chat_http, candidates, names) -> list[str] | None:
+        numbered = "\n".join(
+            f"{index + 1}. {name}" for index, name in enumerate(names)
+        )
+        prompt = (
+            "Dịch tên các workflow n8n sau sang tiếng Việt tự nhiên, ngắn gọn, dễ hiểu. "
+            "Giữ nguyên tên riêng và thuật ngữ công nghệ (Gmail, Google Sheets, Drive, "
+            "OpenAI, Telegram, AI, API, RAG, CRM...). "
+            f"Trả về đúng {len(names)} dòng theo định dạng \"số. bản dịch\", "
+            f"không thêm giải thích.\n\n{numbered}"
+        )
+        for cand_provider, cand_model, cand_key in candidates[:3]:
+            try:
+                adapter = create_provider(cand_provider, chat_http=chat_http)
+            except Exception:  # noqa: BLE001 - try the next candidate
+                continue
+            for budget in (4096, 2048):
+                request = ChatRequest(
+                    model=cand_model,
+                    turns=(ChatTurn("user", prompt),),
+                    max_output_tokens=budget,
+                )
+                chunks: list[str] = []
+
+                async def collect() -> None:
+                    async for event in adapter.stream_chat(cand_key, request):
+                        if event.kind == "delta":
+                            chunks.append(event.text)
+
+                try:
+                    await asyncio.wait_for(collect(), timeout=120)
+                except Exception:  # noqa: BLE001 - next budget / candidate
+                    continue
+                parsed = _parse_translation_lines("".join(chunks), len(names))
+                if parsed is not None:
+                    return parsed
+        return None
+
 
 # -- Phase 3: per-user sync -------------------------------------------------
 
@@ -865,6 +1010,7 @@ class WorkflowSyncService:
     def __init__(self, db: AsyncIOMotorDatabase, platform: "N8nPlatformService"):
         self.db = db
         self.platform = platform
+        self.bindings = CredentialBindingService(db, platform)
 
     @property
     def installs(self):
@@ -881,7 +1027,8 @@ class WorkflowSyncService:
         return UserWorkflowOut(
             id=str(doc["_id"]),
             template_id=doc.get("template_id", ""),
-            template_name=(template or {}).get("name", doc.get("template_name", "")),
+            template_name=(template or {}).get("name_vi")
+            or (template or {}).get("name", doc.get("template_name", "")),
             category=(template or {}).get("category", ""),
             n8n_workflow_id=doc.get("n8n_workflow_id", ""),
             installed_version=installed,
@@ -915,16 +1062,34 @@ class WorkflowSyncService:
         return SyncCandidatesOut(available=available, updates=updates)
 
     @staticmethod
-    def _create_payload(template: dict) -> "N8nWorkflowCreateIn":
+    def _display_name(template: dict) -> str:
         workflow = template.get("workflow_json") or {}
+        return (
+            template.get("name_vi")
+            or template.get("name")
+            or workflow.get("name")
+            or "Workflow template"
+        )
+
+    @staticmethod
+    def _create_payload(
+        template: dict, bindings: dict | None = None
+    ) -> "N8nWorkflowCreateIn":
+        workflow = template.get("workflow_json") or {}
+        nodes = workflow.get("nodes") or []
+        if bindings:
+            # Re-point every node credential the user has bound to their
+            # own n8n credential; unbound types pass through untouched.
+            nodes, _applied = apply_bindings_to_nodes(nodes, bindings)
         return N8nWorkflowCreateIn(
-            name=template.get("name") or workflow.get("name") or "Workflow template",
-            nodes=workflow.get("nodes") or [],
+            name=WorkflowSyncService._display_name(template),
+            nodes=nodes,
             connections=workflow.get("connections") or {},
             settings=workflow.get("settings") or {},
         )
 
     async def install(self, user_id: str, template_ids: list[str]) -> InstallResultOut:
+        bindings = await self.bindings.bindings_map(user_id)
         results: list[InstallResultItemOut] = []
         for template_id in template_ids:
             template = await self.templates.find_one({"_id": template_id})
@@ -935,7 +1100,7 @@ class WorkflowSyncService:
                     )
                 )
                 continue
-            name = template.get("name", "")
+            name = self._display_name(template)
             if template.get("review_status") != "approved":
                 results.append(
                     InstallResultItemOut(
@@ -960,7 +1125,9 @@ class WorkflowSyncService:
                 )
                 continue
             try:
-                created = await self.platform.create_workflow(self._create_payload(template))
+                created = await self.platform.create_workflow(
+                    self._create_payload(template, bindings)
+                )
             except ProviderError as exc:
                 results.append(
                     InstallResultItemOut(
@@ -1020,6 +1187,9 @@ class WorkflowSyncService:
         settings = workflow_json.get("settings")
         if not isinstance(settings, dict):
             settings = {}
+        bindings = await self.bindings.bindings_map(user_id)
+        if bindings:
+            nodes, _applied = apply_bindings_to_nodes(nodes, bindings)
         resolved_name = (name or f"{template.get('name', 'Workflow')} (tùy chỉnh)")[:200]
         payload = N8nWorkflowCreateIn(
             name=resolved_name,
@@ -1054,15 +1224,16 @@ class WorkflowSyncService:
         template = await self.templates.find_one({"_id": doc["template_id"]})
         if template is None:
             raise ProviderError("template_not_found")
+        bindings = await self.bindings.bindings_map(user_id)
         await self.platform.replace_workflow(
-            doc["n8n_workflow_id"], self._create_payload(template)
+            doc["n8n_workflow_id"], self._create_payload(template, bindings)
         )
         await self.installs.update_one(
             {"_id": install_id},
             {
                 "$set": {
                     "installed_version": int(template.get("version", 1)),
-                    "template_name": template.get("name", doc.get("template_name", "")),
+                    "template_name": self._display_name(template),
                     "updated_at": _utcnow(),
                 }
             },

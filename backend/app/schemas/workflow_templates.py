@@ -60,6 +60,9 @@ class TemplateImportLogOut(BaseModel):
 class TemplateSummaryOut(BaseModel):
     id: str
     name: str
+    # Vietnamese display name (AI-translated in bulk or hand-edited);
+    # the UI prefers it and installs use it as the n8n workflow name.
+    name_vi: str | None = None
     category: str
     source_kind: str  # github | official | community | personal
     source_id: str | None = None
@@ -95,6 +98,25 @@ class TemplateListOut(BaseModel):
 
 class TemplateReviewIn(BaseModel):
     review_status: str = Field(pattern="^(approved|rejected|pending_review)$")
+
+
+class TemplateNameViIn(BaseModel):
+    # None or blank clears the Vietnamese name (falls back to the original).
+    name_vi: str | None = Field(default=None, max_length=300)
+
+
+class TranslateNamesIn(BaseModel):
+    provider: str | None = None
+    model: str | None = None
+    limit: int = Field(default=400, ge=1, le=1000)
+
+
+class TranslateNamesOut(BaseModel):
+    translated: int = 0
+    remaining: int = 0
+    failed_batches: int = 0
+    provider: str = ""
+    model: str = ""
 
 
 class TemplateVersionOut(BaseModel):

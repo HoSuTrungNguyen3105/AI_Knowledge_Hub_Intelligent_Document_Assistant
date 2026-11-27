@@ -633,6 +633,42 @@ class N8nPlatformService:
         await self._store(item, _utcnow())
         return item
 
+    async def fetch_workflow_json(self, workflow_id: str) -> dict:
+        """The raw workflow definition, live from n8n (public wrapper
+        around the internal fetch, for the template credential-binding
+        flow that rewrites node credentials in place)."""
+        return await self._get_raw_workflow(workflow_id)
+
+    async def list_credentials(self) -> list[dict]:
+        """Credentials that exist in the user's n8n: id, name and type
+        only — the n8n API never returns secret values. Used to bind
+        template nodes to the user's own credentials instead of the
+        template author's."""
+        key = self._require_key()
+        status, data = await self.http.get_json(
+            f"{self.base_url}/api/v1/credentials",
+            key,
+            self.settings.n8n_api_timeout_seconds,
+        )
+        if status in (401, 403):
+            raise ProviderError("n8n_api_unauthorized")
+        if status >= 400 or not isinstance(data, dict):
+            raise ProviderError("n8n_api_failed")
+        items = data.get("data")
+        if not isinstance(items, list):
+            raise ProviderError("n8n_api_failed")
+        out = []
+        for item in items:
+            if isinstance(item, dict) and item.get("id") is not None and item.get("type"):
+                out.append(
+                    {
+                        "id": str(item["id"]),
+                        "name": str(item.get("name") or ""),
+                        "type": str(item["type"]),
+                    }
+                )
+        return sorted(out, key=lambda c: (c["type"], c["name"].lower()))
+
     async def _get_raw_workflow(self, workflow_id: str) -> dict:
         key = self._require_key()
         status, data = await self.http.get_json(

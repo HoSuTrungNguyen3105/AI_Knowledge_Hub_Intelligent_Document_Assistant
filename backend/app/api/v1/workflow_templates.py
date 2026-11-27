@@ -29,11 +29,14 @@ from app.schemas.workflow_templates import (
     TemplateDetailOut,
     TemplateImportLogOut,
     TemplateListOut,
+    TemplateNameViIn,
     TemplateReviewIn,
     TemplateSourceCreateIn,
     TemplateSourceOut,
     TemplateStatsOut,
     TemplateSummaryOut,
+    TranslateNamesIn,
+    TranslateNamesOut,
     UserWorkflowOut,
 )
 from app.services.ai.base_provider import ProviderError
@@ -44,6 +47,7 @@ from app.services.workflow_templates import (
     GitHubHTTP,
     WorkflowSyncService,
     WorkflowTemplateService,
+    analyze_workflow,
 )
 
 router = APIRouter(prefix="/ai/workflow-templates", tags=["workflow-templates"])
@@ -206,6 +210,37 @@ async def review_template(
 ) -> TemplateSummaryOut:
     return await WorkflowTemplateService(db, settings, http).review_template(
         template_id, payload
+    )
+
+
+@router.patch("/templates/{template_id}/name-vi", response_model=TemplateSummaryOut)
+async def rename_template_name_vi(
+    template_id: str,
+    payload: TemplateNameViIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+) -> TemplateSummaryOut:
+    """Set or clear a template's Vietnamese display name by hand."""
+    return await WorkflowTemplateService(db, settings, http).rename_name_vi(
+        template_id, payload
+    )
+
+
+@router.post("/templates/translate-names", response_model=TranslateNamesOut)
+async def translate_template_names(
+    payload: TranslateNamesIn,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: GitHubHTTPDep,
+    chat_http: AssistantHTTPDep,
+) -> TranslateNamesOut:
+    """Bulk-translate the names of templates that have no Vietnamese
+    name yet, using the signed-in user's own AI provider."""
+    return await WorkflowTemplateService(db, settings, http).translate_names(
+        user.id, chat_http, payload
     )
 
 
