@@ -4,14 +4,20 @@ Implements spec option B — Backend Central Scheduler + n8n Webhook. A
 tick finds due schedules, claims each one atomically by advancing its
 ``next_run_at`` under a compare-and-set on the old value (so two ticks
 can never fire the same slot twice), records an execution with a unique
-idempotency key, and starts the run through the existing
-:class:`N8nFactoryService` — the same path as a manual Factory run, so
-results land in the Factory history and arrive via the same callback.
+idempotency key, and starts the run through the target the schedule
+names: the existing :class:`N8nFactoryService` for ``factory`` targets
+(the same path as a manual Factory run, results in the Factory history
+via the same callback) or :meth:`N8nPlatformService.start_run` for
+``n8n_workflow`` targets (any synced webhook workflow, tracked as a
+platform run). Schedules stored before targets existed have no target
+and keep firing the Factory request exactly as before.
 
 The tick runs as a background loop inside the backend lifespan (every
 ``scheduler_tick_interval_seconds``) and through ``POST
 /ai/workflow-schedules/tick`` for external cron callers that also keep
-the free-tier backend awake. Finished factory runs are reconciled into
+the free-tier backend awake. Every tick records itself in the
+``scheduler_state`` collection so the health view can show when the
+chain last moved. Finished runs of both kinds are reconciled into
 executions lazily on each tick.
 """
 
@@ -28,10 +34,13 @@ from pymongo.errors import DuplicateKeyError
 
 from app.models.base import utcnow
 from app.schemas.n8n_factory import FactoryRunRequest
+from app.schemas.n8n_platform import N8nRunCreateIn
 from app.services.ai.base_provider import ProviderError
 from app.services.n8n_factory import RUNS_COLLECTION, N8nFactoryService, N8nHTTP
+from app.services.n8n_platform import N8nApiHTTP, N8nPlatformService
 from app.services.notifications import notify
 from app.services.schedule_time import ScheduleInvalid, compute_next_runs
+from app.services.workflow_schedules import STATE_COLLECTION, schedule_target_of
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +53,23 @@ SCHEDULE_LINK = "/agents/workflows?tab=schedules"
 
 class ScheduleRunner:
     def __init__(
-        self, db: AsyncIOMotorDatabase, settings, http: N8nHTTP
+        self,
+        db: AsyncIOMotorDatabase,
+        settings,
+        http: N8nHTTP,
+        platform_http: N8nApiHTTP | None = None,
     ) -> None:
         self.db = db
         self.settings = settings
         self.http = http
+        # The n8n Platform REST client fires "n8n_workflow" targets;
+        # injectable so tests can stand in a fake n8n API.
+        self.platform_http = platform_http or N8nApiHTTP()
         self.schedules = db[SCHEDULES]
         self.executions = db[EXECUTIONS]
+
+    def _platform(self) -> N8nPlatformService:
+        return N8nPlatformService(self.db, self.settings, self.platform_http)
 
     # -- firing ------------------------------------------------------------
     async def _open_execution(self, schedule_id: UUID) -> dict | None:
@@ -77,6 +96,7 @@ class ScheduleRunner:
             "schedule_id": doc["_id"],
             "user_id": doc["user_id"],
             "factory_run_id": None,
+            "platform_run_id": None,
             "n8n_execution_id": None,
             "idempotency_key": f"{doc['_id']}:{slot.isoformat()}:{trigger_type}",
             "trigger_type": trigger_type,
@@ -171,39 +191,27 @@ class ScheduleRunner:
         )
         if execution["status"] != "running":
             return self._out(execution)  # idempotent replay of the same slot
+        if schedule_target_of(doc)["kind"] == "n8n_workflow":
+            return await self._fire_platform(
+                doc, execution, now=now, advance_next=advance_next
+            )
         factory = N8nFactoryService(self.db, self.settings, self.http)
         try:
             run = await factory.create_run(
                 doc["user_id"], FactoryRunRequest(**doc["factory_request"])
             )
         except ProviderError as err:
-            finished = utcnow()
-            changes = {
-                "status": "failed",
-                "error": err.code,
-                "finished_at": finished,
-                "duration_ms": int((finished - now).total_seconds() * 1000),
-            }
-            await self.executions.update_one(
-                {"_id": execution["_id"]}, {"$set": changes}
+            return await self._fail_activation(
+                doc,
+                execution,
+                error_code=err.code,
+                now=now,
+                advance_next=advance_next,
+                body=(
+                    "n8n chưa nhận lượt chạy này. Kiểm tra Docker/n8n "
+                    "ở máy của bạn rồi chạy lại từ tab Lịch chạy."
+                ),
             )
-            execution.update(changes)
-            await self._mark_fired(
-                doc, outcome="failed", now=now, advance_next=advance_next
-            )
-            if doc.get("notify_on_failure"):
-                await notify(
-                    self.db,
-                    doc["user_id"],
-                    kind="schedule_failed",
-                    title=f"Lịch '{doc['name']}' không kích hoạt được",
-                    body=(
-                        "n8n chưa nhận lượt chạy này. Kiểm tra Docker/n8n "
-                        "ở máy của bạn rồi chạy lại từ tab Lịch chạy."
-                    ),
-                    link=SCHEDULE_LINK,
-                )
-            return self._out(execution)
         await self.executions.update_one(
             {"_id": execution["_id"]}, {"$set": {"factory_run_id": run.id}}
         )
@@ -211,6 +219,96 @@ class ScheduleRunner:
         await self._mark_fired(
             doc, outcome="running", now=now, advance_next=advance_next
         )
+        return self._out(execution)
+
+    async def _fail_activation(
+        self,
+        doc: dict,
+        execution: dict,
+        *,
+        error_code: str,
+        now: datetime,
+        advance_next: bool,
+        body: str,
+    ) -> dict:
+        """Close an execution whose run could not even be started and
+        record the failed firing on the schedule (shared by both target
+        kinds; only the notification wording differs)."""
+        finished = utcnow()
+        changes = {
+            "status": "failed",
+            "error": error_code,
+            "finished_at": finished,
+            "duration_ms": int((finished - now).total_seconds() * 1000),
+        }
+        await self.executions.update_one(
+            {"_id": execution["_id"]}, {"$set": changes}
+        )
+        execution.update(changes)
+        await self._mark_fired(
+            doc, outcome="failed", now=now, advance_next=advance_next
+        )
+        if doc.get("notify_on_failure"):
+            await notify(
+                self.db,
+                doc["user_id"],
+                kind="schedule_failed",
+                title=f"Lịch '{doc['name']}' không kích hoạt được",
+                body=body,
+                link=SCHEDULE_LINK,
+            )
+        return self._out(execution)
+
+    async def _fire_platform(
+        self, doc: dict, execution: dict, *, now: datetime, advance_next: bool
+    ) -> dict:
+        """Fire an ``n8n_workflow`` target through the n8n Platform run
+        path (the same start_run as the Workflow Management tab).
+
+        start_run raises for a workflow that cannot start at all
+        (missing, inactive, no webhook) and returns a run whose status
+        may already be terminal for synchronous webhooks; a still-open
+        run is reconciled by later ticks, exactly like Factory runs.
+        """
+        target = schedule_target_of(doc)
+        try:
+            run = await self._platform().start_run(
+                str(doc["user_id"]),
+                N8nRunCreateIn(
+                    workflow_id=target.get("workflow_id") or "",
+                    payload=target.get("payload") or {},
+                ),
+            )
+        except ProviderError as err:
+            return await self._fail_activation(
+                doc,
+                execution,
+                error_code=err.code,
+                now=now,
+                advance_next=advance_next,
+                body=(
+                    "Workflow đích chưa chạy được — có thể workflow đang "
+                    "tắt, chưa có Webhook trigger hoặc n8n chưa bật. Kiểm "
+                    "tra ở tab Workflow Management rồi chạy lại từ tab "
+                    "Lịch chạy."
+                ),
+            )
+        await self.executions.update_one(
+            {"_id": execution["_id"]}, {"$set": {"platform_run_id": run.id}}
+        )
+        execution["platform_run_id"] = run.id
+        await self._mark_fired(
+            doc, outcome="running", now=now, advance_next=advance_next
+        )
+        if run.status in ("success", "error", "stopped"):
+            await self._settle_execution(
+                execution,
+                success=run.status == "success",
+                error=None
+                if run.status == "success"
+                else (run.error or run.status),
+                finished=run.finished_at or utcnow(),
+            )
         return self._out(execution)
 
     # -- tick ----------------------------------------------------------------
@@ -235,7 +333,9 @@ class ScheduleRunner:
             return None
         return runs[0] if runs else None
 
-    async def tick(self, now: datetime | None = None) -> dict:
+    async def tick(
+        self, now: datetime | None = None, *, source: str = "loop"
+    ) -> dict:
         now = now or utcnow()
         synced = await self.sync_open_executions()
         fired = skipped = deferred = 0
@@ -282,74 +382,134 @@ class ScheduleRunner:
                 skipped += 1
             else:
                 fired += 1
-        return {
+        result = {
             "fired": fired,
             "skipped": skipped,
             "deferred": deferred,
             "synced": synced,
         }
+        # Record the tick for the health strip: the strip can then show
+        # honestly when this backend last fired schedules and through
+        # which door (in-process loop vs external cron), instead of the
+        # user guessing which link of the chain is broken.
+        await self.db[STATE_COLLECTION].update_one(
+            {"_id": "tick"},
+            {"$set": {"last_tick_at": now, "source": source, **result}},
+            upsert=True,
+        )
+        return result
 
     # -- reconciliation ------------------------------------------------------
+    async def _settle_execution(
+        self,
+        execution: dict,
+        *,
+        success: bool,
+        error: str | None,
+        finished: datetime,
+    ) -> None:
+        """Close a running execution from its finished run: store the
+        outcome, mirror it onto the schedule's last_status and notify
+        per the schedule's flags. Shared by Factory runs and n8n
+        Platform runs; only the notification's destination tab differs.
+        """
+        duration = None
+        if execution.get("started_at") and finished:
+            duration = int(
+                (finished - execution["started_at"]).total_seconds() * 1000
+            )
+        changes = {
+            "status": "success" if success else "failed",
+            "error": error,
+            "finished_at": finished,
+            "duration_ms": duration,
+        }
+        await self.executions.update_one(
+            {"_id": execution["_id"]}, {"$set": changes}
+        )
+        execution.update(changes)
+        schedule = await self.schedules.find_one({"_id": execution["schedule_id"]})
+        if schedule is None:
+            return
+        await self.schedules.update_one(
+            {"_id": schedule["_id"]},
+            {
+                "$set": {
+                    "last_status": "success" if success else "failed",
+                    "updated_at": utcnow(),
+                }
+            },
+        )
+        wanted = (
+            schedule.get("notify_on_success")
+            if success
+            else schedule.get("notify_on_failure")
+        )
+        if wanted:
+            platform = schedule_target_of(schedule)["kind"] == "n8n_workflow"
+            await notify(
+                self.db,
+                schedule["user_id"],
+                kind="schedule_success" if success else "schedule_failed",
+                title=(
+                    f"Lịch '{schedule['name']}' đã chạy xong"
+                    if success
+                    else f"Lịch '{schedule['name']}' chạy thất bại"
+                ),
+                body=(
+                    "Xem kết quả ở tab Workflow Management hoặc lịch sử của lịch."
+                    if platform
+                    else "Xem kết quả ở tab AI Factory hoặc lịch sử của lịch."
+                ),
+                link=SCHEDULE_LINK,
+            )
+
     async def sync_open_executions(self) -> int:
         synced = 0
         cursor = self.executions.find(
-            {"status": "running", "factory_run_id": {"$ne": None}}
+            {
+                "status": "running",
+                "$or": [
+                    {"factory_run_id": {"$ne": None}},
+                    {"platform_run_id": {"$ne": None}},
+                ],
+            }
         ).limit(50)
         async for execution in cursor:
+            if execution.get("platform_run_id"):
+                try:
+                    run = await self._platform().get_run(
+                        str(execution["user_id"]), execution["platform_run_id"]
+                    )
+                except ProviderError:
+                    continue
+                if run.status == "running":
+                    continue
+                await self._settle_execution(
+                    execution,
+                    success=run.status == "success",
+                    error=None
+                    if run.status == "success"
+                    else (run.error or run.status),
+                    finished=run.finished_at or utcnow(),
+                )
+                synced += 1
+                continue
             run = await self.db[RUNS_COLLECTION].find_one(
                 {"_id": execution["factory_run_id"]}
             )
             if run is None or run["status"] not in RUN_TERMINAL:
                 continue
-            success = run["status"] in RUN_SUCCESS
-            finished = run.get("finished_at") or run.get("updated_at") or utcnow()
-            duration = None
-            if execution.get("started_at") and finished:
-                duration = int(
-                    (finished - execution["started_at"]).total_seconds() * 1000
-                )
-            await self.executions.update_one(
-                {"_id": execution["_id"]},
-                {
-                    "$set": {
-                        "status": "success" if success else "failed",
-                        "error": None if success else (run.get("error") or run["status"]),
-                        "finished_at": finished,
-                        "duration_ms": duration,
-                    }
-                },
+            await self._settle_execution(
+                execution,
+                success=run["status"] in RUN_SUCCESS,
+                error=None
+                if run["status"] in RUN_SUCCESS
+                else (run.get("error") or run["status"]),
+                finished=run.get("finished_at")
+                or run.get("updated_at")
+                or utcnow(),
             )
-            schedule = await self.schedules.find_one(
-                {"_id": execution["schedule_id"]}
-            )
-            if schedule is not None:
-                await self.schedules.update_one(
-                    {"_id": schedule["_id"]},
-                    {
-                        "$set": {
-                            "last_status": "success" if success else "failed",
-                            "updated_at": utcnow(),
-                        }
-                    },
-                )
-                wanted = (
-                    schedule.get("notify_on_success")
-                    if success
-                    else schedule.get("notify_on_failure")
-                )
-                if wanted:
-                    await notify(
-                        self.db,
-                        schedule["user_id"],
-                        kind="schedule_success" if success else "schedule_failed",
-                        title=(
-                            f"Lịch '{schedule['name']}' đã chạy xong"
-                            if success
-                            else f"Lịch '{schedule['name']}' chạy thất bại"
-                        ),
-                        body="Xem kết quả ở tab AI Factory hoặc lịch sử của lịch.",
-                        link=SCHEDULE_LINK,
-                    )
             synced += 1
         return synced
 
@@ -386,6 +546,7 @@ class ScheduleRunner:
             "id": doc["_id"],
             "schedule_id": doc["schedule_id"],
             "factory_run_id": doc.get("factory_run_id"),
+            "platform_run_id": doc.get("platform_run_id"),
             "trigger_type": doc["trigger_type"],
             "scheduled_for": doc.get("scheduled_for"),
             "started_at": doc.get("started_at"),

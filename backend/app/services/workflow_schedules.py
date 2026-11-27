@@ -1,11 +1,15 @@
 """Workflow schedules (Scheduler spec, phase 1: configuration only).
 
-A schedule stores *when* a saved n8n Factory request should fire, in the
+A schedule stores *when* a firing target should fire, in the
 ``workflow_schedules`` collection, owner-scoped like every other module.
-Phase 1 covers CRUD, validation, pause/resume and next-run previews; the
-central tick that actually fires due schedules (spec phase 2, option B:
-backend scheduler + n8n webhook) lands separately and reuses
-``compute_next_runs`` plus the stored ``next_run_at``.
+The target is either a saved n8n Factory request (workflow 07 — the
+original behaviour and the default for schedules stored before targets
+existed) or any synced n8n workflow started through the n8n Platform
+run path. Phase 1 covers CRUD, validation, pause/resume and next-run
+previews; the central tick that actually fires due schedules (spec
+phase 2, option B: backend scheduler + n8n webhook) lives in
+``schedule_runner`` and reuses ``compute_next_runs`` plus the stored
+``next_run_at``.
 """
 
 from __future__ import annotations
@@ -29,10 +33,38 @@ from app.services.schedule_time import (
 )
 
 COLLECTION = "workflow_schedules"
+# Single-document scheduler state (last recorded tick), written by the
+# ScheduleRunner on every tick and read by the health view.
+STATE_COLLECTION = "scheduler_state"
+
+
+def schedule_target_of(doc: dict) -> dict:
+    """The firing target of a stored schedule. Documents written before
+    targets existed only ever fired the Factory request."""
+    target = doc.get("target")
+    if isinstance(target, dict) and target.get("kind") in ("factory", "n8n_workflow"):
+        return {
+            "kind": target["kind"],
+            "workflow_id": target.get("workflow_id"),
+            "payload": target.get("payload") or {},
+        }
+    return {"kind": "factory", "workflow_id": None, "payload": {}}
+
+
+def _validate_target(doc: dict) -> None:
+    """A factory target needs its saved Factory request; an
+    n8n_workflow target needs the workflow it should start."""
+    target = schedule_target_of(doc)
+    if target["kind"] == "factory":
+        if not doc.get("factory_request"):
+            raise ProviderError("schedule_invalid")
+    elif not target.get("workflow_id"):
+        raise ProviderError("schedule_invalid")
 
 
 class WorkflowScheduleService:
     def __init__(self, db: AsyncIOMotorDatabase) -> None:
+        self.db = db
         self.col = db[COLLECTION]
 
     # -- helpers ---------------------------------------------------------
@@ -63,7 +95,8 @@ class WorkflowScheduleService:
             "id": doc["_id"],
             "name": doc["name"],
             "description": doc.get("description", ""),
-            "factory_request": doc["factory_request"],
+            "factory_request": doc.get("factory_request"),
+            "target": schedule_target_of(doc),
             "schedule_type": doc["schedule_type"],
             "cron_expression": doc.get("cron_expression"),
             "config": doc["config"],
@@ -103,7 +136,12 @@ class WorkflowScheduleService:
             "user_id": user_id,
             "name": payload.name,
             "description": payload.description,
-            "factory_request": payload.factory_request.model_dump(mode="json"),
+            "factory_request": (
+                payload.factory_request.model_dump(mode="json")
+                if payload.factory_request is not None
+                else None
+            ),
+            "target": payload.target.model_dump(mode="json"),
             "schedule_type": payload.schedule_type,
             "cron_expression": payload.cron_expression,
             "config": payload.config.model_dump(mode="json"),
@@ -121,6 +159,7 @@ class WorkflowScheduleService:
             "created_at": now,
             "updated_at": now,
         }
+        _validate_target(doc)
         doc["next_run_at"] = (
             self._first_next(doc, now) if doc["status"] == "active" else None
         )
@@ -156,9 +195,13 @@ class WorkflowScheduleService:
             changes["factory_request"] = payload.factory_request.model_dump(
                 mode="json"
             )
+        if "target" in changes and changes["target"] is not None:
+            changes["target"] = payload.target.model_dump(mode="json")
         if "config" in changes and changes["config"] is not None:
             changes["config"] = payload.config.model_dump(mode="json")
         doc.update(changes)
+        if "target" in changes or "factory_request" in changes:
+            _validate_target(doc)
         timing_changed = any(
             key in changes
             for key in (
@@ -249,3 +292,24 @@ class WorkflowScheduleService:
             )
         except ScheduleInvalid:
             raise ProviderError("schedule_invalid") from None
+
+    # -- firing-chain health ------------------------------------------------
+    async def health(self, settings, platform) -> dict:
+        """Assemble the health strip from real backend state only.
+
+        The tick secret itself never leaves the server — only whether
+        it is set. The last tick comes from the state document the
+        runner writes on every tick; n8n reachability reuses the
+        platform status check, which never raises.
+        """
+        state = await self.db[STATE_COLLECTION].find_one({"_id": "tick"})
+        status = await platform.get_status()
+        return {
+            "external_tick_configured": bool(settings.scheduler_tick_secret),
+            "last_tick_at": state.get("last_tick_at") if state else None,
+            "last_tick_source": state.get("source") if state else None,
+            "n8n_configured": status.configured,
+            "n8n_reachable": status.reachable if status.configured else None,
+            "n8n_error": status.error,
+            "checked_at": utcnow(),
+        }

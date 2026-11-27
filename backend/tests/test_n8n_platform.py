@@ -7,6 +7,8 @@ the platform shape, and activation goes to the n8n REST API — not a live
 n8n run.
 """
 
+import copy
+
 import pytest
 from pydantic import SecretStr
 
@@ -542,3 +544,99 @@ async def test_execution_detail_unknown_is_404(owner, fake_api):
     response = owner.get(f"{BASE}/executions/nope")
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "execution_not_found"
+
+
+# -- duplicate + definition snapshots (task 3) ---------------------------------
+
+
+async def test_sync_snapshots_definitions_and_dedupes(owner, fake_api):
+    body = owner.get(f"{BASE}/workflows").json()
+    by_id = {item["id"]: item for item in body["items"]}
+    assert by_id["wf07abc"]["has_snapshot"] is True
+    assert by_id["wf07abc"]["snapshot_count"] == 1
+
+    snapshots = owner.get(f"{BASE}/workflows/wf07abc/snapshots").json()
+    assert len(snapshots) == 1
+    assert snapshots[0]["source"] == "sync"
+    assert snapshots[0]["node_count"] == 3
+    assert snapshots[0]["name"] == WORKFLOW_07["name"]
+
+    # Syncing the unchanged definition again adds no snapshot.
+    await _sync(owner)
+    snapshots = owner.get(f"{BASE}/workflows/wf07abc/snapshots").json()
+    assert len(snapshots) == 1
+
+
+async def test_duplicate_creates_an_inactive_copy(owner, fake_api):
+    await _sync(owner)
+    response = owner.post(f"{BASE}/workflows/wf07abc/duplicate")
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["id"] == "newid123"
+    assert body["name"] == f"{WORKFLOW_07['name']} (bản sao)"
+    assert body["active"] is False
+    assert body["has_snapshot"] is True
+
+    create = fake_api.posts[-1]
+    assert create["payload"]["name"] == body["name"]
+    assert len(create["payload"]["nodes"]) == 3
+
+    snapshots = owner.get(f"{BASE}/workflows/newid123/snapshots").json()
+    assert len(snapshots) == 1
+    assert snapshots[0]["source"] == "duplicate"
+
+
+async def test_duplicate_unknown_workflow_is_404(owner, fake_api):
+    response = owner.post(f"{BASE}/workflows/nope/duplicate")
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "n8n_workflow_not_found"
+
+
+async def test_restore_writes_the_snapshot_back(owner, fake_api):
+    await _sync(owner)
+    snapshot = owner.get(f"{BASE}/workflows/wf07abc/snapshots").json()[0]
+
+    # The workflow is then broken inside n8n (an extra node appears);
+    # the next sync snapshots the broken definition as the newest one.
+    broken = copy.deepcopy(WORKFLOW_07)
+    broken["nodes"] = [
+        *WORKFLOW_07["nodes"],
+        {"type": "n8n-nodes-base.code", "parameters": {}},
+    ]
+    fake_api.workflows[0] = broken
+    await _sync(owner)
+    assert len(owner.get(f"{BASE}/workflows/wf07abc/snapshots").json()) == 2
+
+    restored = owner.post(
+        f"{BASE}/workflows/wf07abc/snapshots/{snapshot['id']}/restore"
+    )
+    assert restored.status_code == 200, restored.text
+    # The PATCH carried the snapshot's original 3 nodes, not the broken 4.
+    patch = fake_api.patches[-1]
+    assert len(patch["payload"]["nodes"]) == 3
+    # And the restore itself is recorded as a snapshot.
+    snapshots = owner.get(f"{BASE}/workflows/wf07abc/snapshots").json()
+    assert snapshots[0]["source"] == "restore"
+    assert snapshots[0]["node_count"] == 3
+
+
+async def test_restore_unknown_snapshot_is_404(owner, fake_api):
+    await _sync(owner)
+    response = owner.post(f"{BASE}/workflows/wf07abc/snapshots/nope/restore")
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "n8n_snapshot_not_found"
+
+
+async def test_restore_deleted_workflow_fails_instead_of_recreating(
+    owner, fake_api
+):
+    await _sync(owner)
+    snapshot = owner.get(f"{BASE}/workflows/wf07abc/snapshots").json()[0]
+    fake_api.workflows = []
+    response = owner.post(
+        f"{BASE}/workflows/wf07abc/snapshots/{snapshot['id']}/restore"
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "n8n_workflow_not_found"
+    # Nothing was created in n8n behind the user's back.
+    assert fake_api.posts == []

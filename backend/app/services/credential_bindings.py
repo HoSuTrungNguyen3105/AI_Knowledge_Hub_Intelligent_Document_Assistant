@@ -61,6 +61,32 @@ def apply_bindings_to_nodes(nodes, bindings: dict) -> tuple[list, list[str]]:
     return out, applied
 
 
+def credential_coverage(nodes, bindings: dict) -> tuple[list[str], list[str]]:
+    """Return ``(rewritten_types, missing_types)`` for a definition.
+
+    ``rewritten`` are the credential types whose ids the user's
+    bindings would replace (the same types apply_bindings_to_nodes
+    reports as applied); ``missing`` are the types the definition
+    references but the user has NOT bound — those nodes keep the
+    template author's credential ids, which do not exist in the user's
+    n8n, so the workflow cannot run until the user binds or picks a
+    credential in n8n. Pure inspection: nothing is mutated and nothing
+    raises, so install flows can report coverage without changing
+    install behaviour (installs are never blocked by this)."""
+    referenced: set[str] = set()
+    if isinstance(nodes, list):
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            credentials = node.get("credentials")
+            if isinstance(credentials, dict):
+                referenced.update(str(key) for key in credentials)
+    bound = bindings or {}
+    rewritten = sorted(t for t in referenced if bound.get(t))
+    missing = sorted(t for t in referenced if not bound.get(t))
+    return rewritten, missing
+
+
 class CredentialBindingService:
     def __init__(self, db: AsyncIOMotorDatabase, platform: "N8nPlatformService"):
         self.db = db

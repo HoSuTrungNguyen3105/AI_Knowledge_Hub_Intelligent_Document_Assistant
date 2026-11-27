@@ -11,6 +11,8 @@ The workflow list is mirrored into ``n8n_workflows`` so the page can still
 render the last known list (marked stale) when the home n8n is off.
 """
 
+import hashlib
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -35,12 +37,17 @@ from app.schemas.n8n_platform import (
     N8nWorkflowExportOut,
     N8nWorkflowListOut,
     N8nWorkflowOut,
+    N8nWorkflowSnapshotOut,
     N8nWorkflowValidateOut,
 )
 from app.services.ai.base_provider import ProviderError
 
 WORKFLOWS_COLLECTION = "n8n_workflows"
 RUNS_COLLECTION = "n8n_runs"
+SNAPSHOTS_COLLECTION = "n8n_workflow_snapshots"
+# Snapshots kept per workflow: the newest plus a short history to roll
+# back to. Older ones are pruned on every new snapshot.
+SNAPSHOT_KEEP = 10
 
 _FINAL_RUN_STATUSES = {"success", "error", "stopped"}
 
@@ -455,6 +462,10 @@ class N8nPlatformService:
         return self.db[RUNS_COLLECTION]
 
     @property
+    def snapshots(self):
+        return self.db[SNAPSHOTS_COLLECTION]
+
+    @property
     def base_url(self) -> str:
         return (self.settings.n8n_api_base_url or self.settings.n8n_webhook_base_url).rstrip("/")
 
@@ -493,6 +504,105 @@ class N8nPlatformService:
         doc["_id"] = doc.pop("id")
         doc["synced_at"] = synced_at
         await self.workflows.replace_one({"_id": doc["_id"]}, doc, upsert=True)
+
+    # -- definition snapshots -------------------------------------------
+    # The mirror above keeps only metadata, so a workflow broken or
+    # deleted inside n8n used to be unrecoverable from MindFlow. Every
+    # definition the service sees (sync list, create/update responses)
+    # is also snapshotted here — only the four fields the n8n write API
+    # accepts — deduplicated by content hash and pruned to the newest
+    # SNAPSHOT_KEEP entries per workflow.
+
+    @staticmethod
+    def _definition_of(raw: dict) -> dict | None:
+        nodes = raw.get("nodes")
+        if not isinstance(nodes, list) or not nodes:
+            return None
+        connections = raw.get("connections")
+        settings = raw.get("settings")
+        return {
+            "name": str(raw.get("name") or ""),
+            "nodes": nodes,
+            "connections": connections if isinstance(connections, dict) else {},
+            "settings": settings if isinstance(settings, dict) else {},
+        }
+
+    async def _snapshot_definition(
+        self, workflow_id: str, raw: dict, source: str
+    ) -> None:
+        definition = self._definition_of(raw)
+        if definition is None:
+            return
+        canonical = json.dumps(
+            definition, sort_keys=True, ensure_ascii=False, default=str
+        )
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        latest = await self.snapshots.find_one(
+            {"workflow_id": workflow_id}, sort=[("created_at", -1)]
+        )
+        if latest is not None and latest.get("content_hash") == digest:
+            return  # unchanged since the newest snapshot — nothing to add
+        await self.snapshots.insert_one(
+            {
+                "_id": uuid.uuid4().hex,
+                "workflow_id": workflow_id,
+                "name": definition["name"],
+                "node_count": len(definition["nodes"]),
+                "definition": definition,
+                "content_hash": digest,
+                "source": source,
+                "created_at": _utcnow(),
+            }
+        )
+        stale = [
+            doc["_id"]
+            async for doc in self.snapshots.find(
+                {"workflow_id": workflow_id}, {"_id": 1}
+            )
+            .sort("created_at", -1)
+            .skip(SNAPSHOT_KEEP)
+        ]
+        if stale:
+            await self.snapshots.delete_many({"_id": {"$in": stale}})
+
+    async def _with_snapshot_info(self, item: N8nWorkflowOut) -> N8nWorkflowOut:
+        count = await self.snapshots.count_documents({"workflow_id": item.id})
+        item.snapshot_count = count
+        item.has_snapshot = count > 0
+        return item
+
+    async def _enrich_snapshot_info(
+        self, items: list[N8nWorkflowOut]
+    ) -> list[N8nWorkflowOut]:
+        counts: dict[str, int] = {}
+        async for doc in self.snapshots.find({}, {"workflow_id": 1}):
+            counts[doc["workflow_id"]] = counts.get(doc["workflow_id"], 0) + 1
+        for item in items:
+            item.snapshot_count = counts.get(item.id, 0)
+            item.has_snapshot = item.snapshot_count > 0
+        return items
+
+    @staticmethod
+    def _snapshot_out(doc: dict) -> N8nWorkflowSnapshotOut:
+        return N8nWorkflowSnapshotOut(
+            id=str(doc["_id"]),
+            workflow_id=doc["workflow_id"],
+            name=doc.get("name", ""),
+            node_count=doc.get("node_count") or 0,
+            content_hash=doc.get("content_hash", ""),
+            source=doc.get("source", "sync"),
+            created_at=doc["created_at"],
+        )
+
+    async def list_snapshots(
+        self, workflow_id: str
+    ) -> list[N8nWorkflowSnapshotOut]:
+        cursor = (
+            self.snapshots.find({"workflow_id": workflow_id})
+            .sort("created_at", -1)
+            .limit(50)
+        )
+        return [self._snapshot_out(doc) async for doc in cursor]
 
     async def get_status(self) -> N8nStatusOut:
         checked_at = _utcnow()
@@ -580,6 +690,7 @@ class N8nPlatformService:
             for raw in data["data"]:
                 if isinstance(raw, dict) and raw.get("id") is not None:
                     items.append(parse_workflow(raw, base))
+                    await self._snapshot_definition(str(raw["id"]), raw, "sync")
             cursor = data.get("nextCursor")
             if not cursor:
                 break
@@ -593,12 +704,12 @@ class N8nPlatformService:
 
     async def list_workflows(self) -> N8nWorkflowListOut:
         try:
-            items = await self.sync_workflows()
+            items = await self._enrich_snapshot_info(await self.sync_workflows())
             return N8nWorkflowListOut(
                 items=items, total=len(items), synced_at=_utcnow(), sync_error=None
             )
         except ProviderError as err:
-            cached = await self._cached()
+            cached = await self._enrich_snapshot_info(await self._cached())
             synced_at = None
             newest = await self.workflows.find_one({}, sort=[("synced_at", -1)])
             if newest is not None:
@@ -698,7 +809,9 @@ class N8nPlatformService:
             ):
                 raise ProviderError("n8n_workflow_invalid")
 
-    async def create_workflow(self, payload_in: N8nWorkflowCreateIn) -> N8nWorkflowOut:
+    async def create_workflow(
+        self, payload_in: N8nWorkflowCreateIn, *, snapshot_source: str = "create"
+    ) -> N8nWorkflowOut:
         """Create a workflow in n8n from a user-supplied definition.
 
         The definition is validated structurally (every node needs a name
@@ -727,9 +840,34 @@ class N8nPlatformService:
             raise ProviderError("n8n_api_failed")
         item = parse_workflow(data, self.base_url)
         await self._store(item, _utcnow())
-        return item
+        await self._snapshot_definition(item.id, data, snapshot_source)
+        return await self._with_snapshot_info(item)
 
-    async def replace_workflow(self, workflow_id: str, payload_in: N8nWorkflowCreateIn) -> N8nWorkflowOut:
+    async def duplicate_workflow(self, workflow_id: str) -> N8nWorkflowOut:
+        """Duplicate a workflow: read the freshest definition live from
+        n8n (the export path) and create a copy named "<name> (bản sao)".
+        n8n creates the copy inactive, like every create."""
+        raw = await self._get_raw_workflow(workflow_id)
+        definition = self._definition_of(raw)
+        if definition is None:
+            raise ProviderError("n8n_workflow_invalid")
+        base_name = definition["name"] or workflow_id
+        suffix = " (bản sao)"
+        payload = N8nWorkflowCreateIn(
+            name=(base_name[: 200 - len(suffix)] + suffix),
+            nodes=definition["nodes"],
+            connections=definition["connections"],
+            settings=definition["settings"],
+        )
+        return await self.create_workflow(payload, snapshot_source="duplicate")
+
+    async def replace_workflow(
+        self,
+        workflow_id: str,
+        payload_in: N8nWorkflowCreateIn,
+        *,
+        snapshot_source: str = "update",
+    ) -> N8nWorkflowOut:
         """Replace a workflow's definition in n8n (used by template sync
         updates). Same PATCH path as parameter editing; only the fields the
         n8n update API accepts are sent."""
@@ -754,7 +892,36 @@ class N8nPlatformService:
             raise ProviderError("n8n_api_failed")
         item = parse_workflow(data, self.base_url)
         await self._store(item, _utcnow())
-        return item
+        await self._snapshot_definition(item.id, data, snapshot_source)
+        return await self._with_snapshot_info(item)
+
+    async def restore_snapshot(
+        self, workflow_id: str, snapshot_id: str
+    ) -> N8nWorkflowOut:
+        """Write a stored snapshot's definition back onto the same
+        workflow in n8n. The workflow must still exist there — a missing
+        workflow is a clear error, never a silent re-create. The live
+        definition is snapshotted before the overwrite, so restoring is
+        itself reversible, and the restore lands as a new snapshot."""
+        doc = await self.snapshots.find_one(
+            {"_id": snapshot_id, "workflow_id": workflow_id}
+        )
+        if doc is None:
+            raise ProviderError("n8n_snapshot_not_found")
+        # Raises n8n_workflow_not_found when the workflow is gone.
+        current = await self._get_raw_workflow(workflow_id)
+        await self._snapshot_definition(workflow_id, current, "sync")
+        definition = doc["definition"]
+        payload = N8nWorkflowCreateIn(
+            name=definition.get("name") or workflow_id,
+            nodes=definition.get("nodes") or [],
+            connections=definition.get("connections") or {},
+            settings=definition.get("settings") or {},
+        )
+        self._validate_nodes(payload.nodes)
+        return await self.replace_workflow(
+            workflow_id, payload, snapshot_source="restore"
+        )
 
     async def delete_workflow(self, workflow_id: str) -> None:
         """Delete a workflow from n8n. A 404 counts as success: the goal

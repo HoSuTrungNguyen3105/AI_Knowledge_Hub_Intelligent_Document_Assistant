@@ -95,6 +95,7 @@ ERRORS = {
         "The workflow has no webhook trigger, so it cannot be started from MindFlow yet.",
     ),
     "n8n_run_not_found": (404, "That n8n run does not exist."),
+    "n8n_snapshot_not_found": (404, "That workflow snapshot does not exist."),
     "service_key_not_found": (404, "That service key does not exist."),
     "service_key_invalid": (
         422,

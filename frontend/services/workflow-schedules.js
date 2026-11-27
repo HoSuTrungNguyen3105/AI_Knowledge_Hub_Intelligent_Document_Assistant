@@ -44,6 +44,10 @@ export const workflowSchedulesService = {
     const { data } = await api.post(`${path}/preview`, payload, { signal });
     return data;
   },
+  async getHealth(signal) {
+    const { data } = await api.get(`${path}/health`, { signal });
+    return data;
+  },
 };
 
 const SCHEDULE_ERRORS = {

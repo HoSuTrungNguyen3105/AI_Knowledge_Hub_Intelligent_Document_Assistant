@@ -56,6 +56,8 @@ export function TemplateLibrary() {
   const [selected, setSelected] = useState({});
   const [syncBusy, setSyncBusy] = useState("");
   const [syncNote, setSyncNote] = useState("");
+  const [installWarnings, setInstallWarnings] = useState([]);
+  const bindingsRef = useRef(null);
   const [versions, setVersions] = useState([]);
   const [diffResult, setDiffResult] = useState(null);
   const [versionBusy, setVersionBusy] = useState("");
@@ -194,6 +196,16 @@ export function TemplateLibrary() {
       setSyncNote(
         `Đã áp dụng bản tùy chỉnh "${installed.template_name}" vào tài khoản — workflow đang tắt trong n8n, mở tab n8n Platform để cấu hình và Bật.`,
       );
+      setInstallWarnings(
+        (installed.missing_credential_types || []).length
+          ? [
+              {
+                name: installed.template_name,
+                missing: installed.missing_credential_types,
+              },
+            ]
+          : [],
+      );
       setAssistantAnswer(null);
       loadSync();
     } catch (err) {
@@ -300,6 +312,28 @@ export function TemplateLibrary() {
   const installedByTemplate = {};
   for (const item of mine) installedByTemplate[item.template_id] = item;
 
+  // Install results carry the credential types the user has not bound;
+  // surface them as a warning instead of letting the install look fully
+  // ready when some nodes still point at the author's credentials.
+  function noteInstallWarnings(results) {
+    const warnings = (results || [])
+      .filter(
+        (r) => r.status !== "failed" && (r.missing_credential_types || []).length,
+      )
+      .map((r) => ({
+        name: r.template_name || r.template_id,
+        missing: r.missing_credential_types,
+      }));
+    setInstallWarnings(warnings);
+  }
+
+  function goToBindings() {
+    setBindingsOpen(true);
+    requestAnimationFrame(() => {
+      bindingsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
   async function installSelected() {
     const ids = Object.keys(selected).filter((id) => selected[id]);
     if (!ids.length) return;
@@ -318,6 +352,7 @@ export function TemplateLibrary() {
             ? ` ${failed.length} template cài lỗi: ${failed.map((r) => `${r.template_name || r.template_id} (${r.error || "?"})`).join(", ")}.`
             : ""),
       );
+      noteInstallWarnings(data.results);
       setSelected({});
       loadSync();
     } catch (err) {
@@ -342,6 +377,7 @@ export function TemplateLibrary() {
         );
       } else {
         setSyncNote(`Đã cài "${template.name}" vào n8n (đang tắt).`);
+        noteInstallWarnings(data.results);
         loadSync();
       }
     } catch (err) {
@@ -355,8 +391,13 @@ export function TemplateLibrary() {
     setSyncBusy(item.id);
     setError("");
     try {
-      await workflowTemplatesService.updateMine(item.id);
+      const updated = await workflowTemplatesService.updateMine(item.id);
       setSyncNote(`Đã cập nhật "${item.template_name}" lên bản mới nhất.`);
+      setInstallWarnings(
+        (updated?.missing_credential_types || []).length
+          ? [{ name: item.template_name, missing: updated.missing_credential_types }]
+          : [],
+      );
       loadSync();
     } catch (err) {
       setError(getWorkflowTemplatesError(err, "Cập nhật thất bại. Hãy thử lại."));
@@ -530,6 +571,26 @@ export function TemplateLibrary() {
           </p>
         ) : null}
         {syncNote ? <p className="fx-run-meta">{syncNote}</p> : null}
+        {installWarnings.length ? (
+          <div className="fx-alert" role="alert">
+            <p>
+              <AlertTriangle size={15} /> Một số workflow vừa cài còn thiếu
+              credential — các node này vẫn đang trỏ tới credential của tác giả
+              template (không có trong n8n của bạn) nên workflow chưa chạy được:
+            </p>
+            <ul>
+              {installWarnings.map((warning) => (
+                <li key={warning.name}>
+                  <strong>{warning.name}</strong>: thiếu{" "}
+                  {warning.missing.join(", ")}
+                </li>
+              ))}
+            </ul>
+            <button type="button" className="fx-btn" onClick={goToBindings}>
+              <KeyRound size={15} /> Đi gán credential
+            </button>
+          </div>
+        ) : null}
         <div className="fx-actions">
           <button
             type="button"
@@ -559,7 +620,11 @@ export function TemplateLibrary() {
             {translating ? "Đang dịch tên…" : "Dịch tên tiếng Việt"}
           </button>
         </div>
-        {bindingsOpen ? <CredentialBindingsPanel /> : null}
+        {bindingsOpen ? (
+          <div ref={bindingsRef}>
+            <CredentialBindingsPanel />
+          </div>
+        ) : null}
         {syncOpen ? (
           <div className="n8n-node">
             <h3>Chọn template muốn thêm vào tài khoản</h3>
@@ -639,6 +704,9 @@ export function TemplateLibrary() {
                   <strong>{item.template_name}</strong> · {item.category} · v
                   {item.installed_version}
                   {item.update_available ? ` · Có bản mới v${item.latest_version}` : ""}
+                  {(item.missing_credential_types || []).length
+                    ? ` · Thiếu credential: ${item.missing_credential_types.join(", ")}`
+                    : ""}
                 </span>
                 <span className="fx-actions">
                   {item.update_available ? (

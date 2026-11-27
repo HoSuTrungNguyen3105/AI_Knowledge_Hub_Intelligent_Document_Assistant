@@ -59,6 +59,7 @@ from app.services.ai.chat_types import ChatRequest, ChatTurn
 from app.services.credential_bindings import (
     CredentialBindingService,
     apply_bindings_to_nodes,
+    credential_coverage,
 )
 from app.services.n8n_platform import N8nPlatformService
 from app.services.template_assistant import TemplateAssistantService
@@ -1021,7 +1022,11 @@ class WorkflowSyncService:
         return self.db[TEMPLATES_COLLECTION]
 
     @staticmethod
-    def _install_out(doc: dict, template: dict | None) -> UserWorkflowOut:
+    def _install_out(
+        doc: dict,
+        template: dict | None,
+        missing_credential_types: list[str] | None = None,
+    ) -> UserWorkflowOut:
         latest = int(template.get("version", doc.get("installed_version", 1))) if template else int(doc.get("installed_version", 1))
         installed = int(doc.get("installed_version", 1))
         return UserWorkflowOut(
@@ -1036,16 +1041,26 @@ class WorkflowSyncService:
             update_available=latest > installed,
             installed_at=doc.get("installed_at"),
             updated_at=doc.get("updated_at"),
+            missing_credential_types=missing_credential_types or [],
         )
 
     async def list_mine(self, user_id: str) -> list[UserWorkflowOut]:
+        bindings = await self.bindings.bindings_map(user_id)
         out = []
         cursor = self.installs.find({"user_id": user_id}).sort("installed_at", -1)
         async for doc in cursor:
             template = await self.templates.find_one(
                 {"_id": doc["template_id"]}, {"workflow_json": 0}
             )
-            out.append(self._install_out(doc, template))
+            missing: list[str] = []
+            if template is not None and not doc.get("customized"):
+                # The template's extracted credential types minus the
+                # user's bindings: those nodes still carry the author's
+                # credential ids in the user's n8n. Customized installs
+                # are skipped — their definition lives only in n8n.
+                needed = {str(t) for t in template.get("credential_types") or []}
+                missing = sorted(needed - set(bindings))
+            out.append(self._install_out(doc, template, missing))
         return out
 
     async def sync_candidates(self, user_id: str) -> SyncCandidatesOut:
@@ -1070,6 +1085,17 @@ class WorkflowSyncService:
             or workflow.get("name")
             or "Workflow template"
         )
+
+    @staticmethod
+    def _coverage(
+        template: dict, bindings: dict | None
+    ) -> tuple[list[str], list[str]]:
+        """(rewritten, missing) credential types for the template's
+        definition against the user's bindings — reported on install
+        results so an install never silently keeps author credential
+        ids the user's n8n does not have."""
+        workflow = template.get("workflow_json") or {}
+        return credential_coverage(workflow.get("nodes") or [], bindings or {})
 
     @staticmethod
     def _create_payload(
@@ -1111,6 +1137,7 @@ class WorkflowSyncService:
                     )
                 )
                 continue
+            rewritten, missing = self._coverage(template, bindings)
             existing = await self.installs.find_one(
                 {"user_id": user_id, "template_id": template_id}
             )
@@ -1121,6 +1148,8 @@ class WorkflowSyncService:
                         template_name=name,
                         status="already_installed",
                         n8n_workflow_id=existing.get("n8n_workflow_id"),
+                        missing_credential_types=missing,
+                        rewritten_credential_types=rewritten,
                     )
                 )
                 continue
@@ -1156,6 +1185,8 @@ class WorkflowSyncService:
                     template_name=name,
                     status="installed",
                     n8n_workflow_id=created.id,
+                    missing_credential_types=missing,
+                    rewritten_credential_types=rewritten,
                 )
             )
         return InstallResultOut(results=results)
@@ -1188,6 +1219,7 @@ class WorkflowSyncService:
         if not isinstance(settings, dict):
             settings = {}
         bindings = await self.bindings.bindings_map(user_id)
+        _rewritten, missing = credential_coverage(nodes, bindings)
         if bindings:
             nodes, _applied = apply_bindings_to_nodes(nodes, bindings)
         resolved_name = (name or f"{template.get('name', 'Workflow')} (tùy chỉnh)")[:200]
@@ -1211,7 +1243,7 @@ class WorkflowSyncService:
             "updated_at": now,
         }
         await self.installs.insert_one(doc)
-        return self._install_out(doc, template)
+        return self._install_out(doc, template, missing)
 
     async def _get_install(self, user_id: str, install_id: str) -> dict:
         doc = await self.installs.find_one({"_id": install_id, "user_id": user_id})
@@ -1225,6 +1257,7 @@ class WorkflowSyncService:
         if template is None:
             raise ProviderError("template_not_found")
         bindings = await self.bindings.bindings_map(user_id)
+        _rewritten, missing = self._coverage(template, bindings)
         await self.platform.replace_workflow(
             doc["n8n_workflow_id"], self._create_payload(template, bindings)
         )
@@ -1239,7 +1272,7 @@ class WorkflowSyncService:
             },
         )
         updated = await self.installs.find_one({"_id": install_id})
-        return self._install_out(updated, template)
+        return self._install_out(updated, template, missing)
 
     async def remove_install(self, user_id: str, install_id: str) -> None:
         doc = await self._get_install(user_id, install_id)

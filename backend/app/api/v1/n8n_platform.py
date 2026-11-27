@@ -16,6 +16,7 @@ from app.schemas.n8n_platform import (
     N8nWorkflowExportOut,
     N8nWorkflowListOut,
     N8nWorkflowOut,
+    N8nWorkflowSnapshotOut,
     N8nWorkflowValidateIn,
     N8nWorkflowValidateOut,
 )
@@ -137,6 +138,61 @@ async def export_n8n_workflow(
 ) -> N8nWorkflowExportOut:
     """The workflow definition read live from n8n, for download/backup."""
     return await N8nPlatformService(db, settings, http).export_workflow(workflow_id)
+
+
+@router.post(
+    "/workflows/{workflow_id}/duplicate",
+    response_model=N8nWorkflowOut,
+    status_code=201,
+)
+async def duplicate_n8n_workflow(
+    workflow_id: str,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> N8nWorkflowOut:
+    """Duplicate a workflow in n8n from its freshest live definition.
+    The copy is created inactive with " (bản sao)" appended to the name."""
+    return await N8nPlatformService(db, settings, http).duplicate_workflow(
+        workflow_id
+    )
+
+
+@router.get(
+    "/workflows/{workflow_id}/snapshots",
+    response_model=list[N8nWorkflowSnapshotOut],
+)
+async def list_n8n_workflow_snapshots(
+    workflow_id: str,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> list[N8nWorkflowSnapshotOut]:
+    """Definition snapshots MindFlow keeps for this workflow, newest
+    first. Read from the local store only — works while n8n is off."""
+    return await N8nPlatformService(db, settings, http).list_snapshots(workflow_id)
+
+
+@router.post(
+    "/workflows/{workflow_id}/snapshots/{snapshot_id}/restore",
+    response_model=N8nWorkflowOut,
+)
+async def restore_n8n_workflow_snapshot(
+    workflow_id: str,
+    snapshot_id: str,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> N8nWorkflowOut:
+    """Write a stored snapshot's definition back onto the same workflow
+    in n8n. Fails clearly when the snapshot is unknown or the workflow
+    no longer exists in n8n — it never creates a replacement."""
+    return await N8nPlatformService(db, settings, http).restore_snapshot(
+        workflow_id, snapshot_id
+    )
 
 
 @router.get("/stats", response_model=N8nStatsOut)

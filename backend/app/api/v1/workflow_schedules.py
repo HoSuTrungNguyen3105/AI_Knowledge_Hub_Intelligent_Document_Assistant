@@ -5,10 +5,12 @@ from fastapi import APIRouter, Depends, Header, Query, Response
 
 from app.api.dependencies import AppSettings, CurrentUser, Database
 from app.api.v1.n8n_factory import N8nHTTPDep
+from app.api.v1.n8n_platform import N8nApiHTTPDep
 from app.schemas.workflow_schedules import (
     ScheduleCreate,
     ScheduleExecutionListOut,
     ScheduleExecutionOut,
+    ScheduleHealthOut,
     ScheduleListOut,
     ScheduleNextRunsOut,
     ScheduleOut,
@@ -18,6 +20,7 @@ from app.schemas.workflow_schedules import (
     ScheduleTickOut,
 )
 from app.services.ai.base_provider import ProviderError
+from app.services.n8n_platform import N8nPlatformService
 from app.services.schedule_runner import ScheduleRunner
 from app.services.workflow_schedules import WorkflowScheduleService
 
@@ -57,9 +60,12 @@ async def preview_schedule(
 
 
 def schedule_runner(
-    db: Database, settings: AppSettings, http: N8nHTTPDep
+    db: Database,
+    settings: AppSettings,
+    http: N8nHTTPDep,
+    platform_http: N8nApiHTTPDep,
 ) -> ScheduleRunner:
-    return ScheduleRunner(db, settings, http)
+    return ScheduleRunner(db, settings, http, platform_http)
 
 
 Runner = Annotated[ScheduleRunner, Depends(schedule_runner)]
@@ -78,7 +84,23 @@ async def tick_schedules(
         raise ProviderError("scheduler_tick_disabled")
     if x_scheduler_secret != settings.scheduler_tick_secret:
         raise ProviderError("scheduler_tick_unauthorized")
-    return await runner.tick()
+    return await runner.tick(source="external")
+
+
+@router.get("/health", response_model=ScheduleHealthOut)
+async def schedule_health(
+    user: CurrentUser,
+    service: Service,
+    db: Database,
+    settings: AppSettings,
+    http: N8nApiHTTPDep,
+) -> ScheduleHealthOut:
+    """Health of the firing chain for the Lịch chạy tab: whether the
+    external tick is configured (boolean only — the secret itself never
+    leaves the server), when the last tick was recorded, and whether
+    n8n is currently reachable."""
+    platform = N8nPlatformService(db, settings, http)
+    return await service.health(settings, platform)
 
 
 @router.get("/{schedule_id}", response_model=ScheduleOut)
