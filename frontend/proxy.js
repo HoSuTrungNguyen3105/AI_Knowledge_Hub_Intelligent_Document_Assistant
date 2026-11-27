@@ -7,14 +7,14 @@ import { nudgeBackend } from "./utils/wake-backend";
 // so when the frontend process stays warm while the backend falls
 // asleep again (the common case on Render free), nothing server-side
 // used to start the backend waking until the browser's own calls
-// arrived. This middleware closes that gap: every page request kicks
+// arrived. This proxy closes that gap: every page request kicks
 // a throttled, fire-and-forget ping sequence (see wake-backend.js),
 // so the backend starts waking the moment a visitor shows up.
 //
 // The matcher limits this to page/document requests: API calls (they
 // wake the backend by themselves through the rewrite), Next static
 // assets and any file with an extension never reach here.
-export function middleware(request, event) {
+export function proxy(request, event) {
   if (request.method === "GET") {
     const pending = nudgeBackend();
     if (pending && event && typeof event.waitUntil === "function") {
