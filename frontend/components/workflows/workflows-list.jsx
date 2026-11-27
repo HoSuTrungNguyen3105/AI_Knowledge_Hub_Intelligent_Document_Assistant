@@ -8,6 +8,13 @@ import { teamsService, workflowsService } from "../../services/workflows";
 import { WorkflowPlanner } from "./workflow-planner";
 import { DESIGN_PALETTES, DESIGN_STYLES, OUTPUT_TYPES, WORKFLOW_STATUS, WORKFLOW_TITLE_MAX, buildDesignBrief, getWorkflowError, validateWorkflowForm } from "../../utils/workflows";
 
+// Tạo project/workflow từ đầu đang TẠM ẨN (Nguyên chốt 2026-11-27):
+// trọng tâm chuyển sang trang Điều phối Project (/collab/studio), nơi
+// import project có sẵn và nhiều AI cùng sửa trực tiếp trên source.
+// Chỉ ẩn giao diện — không xoá code hay dữ liệu; bật lại bằng cách
+// đổi hằng này thành true.
+const CREATE_WORKFLOW_ENABLED = false;
+
 export function WorkflowsList() {
   const router = useRouter();
   const [teams, setTeams] = useState([]);
@@ -80,8 +87,13 @@ export function WorkflowsList() {
     <div className="wf-header"><div><h1><Sparkles size={26} /> AI Agent Studio</h1>
       <p className="muted">Multi-Agent Collaboration Workspace — giao mục tiêu chung cho cả nhóm Agent.</p></div></div>
     {error && <p className="wf-error" role="alert">{error}</p>}
-    <WorkflowPlanner />
+    {CREATE_WORKFLOW_ENABLED && <WorkflowPlanner />}
     <div className="wf-card">
+      {!CREATE_WORKFLOW_ENABLED ? <>
+        <h2><Sparkles size={17} /> Tạo workflow mới đang tạm ẩn</h2>
+        <p className="muted" style={{ marginTop: 10 }}>Phần tạo project từ đầu tạm gác. Các workflow đã tạo vẫn nằm ở danh sách bên dưới và mở workspace bình thường.</p>
+        <p style={{ marginTop: 10 }}><Link className="wf-btn primary" href="/collab/studio"><GitBranch size={15} /> Sang Điều phối Project — import project có sẵn, nhiều AI cùng sửa</Link></p>
+      </> : <>
       <h2><Plus size={17} /> Tạo workflow mới</h2>
       {teamsLoading ? <p className="wf-empty">Đang tải…</p> : teamsError ? (
         <div><p className="wf-error" role="alert">{teamsError}</p>
@@ -133,6 +145,7 @@ export function WorkflowsList() {
           )}
           <div><button className="wf-btn primary" type="submit" disabled={busy}><Play size={16} /> Tạo workflow</button></div>
         </form>)}
+      </>}
     </div>
     <div className="wf-list">
       {workflowsError && <div className="wf-card"><p className="wf-error" role="alert">{workflowsError}</p>
