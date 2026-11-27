@@ -16,6 +16,10 @@ from app.schemas.workflows import (
     PlanApplyOut,
     PlanOut,
     PlanRequest,
+    RoleCreate,
+    RoleList,
+    RoleOut,
+    RolePatch,
     TaskList,
     TeamCreate,
     TeamList,
@@ -37,6 +41,39 @@ AgentHTTPDep = Annotated[ChatHTTP, Depends(agent_http)]
 
 def _service(db, settings, http) -> WorkflowService:
     return WorkflowService(db, settings, http)
+
+
+# --- Role catalog --------------------------------------------------------------
+@router.get("/ai/roles", response_model=RoleList)
+async def list_roles(user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep):
+    return await _service(db, settings, http).list_roles(user.id)
+
+
+@router.post("/ai/roles", response_model=RoleOut, status_code=201)
+async def create_role(
+    payload: RoleCreate, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    return await _service(db, settings, http).create_role(user.id, payload)
+
+
+@router.patch("/ai/roles/{slug}", response_model=RoleOut)
+async def patch_role(
+    slug: str,
+    payload: RolePatch,
+    user: CurrentUser,
+    db: Database,
+    settings: AppSettings,
+    http: AgentHTTPDep,
+):
+    return await _service(db, settings, http).patch_role(user.id, slug, payload)
+
+
+@router.delete("/ai/roles/{slug}", status_code=204)
+async def delete_role(
+    slug: str, user: CurrentUser, db: Database, settings: AppSettings, http: AgentHTTPDep
+):
+    await _service(db, settings, http).delete_role(user.id, slug)
+    return Response(status_code=204)
 
 
 # --- Teams -------------------------------------------------------------------

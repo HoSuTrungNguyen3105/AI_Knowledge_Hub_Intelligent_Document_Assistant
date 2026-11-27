@@ -505,3 +505,77 @@ class PlanApplyIn(BaseModel):
 class PlanApplyOut(BaseModel):
     team: TeamOut
     workflow: WorkflowOut
+
+
+# --- Role catalog -----------------------------------------------------------
+# The Chức danh (roles) page manages the catalog that team assignment picks
+# from: the built-in system roles below plus the user's own roles, stored
+# in the `agent_roles` collection. A role's slug is fixed at creation time
+# (it is the value stored on team members); renaming only changes the
+# display name, so existing teams keep pointing at the same role.
+SYSTEM_ROLE_CATALOG: list[tuple[str, str, str]] = [
+    ("leader", "Leader", "Dẫn dắt nhóm: chia việc, điều phối và chốt kết quả cuối cùng."),
+    ("coordinator", "Coordinator", "Điều phối viên: theo dõi tiến độ và kết nối các thành viên."),
+    ("planner", "Planner", "Lên kế hoạch: phân tích yêu cầu, chia giai đoạn và thứ tự thực hiện."),
+    ("researcher", "Researcher", "Nghiên cứu: tìm kiếm, đối chiếu và tổng hợp thông tin."),
+    ("architect", "Architect", "Kiến trúc: thiết kế cấu trúc hệ thống và các quyết định kỹ thuật lớn."),
+    ("developer", "Developer", "Lập trình: viết và sửa code theo phân công."),
+    ("tester", "Tester", "Kiểm thử: tìm lỗi, kiểm chứng kết quả và đề xuất cách sửa."),
+    ("reviewer", "Reviewer", "Rà soát: đánh giá chất lượng, góp ý và duyệt kết quả."),
+    ("designer", "Designer", "Thiết kế: giao diện, trải nghiệm và hình thức trình bày."),
+    ("evaluator", "Evaluator", "Chấm điểm: đánh giá đầu ra theo tiêu chí và xếp hạng."),
+    ("member", "Member", "Thành viên chung: tham gia thảo luận và thực hiện việc được giao."),
+]
+
+
+class RoleOut(BaseModel):
+    slug: str
+    name: str
+    description: str | None = None
+    is_system: bool = False
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class RoleList(BaseModel):
+    roles: list[RoleOut]
+
+
+class RoleCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # 40 matches _normalize_role's cap, so an over-long name is a clean
+    # 422 from validation instead of a ValueError escaping the service.
+    name: str = Field(min_length=1, max_length=40)
+    description: str | None = Field(default=None, max_length=500)
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, value: str) -> str:
+        return _strip(value)
+
+    @field_validator("description")
+    @classmethod
+    def valid_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
+class RolePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=40)
+    description: str | None = Field(default=None, max_length=500)
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, value: str | None) -> str | None:
+        return _strip(value) if value is not None else None
+
+    @field_validator("description")
+    @classmethod
+    def valid_description(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None

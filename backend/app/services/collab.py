@@ -902,17 +902,35 @@ class CollabService:
                 stop_reason = "agent_concluded"
                 break
         final_id = None
-        if moderator is not None and turns > 0 and last_speaker != moderator.id:
+        synthesizer = moderator
+        if synthesizer is None and turns > 0:
+            # Rooms created without a Moderator still deserve a conclusion:
+            # the lineup's Leader/coordinator (per the frozen snapshot when
+            # there is one), otherwise the first member who did not speak
+            # last, delivers the synthesis — instead of the run ending bare
+            # at the turn limit with final_message_id null.
+            ordered = []
+            for candidate in members:
+                snap = self._snapshot_member(room, candidate.id) or {}
+                if (snap.get("role") or "").lower() in ("leader", "coordinator"):
+                    ordered.append(candidate)
+            ordered.extend(members)
+            synthesizer = next(
+                (c for c in ordered if c.id != last_speaker), None
+            ) or (ordered[0] if ordered else None)
+        if synthesizer is not None and turns > 0 and (
+            last_speaker != synthesizer.id or len(members) == 1
+        ):
             reply = await self._agent_turn(
                 user_id,
                 room_id,
-                moderator,
+                synthesizer,
                 run_id=run["_id"],
                 assigned_by="moderator",
                 instruction=SUMMARY_INSTRUCTION,
                 reply_link=user_doc["_id"],
                 is_summary=True,
-                member=self._snapshot_member(room, moderator.id),
+                member=self._snapshot_member(room, synthesizer.id),
             )
             replies.append(reply)
             if reply.get("status") == "done":
