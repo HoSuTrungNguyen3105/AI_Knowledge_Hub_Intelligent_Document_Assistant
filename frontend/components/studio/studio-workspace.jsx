@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle, ArrowDown, ArrowUp, Bot, CheckCircle2, Download, File,
-  FilePlus2, Folder, LoaderCircle, Play, Plus, RefreshCw, Save, Trash2,
-  Upload, X, XCircle,
+  FilePlus2, Folder, FolderOpen, FolderSync, HardDrive, Link2, LoaderCircle,
+  Play, Plus, RefreshCw, Save, Trash2, Unlink, Upload, X, XCircle,
 } from "lucide-react";
 import { agentsService } from "../../services/agents";
 import { studioProjectsService } from "../../services/studio-projects";
@@ -17,6 +17,98 @@ const timeLabel = (iso) =>
   });
 
 const ACTION_LABEL = { created: "tạo", updated: "sửa", deleted: "xoá" };
+
+// --- Local folder linking (File System Access API) ----------------------
+// The project lives on the server so Agents can edit it; linking a local
+// folder lets the page write the current files back into that folder on
+// the user's own machine (Chrome/Edge on desktop). Directory handles are
+// kept in IndexedDB per project; the browser still owns the permission,
+// so a write only happens automatically while permission is "granted".
+const SKIP_DIRS = new Set(["node_modules", ".git", "__MACOSX", ".next", ".venv", "__pycache__"]);
+const MAX_IMPORT_FILES = 200;
+const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("studio-local-links", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("handles");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function idbSet(key, value) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("handles", "readwrite");
+    tx.objectStore("handles").put(value, key);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function idbGet(key) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction("handles").objectStore("handles").get(key);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function idbDel(key) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("handles", "readwrite");
+    tx.objectStore("handles").delete(key);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// Read every editable text file under a directory handle (or a
+// webkitdirectory File list) into [{path, content}], skipping junk
+// directories and binaries, enforcing the backend's project limits.
+async function collectFolderFiles(entries) {
+  const files = [];
+  let total = 0;
+  for (const { path, file } of entries) {
+    if (files.length >= MAX_IMPORT_FILES) break;
+    if (file.size > 1024 * 1024) continue;
+    const content = await file.text();
+    if (content.includes("\u0000")) continue; // binary
+    total += new Blob([content]).size;
+    if (total > MAX_IMPORT_BYTES) {
+      throw new Error(`Thư mục vượt giới hạn 5 MB (${files.length} file đã đọc). Bỏ bớt thư mục nặng (node_modules, ảnh…) rồi thử lại.`);
+    }
+    files.push({ path, content });
+  }
+  return files;
+}
+
+async function walkHandle(handle, prefix, out) {
+  for await (const entry of handle.values()) {
+    if (entry.kind === "directory") {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      await walkHandle(entry, prefix ? `${prefix}/${entry.name}` : entry.name, out);
+    } else {
+      out.push({ path: prefix ? `${prefix}/${entry.name}` : entry.name, file: await entry.getFile() });
+    }
+  }
+  return out;
+}
+
+async function writeFileToHandle(rootHandle, path, content) {
+  const parts = path.split("/");
+  let dir = rootHandle;
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    dir = await dir.getDirectoryHandle(parts[i], { create: true });
+  }
+  const fileHandle = await dir.getFileHandle(parts[parts.length - 1], { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(content);
+  await writable.close();
+}
 
 // Flat path list -> nested tree nodes for the file explorer.
 function buildTree(files) {
@@ -134,6 +226,12 @@ export function StudioWorkspace() {
   const [newFilePath, setNewFilePath] = useState(null); // string when the add-file row is open
   const [confirmDelete, setConfirmDelete] = useState(null); // "project" | "file"
   const zipInputRef = useRef(null);
+  const folderInputRef = useRef(null);
+  const handleRef = useRef(null); // FileSystemDirectoryHandle, per project
+  const [folderName, setFolderName] = useState("");
+  const [folderGranted, setFolderGranted] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const canLinkFolder = typeof window !== "undefined" && !!window.showDirectoryPicker;
 
   const project = useMemo(
     () => projects.find((p) => p.id === projectId) || null,
@@ -197,30 +295,90 @@ export function StudioWorkspace() {
     setContents({});
     setDraft("");
     setSelectedAgents([]);
+    // Clear the previous project's data immediately — otherwise its
+    // file tree shows briefly under the new project's title while the
+    // fresh data is still loading (seen in the 2026-11-27 live test).
+    setFiles([]);
+    setRuns([]);
+    setChanges([]);
     loadProjectData(projectId).catch((err) => setError(getErrorMessage(err)));
   }, [projectId, loadProjectData]);
 
+  // Restore this project's linked local folder (handle kept in
+  // IndexedDB; the browser may still require a fresh permission grant).
+  useEffect(() => {
+    let cancelled = false;
+    handleRef.current = null;
+    setFolderName("");
+    setFolderGranted(false);
+    if (!projectId || !window.showDirectoryPicker) return undefined;
+    (async () => {
+      try {
+        const handle = await idbGet(projectId);
+        if (cancelled || !handle) return;
+        handleRef.current = handle;
+        setFolderName(handle.name || "");
+        const permission = handle.queryPermission
+          ? await handle.queryPermission({ mode: "readwrite" })
+          : "granted";
+        if (!cancelled) setFolderGranted(permission === "granted");
+      } catch { /* linking is optional */ }
+    })();
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  const writeProjectToFolder = useCallback(async (id) => {
+    const handle = handleRef.current;
+    if (!handle || !id) return 0;
+    try {
+      const permission = handle.queryPermission
+        ? await handle.queryPermission({ mode: "readwrite" })
+        : "granted";
+      if (permission !== "granted") return 0;
+      const metas = await studioProjectsService.listFiles(id);
+      let written = 0;
+      for (const meta of metas) {
+        const file = await studioProjectsService.getFile(id, meta.path);
+        await writeFileToHandle(handle, meta.path, file.content);
+        written += 1;
+      }
+      return written;
+    } catch {
+      return 0;
+    }
+  }, []);
+
+  const linkHandle = useCallback(async (forProjectId, handle) => {
+    handleRef.current = handle;
+    setFolderName(handle.name || "");
+    try { await idbSet(forProjectId, handle); } catch { /* non-fatal */ }
+    const permission = handle.queryPermission
+      ? await handle.queryPermission({ mode: "readwrite" }).catch(() => "prompt")
+      : "granted";
+    setFolderGranted(permission === "granted");
+  }, []);
+
   const openFile = useCallback(async (path) => {
     if (!projectId) return;
+    // Re-clicking the open file must not discard unsaved edits.
+    if (path === activePath && contents[path] !== undefined && draft !== contents[path]) return;
     setOpenTabs((tabs) => (tabs.includes(path) ? tabs : [...tabs, path]));
     setActivePath(path);
-    if (contents[path] === undefined) {
-      try {
-        const file = await studioProjectsService.getFile(projectId, path);
-        setContents((map) => ({ ...map, [path]: file.content }));
-        setDraft((current) => (activePath === path ? current : file.content));
-        if (activePath !== path) setDraft(file.content);
-      } catch (err) {
-        setError(getErrorMessage(err));
-      }
-    } else {
-      setDraft(contents[path]);
+    try {
+      // Always read fresh from the server: the cache goes stale when an
+      // Agent (or a folder sync) rewrites a file that is not open.
+      const file = await studioProjectsService.getFile(projectId, path);
+      setContents((map) => ({ ...map, [path]: file.content }));
+      setDraft(file.content);
+    } catch (err) {
+      setError(getErrorMessage(err));
     }
-  }, [projectId, contents, activePath]);
+  }, [projectId, activePath, contents, draft]);
 
   const switchTab = (path) => {
     setActivePath(path);
-    setDraft(contents[path] ?? "");
+    if (contents[path] !== undefined) setDraft(contents[path]);
+    else openFile(path);
   };
 
   const closeTab = (path) => {
@@ -241,7 +399,17 @@ export function StudioWorkspace() {
     try {
       const saved = await studioProjectsService.saveFile(projectId, activePath, draft);
       setContents((map) => ({ ...map, [activePath]: saved.content }));
-      setNotice(`Đã lưu ${activePath}`);
+      let message = `Đã lưu ${activePath}`;
+      if (handleRef.current) {
+        const permission = handleRef.current.queryPermission
+          ? await handleRef.current.queryPermission({ mode: "readwrite" }).catch(() => "denied")
+          : "granted";
+        if (permission === "granted") {
+          await writeFileToHandle(handleRef.current, activePath, saved.content).catch(() => {});
+          message += " và ghi về thư mục máy.";
+        }
+      }
+      setNotice(message);
       await loadProjectData(projectId);
       await loadProjects(projectId);
     } catch (err) {
@@ -279,6 +447,136 @@ export function StudioWorkspace() {
     }
   };
 
+  const importFolder = async () => {
+    if (!window.showDirectoryPicker) {
+      folderInputRef.current?.click();
+      return;
+    }
+    try {
+      const handle = await window.showDirectoryPicker();
+      const entries = await walkHandle(handle, "", []);
+      const files = await collectFolderFiles(entries);
+      if (!files.length) {
+        setError("Thư mục không có file văn bản nào đọc được (đã bỏ qua node_modules/.git và file nhị phân).");
+        return;
+      }
+      const created = await studioProjectsService.create({
+        name: handle.name || "Project từ thư mục",
+        files,
+      });
+      await linkHandle(created.id, handle);
+      await loadProjects(created.id);
+      setProjectId(created.id);
+      setNotice(`Đã import ${files.length} file từ thư mục "${handle.name}" và đã liên kết — sau mỗi lượt chạy AI và mỗi lần bạn lưu, bản mới tự ghi về thư mục này.`);
+    } catch (err) {
+      if (err?.name !== "AbortError") setError(err?.message || getErrorMessage(err));
+    }
+  };
+
+  const importFolderFromInput = async (event) => {
+    const picked = [...(event.target.files || [])];
+    event.target.value = "";
+    if (!picked.length) return;
+    const entries = [];
+    for (const file of picked) {
+      const rel = (file.webkitRelativePath || file.name).split("/").slice(1).join("/");
+      if (!rel) continue;
+      if (rel.split("/").some((seg) => SKIP_DIRS.has(seg))) continue;
+      entries.push({ path: rel, file });
+    }
+    try {
+      const files = await collectFolderFiles(entries);
+      if (!files.length) {
+        setError("Thư mục không có file văn bản nào đọc được.");
+        return;
+      }
+      const rootName = (picked[0].webkitRelativePath || "project").split("/")[0];
+      const created = await studioProjectsService.create({ name: rootName, files });
+      await loadProjects(created.id);
+      setProjectId(created.id);
+      setNotice(`Đã import ${files.length} file từ thư mục "${rootName}". Trình duyệt này không hỗ trợ ghi ngược về thư mục máy — mở bằng Chrome/Edge để liên kết ghi tự động.`);
+    } catch (err) {
+      setError(err?.message || getErrorMessage(err));
+    }
+  };
+
+  const linkFolder = async () => {
+    if (!projectId || !window.showDirectoryPicker) return;
+    try {
+      const handle = await window.showDirectoryPicker();
+      const permission = await handle.requestPermission({ mode: "readwrite" });
+      await linkHandle(projectId, handle);
+      if (permission === "granted") {
+        const written = await writeProjectToFolder(projectId);
+        setNotice(`Đã liên kết thư mục "${handle.name}" và ghi ${written} file hiện tại về đó. Từ giờ AI sửa xong là thư mục này cập nhật theo.`);
+      } else {
+        setNotice(`Đã nhớ thư mục "${handle.name}" nhưng chưa được cấp quyền ghi.`);
+      }
+    } catch (err) {
+      if (err?.name !== "AbortError") setError(getErrorMessage(err));
+    }
+  };
+
+  const unlinkFolder = async () => {
+    if (projectId) await idbDel(projectId).catch(() => {});
+    handleRef.current = null;
+    setFolderName("");
+    setFolderGranted(false);
+    setNotice("Đã huỷ liên kết thư mục máy cho project này.");
+  };
+
+  const syncDown = async () => {
+    if (!projectId || !handleRef.current) return;
+    setSyncing(true);
+    try {
+      const handle = handleRef.current;
+      if (handle.queryPermission && (await handle.queryPermission({ mode: "readwrite" })) !== "granted") {
+        await handle.requestPermission({ mode: "readwrite" });
+      }
+      const written = await writeProjectToFolder(projectId);
+      if (written) {
+        setFolderGranted(true);
+        setNotice(`Đã ghi ${written} file về thư mục "${folderName}".`);
+      } else {
+        setNotice("Chưa ghi được file nào — kiểm tra quyền ghi của thư mục đã liên kết.");
+      }
+    } catch (err) {
+      setError(getErrorMessage(err));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const syncUp = async () => {
+    const handle = handleRef.current;
+    if (!handle || !projectId) return;
+    setSyncing(true);
+    try {
+      if (handle.queryPermission && (await handle.queryPermission({ mode: "read" })) !== "granted") {
+        await handle.requestPermission({ mode: "read" });
+      }
+      const entries = await walkHandle(handle, "", []);
+      const files = await collectFolderFiles(entries);
+      let count = 0;
+      for (const file of files) {
+        await studioProjectsService.saveFile(projectId, file.path, file.content);
+        count += 1;
+      }
+      await loadProjectData(projectId);
+      await loadProjects(projectId);
+      if (activePath && contents[activePath] !== undefined) {
+        const fresh = await studioProjectsService.getFile(projectId, activePath);
+        setContents((map) => ({ ...map, [activePath]: fresh.content }));
+        setDraft(fresh.content);
+      }
+      setNotice(`Đã đọc ${count} file từ thư mục "${folderName}" lên project.`);
+    } catch (err) {
+      setError(err?.message || getErrorMessage(err));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const addFile = async () => {
     const path = (newFilePath || "").trim();
     if (!projectId || !path) return;
@@ -286,6 +584,7 @@ export function StudioWorkspace() {
       await studioProjectsService.saveFile(projectId, path, "");
       setNewFilePath(null);
       await loadProjectData(projectId);
+      await loadProjects(projectId);
       await openFile(path);
     } catch (err) {
       setError(getErrorMessage(err));
@@ -365,17 +664,29 @@ export function StudioWorkspace() {
       const changedPaths = new Set(run.steps.flatMap((s) => s.files_changed));
       await loadProjectData(projectId);
       await loadProjects(projectId);
+      if (changedPaths.size) {
+        // Invalidate cached contents of everything the Agents touched,
+        // so a later tab switch never shows the pre-run version.
+        setContents((map) => {
+          const next = { ...map };
+          for (const p of changedPaths) delete next[p];
+          return next;
+        });
+      }
       if (activePath && changedPaths.has(activePath)) {
         const file = await studioProjectsService.getFile(projectId, activePath);
         setContents((map) => ({ ...map, [activePath]: file.content }));
         setDraft(file.content);
       }
       const failed = run.steps.filter((s) => s.status !== "completed").length;
-      setNotice(
-        failed
-          ? `Lượt chạy xong: ${run.steps.length - failed}/${run.steps.length} Agent áp dụng được thay đổi, ${failed} Agent lỗi.`
-          : `Lượt chạy xong: ${run.steps.length} Agent đã làm, file đã cập nhật ngay trên project.`,
-      );
+      let message = failed
+        ? `Lượt chạy xong: ${run.steps.length - failed}/${run.steps.length} Agent áp dụng được thay đổi, ${failed} Agent lỗi.`
+        : `Lượt chạy xong: ${run.steps.length} Agent đã làm, file đã cập nhật ngay trên project.`;
+      if (handleRef.current) {
+        const written = await writeProjectToFolder(projectId);
+        if (written) message += ` Đã ghi ${written} file về thư mục "${folderName}" trên máy.`;
+      }
+      setNotice(message);
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
@@ -416,6 +727,18 @@ export function StudioWorkspace() {
             <Upload size={15} /> Import ZIP
           </button>
           <input ref={zipInputRef} type="file" accept=".zip" hidden onChange={importZip} />
+          <button type="button" className="button secondary" onClick={importFolder}>
+            <FolderOpen size={15} /> Import thư mục
+          </button>
+          <input
+            ref={(el) => {
+              folderInputRef.current = el;
+              if (el) el.setAttribute("webkitdirectory", "");
+            }}
+            type="file"
+            hidden
+            onChange={importFolderFromInput}
+          />
           <button type="button" className="button secondary" disabled={!project} onClick={exportZip}>
             <Download size={15} /> Xuất ZIP
           </button>
@@ -447,6 +770,38 @@ export function StudioWorkspace() {
         </div>
       ) : (
         <>
+          <div className="st-linkbar">
+            <HardDrive size={15} />
+            {folderName ? (
+              <>
+                <span>
+                  Thư mục máy: <strong>{folderName}</strong>
+                  {folderGranted
+                    ? " — đã cấp quyền ghi: AI sửa xong và mỗi lần bạn lưu đều tự ghi về thư mục này."
+                    : " — chưa cấp quyền ghi (bấm Ghi về thư mục để cấp)."}
+                </span>
+                <button type="button" className="button secondary" onClick={syncDown} disabled={syncing}>
+                  {syncing ? <LoaderCircle size={14} className="spin" /> : <FolderSync size={14} />} Ghi về thư mục
+                </button>
+                <button type="button" className="button secondary" onClick={syncUp} disabled={syncing}>
+                  <RefreshCw size={14} /> Đọc lại từ thư mục
+                </button>
+                <button type="button" className="button secondary" onClick={unlinkFolder}>
+                  <Unlink size={14} /> Huỷ liên kết
+                </button>
+              </>
+            ) : (
+              <>
+                <span>Chưa liên kết thư mục trên máy — liên kết để file AI sửa tự ghi về đúng thư mục gốc của bạn (Chrome/Edge).</span>
+                {canLinkFolder && (
+                  <button type="button" className="button secondary" onClick={linkFolder}>
+                    <Link2 size={14} /> Liên kết thư mục
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+
           <section className="st-agent-strip">
             {agents.map((agent) => {
               const step = lastStepByAgent.get(agent.id);
