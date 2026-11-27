@@ -38,6 +38,21 @@ export function validateApiKey(value) {
   return "";
 }
 
+// Providers whose keys only work with a paid-up account: a perfectly valid
+// key still fails until the account holds balance/credit (DeepSeek answers
+// 402 Insufficient Balance). The key section shows this note so the user
+// checks billing first instead of debugging a "broken" key.
+const paidProviderNotes = {
+  deepseek:
+    "DeepSeek là provider trả phí — key chỉ dùng được khi tài khoản còn số dư. Hãy kiểm tra và nạp tiền tại platform.deepseek.com trước khi dùng; hết số dư thì API sẽ báo lỗi dù key đúng.",
+  anthropic:
+    "Claude (Anthropic) là provider trả phí — key chỉ dùng được khi tài khoản còn tín dụng. Hãy kiểm tra và nạp tiền trong Anthropic Console (console.anthropic.com) trước khi dùng.",
+};
+
+export function paidProviderNote(provider) {
+  return paidProviderNotes[provider?.id] ?? null;
+}
+
 export function providerStatus(provider) {
   if (!provider.implemented) return { label: "Sắp tích hợp", tone: "neutral" };
   if (!provider.configured) return { label: "Chưa kết nối", tone: "neutral" };
