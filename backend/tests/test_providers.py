@@ -93,6 +93,8 @@ def test_registry_and_unsaved_catalog(owner):
         "provider": "openai",
         "models": [],
         "synced_at": None,
+        "created_at": None,
+        "updated_at": None,
     }
     assert_error(owner.post(f"{BASE}/openai/test"), 409, "credentials_missing")
     assert_error(owner.patch(f"{BASE}/openai", json={"enabled": True}), 409, "credentials_missing")

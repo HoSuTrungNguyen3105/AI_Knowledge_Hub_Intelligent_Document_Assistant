@@ -104,6 +104,7 @@ export function ProviderDetails({ controller, encryptionReady }) {
         <p id={`key-hint-${provider.id}`} className="field-hint">Key được gửi một lần đến backend, không lưu trong localStorage và không trả lại trong API response. Thay key sẽ xóa danh sách model và lựa chọn mặc định cũ.</p>
         {keyError && <p className="form-error" role="alert">{keyError}</p>}
       </form>
+      {provider.configured && (provider.created_at || provider.updated_at) && <p className="field-hint">Key lưu lần đầu: {provider.created_at ? formatDate(provider.created_at) : "—"} · Cập nhật gần nhất: {provider.updated_at ? formatDate(provider.updated_at) : "—"}</p>}
       <div className="connection-actions"><button type="button" className="button secondary" onClick={testConnection} disabled={disabled || !provider.configured}>{busy === "test" ? <LoaderCircle size={16} className="spin" /> : <PlugZap size={16} />}{busy === "test" ? "Đang kiểm tra…" : "Kiểm tra & đồng bộ model"}</button><span>{provider.last_checked_at ? `Đã kiểm tra: ${formatDate(provider.last_checked_at)}` : "Chưa thực hiện kiểm tra kết nối"}</span></div>
       <p className="provider-test-note">Chỉ gọi API liệt kê model, không gửi prompt hoặc tạo nội dung tính phí. Provider đã tắt vẫn có thể được kiểm tra.</p>
       {provider.connection_status === "error" && <p className="provider-status-explanation" role="alert"><strong>{providerFailureReason(provider.last_error_code)}</strong> Nếu còn danh sách model bên dưới, đó là dữ liệu của lần đồng bộ thành công trước.</p>}

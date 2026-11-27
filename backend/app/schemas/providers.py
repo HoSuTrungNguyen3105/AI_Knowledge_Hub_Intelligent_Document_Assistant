@@ -108,6 +108,11 @@ class ProviderMetadata(BaseModel):
     last_checked_at: datetime | None = None
     models_synced_at: datetime | None = None
     last_error_code: str | None = None
+    # When the stored key record was first saved and last changed (any
+    # credential write: key save, enable toggle, default model, sync).
+    # None until a key is saved. Lets the user see which key is freshest.
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class ProviderCatalog(BaseModel):
@@ -119,6 +124,11 @@ class ProviderModels(BaseModel):
     provider: str
     models: list[ProviderModel]
     synced_at: datetime | None = None
+    # The stored API key's own timestamps (same values as ProviderMetadata),
+    # so a caller of this endpoint alone can tell when the key in use was
+    # saved and last updated. None when no key is stored.
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class ProviderTestResult(BaseModel):

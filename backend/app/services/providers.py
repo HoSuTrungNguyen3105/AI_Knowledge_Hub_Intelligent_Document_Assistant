@@ -57,6 +57,8 @@ class ProviderService:
             result.last_checked_at = credential.last_checked_at
             result.models_synced_at = credential.models_synced_at
             result.last_error_code = credential.last_error_code
+            result.created_at = credential.created_at
+            result.updated_at = credential.updated_at
         return result
 
     async def catalog(self, user_id: UUID) -> ProviderCatalog:
@@ -142,6 +144,8 @@ class ProviderService:
             provider=provider,
             models=result,
             synced_at=credential.models_synced_at if credential else None,
+            created_at=credential.created_at if credential else None,
+            updated_at=credential.updated_at if credential else None,
         )
 
     async def check_model(
