@@ -1,0 +1,27 @@
+/* Service key vault tab — self-contained .sk-* classes. */
+.sk-wrap { display: flex; flex-direction: column; gap: 14px; }
+.sk-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.sk-title { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 17px; }
+.sk-sub { margin: 0; max-width: 760px; font-size: 13px; line-height: 1.55; opacity: 0.85; }
+.sk-banner { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.5; }
+.sk-banner-error { background: rgba(220, 38, 38, 0.1); border: 1px solid rgba(220, 38, 38, 0.35); }
+.sk-banner-ok { background: rgba(22, 163, 74, 0.1); border: 1px solid rgba(22, 163, 74, 0.35); }
+.sk-empty { font-size: 13.5px; opacity: 0.8; display: flex; align-items: center; gap: 8px; }
+.sk-list { display: flex; flex-direction: column; gap: 10px; }
+.sk-card { display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 12px 14px; border: 1px solid var(--hatch-widget-border, #d4d4d8); border-radius: 12px; }
+.sk-card-main { display: flex; flex-direction: column; gap: 6px; min-width: 260px; flex: 1; }
+.sk-card-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sk-badge { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: rgba(124, 58, 237, 0.12); border: 1px solid rgba(124, 58, 237, 0.35); }
+.sk-card-meta { font-size: 12.5px; opacity: 0.85; overflow-wrap: anywhere; }
+.sk-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.sk-chip { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; border: 1px dashed rgba(127, 127, 127, 0.5); opacity: 0.75; }
+.sk-chip.has { border-style: solid; border-color: rgba(22, 163, 74, 0.5); opacity: 1; }
+.sk-card-actions { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+.sk-form { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--hatch-widget-border, #d4d4d8); border-radius: 12px; max-width: 640px; }
+.sk-form-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.sk-label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; font-weight: 600; }
+.sk-label input, .sk-label select { font-weight: 400; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--hatch-widget-border, #d4d4d8); background: transparent; color: inherit; }
+.sk-input-row { display: flex; gap: 6px; align-items: center; }
+.sk-input-row input { flex: 1; min-width: 0; }
+.sk-desc { margin: 0; font-size: 12.5px; line-height: 1.5; opacity: 0.8; }
+.sk-form-actions { display: flex; gap: 8px; }
