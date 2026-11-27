@@ -29,6 +29,11 @@ from app.schemas.workflows import (
     EventOut,
     MessageList,
     MessageOut,
+    RoleCreate,
+    RoleList,
+    RoleOut,
+    RolePatch,
+    SYSTEM_ROLE_CATALOG,
     TaskList,
     TaskOut,
     TeamCreate,
@@ -41,6 +46,7 @@ from app.schemas.workflows import (
     WorkflowFileOut,
     WorkflowList,
     WorkflowOut,
+    _normalize_role,
 )
 from app.services.agents import AgentLimits, AgentService
 from app.services.ai.base_provider import ProviderError
@@ -486,6 +492,81 @@ class WorkflowService:
     async def delete_team(self, user_id, team_id) -> None:
         if not await self.repo.delete_team(user_id, team_id):
             raise ProviderError("team_not_found")
+
+    # --- Role catalog --------------------------------------------------------
+    # System roles come from the schema catalog; the user's own roles live
+    # in `agent_roles`. The slug is the value stored on team members, so it
+    # never changes after creation — a rename only touches the display
+    # name. Deleting a custom role does not rewrite teams that use it:
+    # their members keep the slug and the UI derives a label from it.
+    @property
+    def _roles(self):
+        return self.db["agent_roles"]
+
+    @staticmethod
+    def _role_out(doc) -> RoleOut:
+        return RoleOut(
+            slug=doc["slug"],
+            name=doc["name"],
+            description=doc.get("description"),
+            is_system=False,
+            created_at=doc.get("created_at"),
+            updated_at=doc.get("updated_at"),
+        )
+
+    async def list_roles(self, user_id) -> RoleList:
+        roles = [
+            RoleOut(slug=slug, name=name, description=description, is_system=True)
+            for slug, name, description in SYSTEM_ROLE_CATALOG
+        ]
+        cursor = self._roles.find({"user_id": user_id}).sort("created_at", 1)
+        roles.extend([self._role_out(doc) async for doc in cursor])
+        return RoleList(roles=roles)
+
+    async def create_role(self, user_id, payload: RoleCreate) -> RoleOut:
+        slug = _normalize_role(payload.name)
+        if slug in {entry[0] for entry in SYSTEM_ROLE_CATALOG}:
+            raise ProviderError("role_slug_conflict")
+        if await self._roles.find_one({"user_id": user_id, "slug": slug}):
+            raise ProviderError("role_slug_conflict")
+        now = utcnow()
+        doc = {
+            "user_id": user_id,
+            "slug": slug,
+            "name": payload.name,
+            "description": payload.description,
+            "created_at": now,
+            "updated_at": now,
+        }
+        await self._roles.insert_one(doc)
+        return self._role_out(doc)
+
+    async def _require_custom_role(self, user_id, slug: str) -> dict:
+        if slug in {entry[0] for entry in SYSTEM_ROLE_CATALOG}:
+            raise ProviderError("role_system_immutable")
+        doc = await self._roles.find_one({"user_id": user_id, "slug": slug})
+        if doc is None:
+            raise ProviderError("role_not_found")
+        return doc
+
+    async def patch_role(self, user_id, slug: str, payload: RolePatch) -> RoleOut:
+        await self._require_custom_role(user_id, slug)
+        updates = {
+            field: getattr(payload, field)
+            for field in ("name", "description")
+            if field in payload.model_fields_set
+        }
+        if updates:
+            updates["updated_at"] = utcnow()
+            await self._roles.update_one(
+                {"user_id": user_id, "slug": slug}, {"$set": updates}
+            )
+        doc = await self._roles.find_one({"user_id": user_id, "slug": slug})
+        return self._role_out(doc)
+
+    async def delete_role(self, user_id, slug: str) -> None:
+        await self._require_custom_role(user_id, slug)
+        await self._roles.delete_one({"user_id": user_id, "slug": slug})
 
     # --- Workflows CRUD ------------------------------------------------------
     @staticmethod

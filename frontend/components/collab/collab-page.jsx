@@ -411,6 +411,8 @@ export function CollabPage() {
               {agents.filter((a) => newMembers.includes(a.id)).map((a) =>
                 <option key={a.id} value={a.id}>{a.name}</option>)}
             </select></label>
+          {newMode === "auto" && !newModerator && <p className="muted" style={{ fontSize: 12.5, margin: "0 0 8px" }}>
+            Chưa chọn Moderator: ở chế độ Tự động, hệ thống sẽ nhờ một thành viên (ưu tiên Leader) đứng ra tổng hợp kết luận cuối buổi.</p>}
           </>}
           <label style={{ display: "block", marginBottom: 8 }}>Giới hạn lượt nói mỗi lần chạy (1–10)
             <input type="number" min={1} max={10} value={newMaxTurns}

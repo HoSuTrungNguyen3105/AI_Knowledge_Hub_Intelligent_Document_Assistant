@@ -29,6 +29,30 @@ export const teamsService = {
   },
 };
 
+// Role catalog (Chức danh page): system roles plus the user's own roles.
+// Team assignment picks from this list; the slug is what gets stored on
+// team members.
+const rolesPath = "/ai/roles";
+const rolePath = (slug) => `${rolesPath}/${encodeURIComponent(slug)}`;
+
+export const rolesService = {
+  async list(signal) {
+    const { data } = await api.get(rolesPath, { signal });
+    return data.roles;
+  },
+  async create(payload, signal) {
+    const { data } = await api.post(rolesPath, payload, { signal });
+    return data;
+  },
+  async patch(slug, payload, signal) {
+    const { data } = await api.patch(rolePath(slug), payload, { signal });
+    return data;
+  },
+  async remove(slug, signal) {
+    await api.delete(rolePath(slug), { signal });
+  },
+};
+
 export const workflowsService = {
   async list(signal) {
     const { data } = await api.get(workflowsPath, { signal });
