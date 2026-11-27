@@ -130,6 +130,28 @@ export function N8nPlatformWorkspace() {
   const [validatedText, setValidatedText] = useState("");
   const [validating, setValidating] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Live completeness check of the modal's JSON text. A workflow JSON
+  // copied from a preview that only rendered part of the file arrives
+  // silently missing its tail; parsing on every change makes that
+  // visible at once (character count + node count, or a clear
+  // "looks cut off" warning) instead of failing later at Validate.
+  const modalTextInfo = useMemo(() => {
+    if (!modalText.trim()) return null;
+    try {
+      const parsed = JSON.parse(modalText);
+      const nodeCount =
+        parsed && typeof parsed === "object" && Array.isArray(parsed.nodes)
+          ? parsed.nodes.length
+          : 0;
+      return { chars: modalText.length, complete: true, truncated: false, nodeCount };
+    } catch (err) {
+      const truncated = /unexpected end|unexpected eof|end of (json )?input|end of data/i.test(
+        err.message || "",
+      );
+      return { chars: modalText.length, complete: false, truncated, nodeCount: 0 };
+    }
+  }, [modalText]);
   const [modalError, setModalError] = useState("");
 
   const [confirmDelete, setConfirmDelete] = useState(null);
@@ -1002,6 +1024,27 @@ export function N8nPlatformWorkspace() {
               placeholder="Dán JSON workflow tại đây…"
               spellCheck={false}
             />
+            {modalTextInfo ? (
+              modalTextInfo.complete ? (
+                <p className="fx-run-meta">
+                  {modalTextInfo.chars.toLocaleString("vi-VN")} ký tự · JSON đầy đủ
+                  {modalTextInfo.nodeCount
+                    ? ` — ${modalTextInfo.nodeCount} node`
+                    : ""}
+                </p>
+              ) : modalTextInfo.truncated ? (
+                <div className="fx-error">
+                  JSON có vẻ bị cắt cụt ở cuối ({modalTextInfo.chars.toLocaleString("vi-VN")}{" "}
+                  ký tự, phần kết đang thiếu) — bản copy này chưa trọn vẹn. Hãy dùng nút
+                  &quot;Tải file .json&quot; với file gốc thay vì copy–dán.
+                </div>
+              ) : (
+                <p className="fx-run-meta">
+                  {modalTextInfo.chars.toLocaleString("vi-VN")} ký tự · JSON chưa hợp lệ —
+                  bấm Validate JSON để xem chi tiết.
+                </p>
+              )
+            ) : null}
             {modalError ? <div className="fx-error">{modalError}</div> : null}
             {validation ? (
               validation.valid ? (
