@@ -174,6 +174,28 @@ ERRORS = {
     "eval_prompt_not_found": (404, "That evaluation prompt does not exist."),
     "code_project_not_found": (404, "That code project does not exist."),
     "code_file_not_found": (404, "That code project file does not exist."),
+    "studio_project_not_found": (404, "That studio project does not exist."),
+    "studio_file_not_found": (404, "That studio project file does not exist."),
+    "studio_project_too_large": (
+        413,
+        "The studio project exceeds the size limit (200 files, 5 MB total, 1 MB per file).",
+    ),
+    "studio_invalid_path": (
+        422,
+        "That file path is not allowed in a studio project.",
+    ),
+    "studio_zip_invalid": (
+        422,
+        "The uploaded file is not a readable ZIP archive.",
+    ),
+    "studio_zip_empty": (
+        422,
+        "No editable text files were found in the archive.",
+    ),
+    "studio_invalid_agent_output": (
+        502,
+        "The agent reply could not be understood as an edit set.",
+    ),
     "code_upload_too_large": (413, "The uploaded archive is too large."),
     "code_upload_invalid": (422, "The uploaded file is not a readable ZIP archive."),
     "code_upload_empty": (422, "No analyzable source files were found in the archive."),
