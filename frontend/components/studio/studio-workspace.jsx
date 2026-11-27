@@ -208,6 +208,7 @@ export function StudioWorkspace() {
   const [runs, setRuns] = useState([]);
   const [changes, setChanges] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [treeLoading, setTreeLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -258,14 +259,19 @@ export function StudioWorkspace() {
       setFiles([]); setRuns([]); setChanges([]);
       return;
     }
-    const [fileList, runList, changeList] = await Promise.all([
-      studioProjectsService.listFiles(id),
-      studioProjectsService.listRuns(id).catch(() => []),
-      studioProjectsService.listChanges(id).catch(() => []),
-    ]);
-    setFiles(fileList);
-    setRuns(runList);
-    setChanges(changeList);
+    setTreeLoading(true);
+    try {
+      const [fileList, runList, changeList] = await Promise.all([
+        studioProjectsService.listFiles(id),
+        studioProjectsService.listRuns(id).catch(() => []),
+        studioProjectsService.listChanges(id).catch(() => []),
+      ]);
+      setFiles(fileList);
+      setRuns(runList);
+      setChanges(changeList);
+    } finally {
+      setTreeLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -469,7 +475,12 @@ export function StudioWorkspace() {
       setProjectId(created.id);
       setNotice(`Đã import ${files.length} file từ thư mục "${handle.name}" và đã liên kết — sau mỗi lượt chạy AI và mỗi lần bạn lưu, bản mới tự ghi về thư mục này.`);
     } catch (err) {
-      if (err?.name !== "AbortError") setError(err?.message || getErrorMessage(err));
+      if (err?.name === "AbortError") return;
+      if (err instanceof DOMException || /showDirectoryPicker|user agent/i.test(err?.message || "")) {
+        setError("Trình duyệt không cho mở hộp chọn thư mục trong ngữ cảnh này. Hãy mở trang bằng Chrome/Edge và bấm nút trực tiếp.");
+      } else {
+        setError(err?.message || getErrorMessage(err));
+      }
     }
   };
 
@@ -513,7 +524,12 @@ export function StudioWorkspace() {
         setNotice(`Đã nhớ thư mục "${handle.name}" nhưng chưa được cấp quyền ghi.`);
       }
     } catch (err) {
-      if (err?.name !== "AbortError") setError(getErrorMessage(err));
+      if (err?.name === "AbortError") return;
+      if (err instanceof DOMException || /showDirectoryPicker|user agent/i.test(err?.message || "")) {
+        setError("Trình duyệt không cho mở hộp chọn thư mục trong ngữ cảnh này. Hãy mở trang bằng Chrome/Edge và bấm nút trực tiếp.");
+      } else {
+        setError(getErrorMessage(err));
+      }
     }
   };
 
@@ -861,7 +877,9 @@ export function StudioWorkspace() {
               <div className="st-workbench">
                 <aside className="st-tree">
                   <TreeNode node={tree} depth={0} activePath={activePath} onOpen={openFile} />
-                  {files.length === 0 && <p className="st-muted st-tree-empty">Project chưa có file nào.</p>}
+                  {files.length === 0 && (
+                    <p className="st-muted st-tree-empty">{treeLoading ? "Đang tải cây file…" : "Project chưa có file nào."}</p>
+                  )}
                 </aside>
                 <div className="st-editor-wrap">
                   <div className="st-tabs">
