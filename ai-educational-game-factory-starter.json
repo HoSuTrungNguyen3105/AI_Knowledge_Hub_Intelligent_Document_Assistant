@@ -1,0 +1,228 @@
+{
+  "name": "AI Educational Game Factory - Starter",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a1111111-1111-4111-8111-111111111111",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 7,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "a2222222-2222-4222-8222-222222222222",
+      "name": "Daily 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b1111111-1111-4111-8111-111111111111",
+              "name": "githubOwner",
+              "value": "HoSuTrungNguyen3105",
+              "type": "string"
+            },
+            {
+              "id": "b2222222-2222-4222-8222-222222222222",
+              "name": "githubRepo",
+              "value": "educational-games",
+              "type": "string"
+            },
+            {
+              "id": "b3333333-3333-4333-8333-333333333333",
+              "name": "baseBranch",
+              "value": "main",
+              "type": "string"
+            },
+            {
+              "id": "b4444444-4444-4444-8444-444444444444",
+              "name": "timezone",
+              "value": "Asia/Ho_Chi_Minh",
+              "type": "string"
+            },
+            {
+              "id": "b5555555-5555-4555-8555-555555555555",
+              "name": "gamesPerRun",
+              "value": 1,
+              "type": "number"
+            },
+            {
+              "id": "b6666666-6666-4666-8666-666666666666",
+              "name": "usePlaywright",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "b7777777-7777-4777-8777-777777777777",
+              "name": "maxFixRetries",
+              "value": 2,
+              "type": "number"
+            },
+            {
+              "id": "b8888888-8888-4888-8888-888888888888",
+              "name": "aiModel",
+              "value": "gpt-4o-mini",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a3333333-3333-4333-8333-333333333333",
+      "name": "Factory Configuration",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        500,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.github.com/repos/{{$json.githubOwner}}/{{$json.githubRepo}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            },
+            {
+              "name": "User-Agent",
+              "value": "AI-Educational-Game-Factory"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a4444444-4444-4444-8444-444444444444",
+      "name": "Read GitHub Repository",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Factory Configuration').first().json;\\nconst repo = $input.first().json;\\nif (repo.message || !repo.full_name) {\\n  throw new Error(`Cannot read GitHub repository: ${repo.message || 'Unexpected response'}`);\\n}\\nreturn [{ json: {\\n  ...cfg,\\n  repository: { fullName: repo.full_name, defaultBranch: repo.default_branch, htmlUrl: repo.html_url, description: repo.description },\\n  runStartedAt: new Date().toISOString(),\\n  nextStep: 'Inspect repository files and game registry before generating any code.'\\n}}];"
+      },
+      "id": "a5555555-5555-4555-8555-555555555555",
+      "name": "Prepare Factory Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "content": "STARTER WORKFLOW\\n\\nThis workflow currently validates the schedule/manual trigger and reads repository metadata. It intentionally does NOT write files, create branches, or open PRs yet.\\n\\nNext implementation steps: inspect the actual educational-games source tree and game registry; add authenticated GitHub file/tree operations; add AI idea/design/code generation; run build; optionally add Playwright; then create a PR only after validation.\\n\\nSet the workflow timezone to Asia/Ho_Chi_Minh in n8n workflow settings. Configure GitHub credentials before accessing private repositories or writing to GitHub.",
+        "height": 230,
+        "width": 430,
+        "color": 5
+      },
+      "id": "a6666666-6666-4666-8666-666666666666",
+      "name": "Implementation Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        760,
+        80
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Factory Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily 07:00": {
+      "main": [
+        [
+          {
+            "node": "Factory Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Factory Configuration": {
+      "main": [
+        [
+          {
+            "node": "Read GitHub Repository",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read GitHub Repository": {
+      "main": [
+        [
+          {
+            "node": "Prepare Factory Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Ho_Chi_Minh",
+    "saveExecutionProgress": true,
+    "saveManualExecutions": true
+  },
+  "versionId": "e0ceb416-290b-4492-a0d1-505f73bb76df",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
