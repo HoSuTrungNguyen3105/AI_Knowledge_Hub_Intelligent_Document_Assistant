@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { LayoutDashboard, LibraryBig, MessagesSquare, Bot, NotebookPen, Settings2, Menu, X, LogOut, ChevronRight, PanelLeftClose, ShieldCheck, Columns2, Users, GitBranch, Search, Bell, Building2, Handshake, CheckCircle2, Briefcase, ClipboardList, Network, UserRound, Activity, Award, CodeXml,
+import { LayoutDashboard, LibraryBig, MessagesSquare, Bot, NotebookPen, Settings2, Menu, X, LogOut, ChevronRight, PanelLeftClose, ShieldCheck, Columns2, Users, GitBranch, Search, Bell, Building2, Handshake, CheckCircle2, Briefcase, ClipboardList, Network, UserRound, Activity, Award, CodeXml, Workflow,
 } from "lucide-react";
 import { Brand } from "./brand";
 import { useSession } from "../stores/session";
@@ -16,6 +16,8 @@ import { APP_NAME, APP_STAGE } from "../utils/app-config";
 
 // Navigation grouped by purpose (NEXORA spec §8.2). Only pages that
 // really exist are listed; upcoming modules keep their marker dot.
+// An item may carry an optional `badge` string, rendered as a small
+// pill next to its label in the sidebar.
 // The flat `navigation` list is derived for search + page titles.
 const navigationGroups = [
   {
@@ -44,6 +46,7 @@ const navigationGroups = [
     label: "Automation",
     items: [
       { href: "/agents/workflows", label: "Workflows", icon: GitBranch },
+      { href: "/agents/agent-workflows", label: "Agent Workflows", icon: Workflow, badge: "Đang cập nhật" },
       { href: "/approvals", label: "Phê duyệt", icon: CheckCircle2 },
     ],
   },
@@ -71,7 +74,7 @@ const isActivePath = (pathname, href) => pathname === href || (href !== "/agents
 function SidebarContent({ pathname, onNavigate, mobile = false }) {
   return <><div className="sidebar-brand"><Link href="/dashboard" onClick={onNavigate} aria-label={`${APP_NAME} — Tổng quan`}><Brand /></Link>{mobile && <button className="icon-button" onClick={onNavigate} aria-label="Đóng menu"><PanelLeftClose size={20} /></button>}</div>
     {/* <div className="workspace-label"><span className="workspace-icon">K</span><div>Không gian cá nhân<small>Chỉ bạn có quyền truy cập</small></div></div> */}
-    <nav aria-label={mobile ? "Điều hướng trên điện thoại" : "Điều hướng chính"} className="main-nav">{navigationGroups.map((group) => <div className="nav-group" key={group.label}><p className="nav-group-label">{group.label}</p>{group.items.map(({ href, label, icon: Icon, upcoming }) => <Link key={href} href={href} onClick={onNavigate} className={`nav-item ${isActivePath(pathname, href) ? "active" : ""}`} aria-current={isActivePath(pathname, href) ? "page" : undefined}><Icon size={19} strokeWidth={1.7} /><span>{label}</span>{upcoming && <span className="nav-dot" title="Giai đoạn tiếp theo" aria-label="Chưa triển khai" />}</Link>)}</div>)}</nav>
+    <nav aria-label={mobile ? "Điều hướng trên điện thoại" : "Điều hướng chính"} className="main-nav">{navigationGroups.map((group) => <div className="nav-group" key={group.label}><p className="nav-group-label">{group.label}</p>{group.items.map(({ href, label, icon: Icon, upcoming, badge }) => <Link key={href} href={href} onClick={onNavigate} className={`nav-item ${isActivePath(pathname, href) ? "active" : ""}`} aria-current={isActivePath(pathname, href) ? "page" : undefined}><Icon size={19} strokeWidth={1.7} /><span>{label}</span>{badge && <span className="nav-badge">{badge}</span>}{upcoming && <span className="nav-dot" title="Giai đoạn tiếp theo" aria-label="Chưa triển khai" />}</Link>)}</div>)}</nav>
     {/* <div className="sidebar-bottom"><div className="build-note"><span className="status-dot" /><span>{APP_STAGE}</span></div><p>Nền tảng hôm nay.<br />Tri thức kết nối ngày mai.</p></div> */}
   </>;
 }

@@ -285,7 +285,7 @@ export function Dashboard() {
     }
     const fxFailed = ana.factory_runs?.by_status?.failed || 0;
     if (fxFailed > 0) {
-      todos.push({ label: `${fxFailed} lượt chạy AI Factory lỗi`, href: "/agents/workflows?tab=factory" });
+      todos.push({ label: `${fxFailed} lượt chạy AI Factory lỗi`, href: "/agents/agent-workflows?tab=factory" });
     }
     if ((ana.usage_7d?.failed || 0) > 0) {
       todos.push({ label: `${ana.usage_7d.failed} lượt gọi AI lỗi trong 7 ngày`, href: "/compare" });

@@ -49,9 +49,36 @@
   flex: 1;
 }
 
+/* Workflow cards: the info column takes the full remaining width and
+   the actions form one vertical rail on the right of the card.
+   factory.css lays .n8n-row out as a 3-column grid with a wrapping
+   horizontal action row; the .n8n-rows-scoped selectors below override
+   that for this list only. */
+.n8n-rows .n8n-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
 .wm-row-actions {
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  width: 160px;
+}
+
+.wm-row-actions .fx-btn {
+  justify-content: flex-start;
+}
+
+@media (max-width: 760px) {
+  .n8n-rows .n8n-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wm-row-actions {
+    width: 100%;
+  }
 }
 
 .wm-pager {
