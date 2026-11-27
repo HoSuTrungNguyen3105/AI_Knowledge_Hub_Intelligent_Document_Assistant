@@ -478,7 +478,7 @@ class StudioProjectService:
 
     async def _build_prompt(
         self, project: dict, instruction: str, changes_so_far: list[str]
-    ) -> str:
+    ) -> tuple[str, dict]:
         docs = (
             await self.files.find({"project_id": project["_id"]})
             .sort("path", 1)
@@ -526,7 +526,12 @@ class StudioProjectService:
             "files là mảng rỗng.\n"
             "- Làm trọn phần việc của mình: Agent sau sẽ dựa trên bản bạn vừa sửa."
         )
-        return "\n\n".join(parts)
+        context = {
+            "files_read": len(docs) - len(omitted),
+            "files_total": len(docs),
+            "files_omitted": omitted,
+        }
+        return "\n\n".join(parts), context
 
     async def _apply_edit_set(
         self, project_id: UUID, run_id: UUID, agent, edit_set: dict
@@ -581,6 +586,8 @@ class StudioProjectService:
             "user_id": user_id,
             "instruction": payload.instruction,
             "status": "running",
+            "current_agent_id": None,
+            "current_agent_name": None,
             "steps": [],
             "total_input_tokens": 0,
             "total_output_tokens": 0,
@@ -597,8 +604,23 @@ class StudioProjectService:
             step = RunStepOut(
                 agent_id=agent.id, agent_name=agent.name, status="failed"
             )
-            prompt = await self._build_prompt(
+            prompt, context = await self._build_prompt(
                 project, payload.instruction, changes_so_far
+            )
+            step.files_read = context["files_read"]
+            step.files_total = context["files_total"]
+            step.files_omitted = context["files_omitted"]
+            # Persist progress so the UI can poll: steps finished so far
+            # plus the Agent working right now.
+            await self.runs.update_one(
+                {"_id": run_id},
+                {
+                    "$set": {
+                        "current_agent_id": agent.id,
+                        "current_agent_name": agent.name,
+                        "steps": [s.model_dump(mode="json") for s in steps],
+                    }
+                },
             )
             try:
                 execution = await self._run_agent(user_id, agent.id, prompt)
@@ -642,6 +664,8 @@ class StudioProjectService:
             {
                 "$set": {
                     "status": "completed",
+                    "current_agent_id": None,
+                    "current_agent_name": None,
                     "steps": [s.model_dump(mode="json") for s in steps],
                     "total_input_tokens": total_in,
                     "total_output_tokens": total_out,
@@ -652,6 +676,8 @@ class StudioProjectService:
         run_doc.update(
             {
                 "status": "completed",
+                "current_agent_id": None,
+                "current_agent_name": None,
                 "steps": steps,
                 "total_input_tokens": total_in,
                 "total_output_tokens": total_out,
@@ -672,6 +698,8 @@ class StudioProjectService:
             instruction=doc["instruction"],
             status=doc["status"],
             steps=steps,
+            current_agent_id=doc.get("current_agent_id"),
+            current_agent_name=doc.get("current_agent_name"),
             total_input_tokens=doc.get("total_input_tokens", 0),
             total_output_tokens=doc.get("total_output_tokens", 0),
             created_at=doc["created_at"],

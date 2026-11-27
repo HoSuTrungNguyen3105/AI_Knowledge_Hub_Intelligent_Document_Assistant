@@ -16,7 +16,7 @@
 .st-linkbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border: 1px solid var(--border, #d7dee8); border-radius: 12px; padding: 9px 12px; background: var(--surface, #fff); font-size: 13px; }
 .st-linkbar span { flex: 1 1 260px; }
 
-.st-agent-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.st-agent-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; mask-image: linear-gradient(to right, transparent, black 18px, black calc(100% - 18px), transparent); }
 .st-agent-card { min-width: 180px; max-width: 220px; text-align: left; border: 1px solid var(--border, #d7dee8); border-radius: 12px; padding: 10px 12px; background: var(--surface, #fff); cursor: pointer; display: flex; flex-direction: column; gap: 4px; }
 .st-agent-card.picked { border-color: #2563eb; box-shadow: 0 0 0 1px #2563eb inset; }
 .st-agent-top { display: flex; align-items: center; gap: 6px; }
@@ -68,5 +68,6 @@
 .st-step .ok { color: #16a34a; }
 .st-step .bad { color: #dc2626; }
 .st-step-summary { flex-basis: 100%; color: var(--muted, #64748b); }
+.st-step-context { color: var(--muted, #64748b); }
 .st-change { margin: 6px 0 0; font-size: 12.5px; }
 .st-change code { background: var(--surface-muted, #f1f5f9); padding: 1px 5px; border-radius: 5px; font-size: 12px; }

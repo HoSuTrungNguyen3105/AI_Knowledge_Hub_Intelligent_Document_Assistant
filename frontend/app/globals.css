@@ -213,3 +213,15 @@ h3 { font-size: 14px; font-weight: 600; }
 .wake-dot { flex: none; width: 9px; height: 9px; border-radius: 999px; background: #d97706; animation: wake-pulse 1.2s ease-in-out infinite; }
 @keyframes wake-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .error-panel.waking { border-color: #f3ddba; background: #fffaf1; color: #8a6a2f; }
+
+/* Shared confirmation dialog — the component renders a native <dialog>
+   opened with showModal(); Tailwind's preflight zeroes all margins,
+   which removes the UA centering and pins the dialog to the top-left.
+   These rules restore a centered modal look app-wide. */
+dialog.confirm-dialog { margin: auto; border: 0; padding: 0; border-radius: 14px; max-width: min(440px, calc(100vw - 32px)); box-shadow: 0 24px 60px rgb(15 23 42 / .28); }
+dialog.confirm-dialog::backdrop { background: rgb(15 23 42 / .45); }
+.confirm-content { padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; }
+.confirm-description { color: var(--muted); font-size: 13px; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.button.danger { background: #dc2626; color: #fff; }
+.button.danger:hover { background: #b91c1c; }

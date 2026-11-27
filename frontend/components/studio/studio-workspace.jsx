@@ -215,12 +215,14 @@ export function StudioWorkspace() {
   const [openTabs, setOpenTabs] = useState([]);
   const [activePath, setActivePath] = useState(null);
   const [contents, setContents] = useState({}); // path -> saved content
-  const [draft, setDraft] = useState(""); // editor buffer for activePath
+  const [drafts, setDrafts] = useState({}); // path -> unsaved buffer, kept per file
+  const [fileLoading, setFileLoading] = useState(false); // active file being fetched
   const [saving, setSaving] = useState(false);
 
   const [selectedAgents, setSelectedAgents] = useState([]); // ordered ids
   const [instruction, setInstruction] = useState("");
   const [running, setRunning] = useState(false);
+  const [liveRun, setLiveRun] = useState(null); // in-progress run, polled while running
 
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
@@ -238,7 +240,22 @@ export function StudioWorkspace() {
     () => projects.find((p) => p.id === projectId) || null,
     [projects, projectId],
   );
-  const dirty = activePath !== null && contents[activePath] !== undefined && draft !== contents[activePath];
+  // The editor buffer lives per file: switching files never loses an
+  // unsaved draft (the 2026-11-27 UX review found silent draft loss).
+  const draft = activePath ? (drafts[activePath] ?? contents[activePath] ?? "") : "";
+  const tabDirty = (path) =>
+    drafts[path] !== undefined && drafts[path] !== (contents[path] ?? "");
+  const dirty = activePath !== null && tabDirty(activePath);
+  const setDraft = (value) => {
+    if (activePath) setDrafts((map) => ({ ...map, [activePath]: value }));
+  };
+  const clearDraft = (path) =>
+    setDrafts((map) => {
+      if (map[path] === undefined) return map;
+      const next = { ...map };
+      delete next[path];
+      return next;
+    });
   const tree = useMemo(() => buildTree(files), [files]);
   const lastStepByAgent = useMemo(() => {
     const map = new Map();
@@ -246,6 +263,11 @@ export function StudioWorkspace() {
     if (latest) for (const step of latest.steps) map.set(step.agent_id, step);
     return map;
   }, [runs]);
+  const liveStepByAgent = useMemo(() => {
+    const map = new Map();
+    if (liveRun) for (const step of liveRun.steps) map.set(step.agent_id, step);
+    return map;
+  }, [liveRun]);
 
   const loadProjects = useCallback(async (keepId) => {
     const list = await studioProjectsService.list();
@@ -299,7 +321,7 @@ export function StudioWorkspace() {
     setOpenTabs([]);
     setActivePath(null);
     setContents({});
-    setDraft("");
+    setDrafts({});
     setSelectedAgents([]);
     // Clear the previous project's data immediately — otherwise its
     // file tree shows briefly under the new project's title while the
@@ -366,25 +388,28 @@ export function StudioWorkspace() {
 
   const openFile = useCallback(async (path) => {
     if (!projectId) return;
-    // Re-clicking the open file must not discard unsaved edits.
-    if (path === activePath && contents[path] !== undefined && draft !== contents[path]) return;
     setOpenTabs((tabs) => (tabs.includes(path) ? tabs : [...tabs, path]));
     setActivePath(path);
+    // A cached copy or a kept draft renders instantly; the cache is
+    // invalidated whenever an Agent run or a folder sync rewrites files,
+    // so this never shows a stale version after those events. While a
+    // first fetch is in flight the editor shows "Đang tải file…" instead
+    // of the previous file's content under the new file's tab.
+    if (contents[path] !== undefined || drafts[path] !== undefined) return;
+    setFileLoading(true);
     try {
-      // Always read fresh from the server: the cache goes stale when an
-      // Agent (or a folder sync) rewrites a file that is not open.
       const file = await studioProjectsService.getFile(projectId, path);
       setContents((map) => ({ ...map, [path]: file.content }));
-      setDraft(file.content);
     } catch (err) {
       setError(getErrorMessage(err));
+    } finally {
+      setFileLoading(false);
     }
-  }, [projectId, activePath, contents, draft]);
+  }, [projectId, contents, drafts]);
 
   const switchTab = (path) => {
     setActivePath(path);
-    if (contents[path] !== undefined) setDraft(contents[path]);
-    else openFile(path);
+    if (contents[path] === undefined && drafts[path] === undefined) openFile(path);
   };
 
   const closeTab = (path) => {
@@ -393,7 +418,9 @@ export function StudioWorkspace() {
       if (activePath === path) {
         const fallback = next[next.length - 1] || null;
         setActivePath(fallback);
-        setDraft(fallback ? contents[fallback] ?? "" : "");
+        if (fallback && contents[fallback] === undefined && drafts[fallback] === undefined) {
+          openFile(fallback);
+        }
       }
       return next;
     });
@@ -405,6 +432,7 @@ export function StudioWorkspace() {
     try {
       const saved = await studioProjectsService.saveFile(projectId, activePath, draft);
       setContents((map) => ({ ...map, [activePath]: saved.content }));
+      clearDraft(activePath);
       let message = `Đã lưu ${activePath}`;
       if (handleRef.current) {
         const permission = handleRef.current.queryPermission
@@ -583,7 +611,7 @@ export function StudioWorkspace() {
       if (activePath && contents[activePath] !== undefined) {
         const fresh = await studioProjectsService.getFile(projectId, activePath);
         setContents((map) => ({ ...map, [activePath]: fresh.content }));
-        setDraft(fresh.content);
+        clearDraft(activePath);
       }
       setNotice(`Đã đọc ${count} file từ thư mục "${folderName}" lên project.`);
     } catch (err) {
@@ -624,6 +652,7 @@ export function StudioWorkspace() {
     try {
       await studioProjectsService.removeFile(projectId, activePath);
       setConfirmDelete(null);
+      clearDraft(activePath);
       closeTab(activePath);
       setContents((map) => {
         const next = { ...map };
@@ -672,6 +701,16 @@ export function StudioWorkspace() {
     if (dirty && !window.confirm("File đang mở có thay đổi chưa lưu — Agent sẽ đọc bản ĐÃ LƯU. Vẫn chạy?")) return;
     setRunning(true);
     setError("");
+    // The run endpoint answers only when the whole run is done, so poll
+    // the run list to show per-Agent progress while waiting (the backend
+    // persists each finished step plus the Agent currently working).
+    const pollId = setInterval(async () => {
+      try {
+        const list = await studioProjectsService.listRuns(projectId);
+        const current = list.find((r) => r.status === "running");
+        if (current) setLiveRun(current);
+      } catch { /* progress polling is best-effort */ }
+    }, 3000);
     try {
       const run = await studioProjectsService.run(projectId, {
         agent_ids: selectedAgents,
@@ -681,9 +720,14 @@ export function StudioWorkspace() {
       await loadProjectData(projectId);
       await loadProjects(projectId);
       if (changedPaths.size) {
-        // Invalidate cached contents of everything the Agents touched,
-        // so a later tab switch never shows the pre-run version.
+        // Invalidate cached contents AND kept drafts of everything the
+        // Agents touched, so no view ever shows the pre-run version.
         setContents((map) => {
+          const next = { ...map };
+          for (const p of changedPaths) delete next[p];
+          return next;
+        });
+        setDrafts((map) => {
           const next = { ...map };
           for (const p of changedPaths) delete next[p];
           return next;
@@ -692,7 +736,6 @@ export function StudioWorkspace() {
       if (activePath && changedPaths.has(activePath)) {
         const file = await studioProjectsService.getFile(projectId, activePath);
         setContents((map) => ({ ...map, [activePath]: file.content }));
-        setDraft(file.content);
       }
       const failed = run.steps.filter((s) => s.status !== "completed").length;
       let message = failed
@@ -706,6 +749,8 @@ export function StudioWorkspace() {
     } catch (err) {
       setError(getErrorMessage(err));
     } finally {
+      clearInterval(pollId);
+      setLiveRun(null);
       setRunning(false);
     }
   };
@@ -822,6 +867,24 @@ export function StudioWorkspace() {
             {agents.map((agent) => {
               const step = lastStepByAgent.get(agent.id);
               const order = selectedAgents.indexOf(agent.id);
+              const liveStep = liveRun ? liveStepByAgent.get(agent.id) : null;
+              const isCurrent = !!liveRun && liveRun.current_agent_id === agent.id;
+              let status;
+              if (running && isCurrent) {
+                status = <><LoaderCircle size={13} className="spin" /> Đang chạy…</>;
+              } else if (running && liveStep) {
+                status = liveStep.status === "completed"
+                  ? <><CheckCircle2 size={13} /> Đã sửa {liveStep.files_changed.length} file</>
+                  : <><XCircle size={13} /> Lỗi: {liveStep.error_code || "không rõ"}</>;
+              } else if (running && order >= 0) {
+                status = "Đang chờ";
+              } else if (step) {
+                status = step.status === "completed"
+                  ? <><CheckCircle2 size={13} /> Đã sửa {step.files_changed.length} file</>
+                  : <><XCircle size={13} /> Lỗi: {step.error_code || "không rõ"}</>;
+              } else {
+                status = "Chưa chạy";
+              }
               return (
                 <button
                   key={agent.id}
@@ -836,13 +899,7 @@ export function StudioWorkspace() {
                     {order >= 0 && <span className="st-order">{order + 1}</span>}
                   </span>
                   <span className="st-agent-model">{agent.provider} · {agent.model}</span>
-                  <span className="st-agent-status">
-                    {step
-                      ? step.status === "completed"
-                        ? <><CheckCircle2 size={13} /> Đã sửa {step.files_changed.length} file</>
-                        : <><XCircle size={13} /> Lỗi: {step.error_code || "không rõ"}</>
-                      : "Chưa chạy"}
-                  </span>
+                  <span className="st-agent-status">{status}</span>
                 </button>
               );
             })}
@@ -886,7 +943,7 @@ export function StudioWorkspace() {
                     {openTabs.map((path) => (
                       <span key={path} className={`st-tab${path === activePath ? " active" : ""}`}>
                         <button type="button" onClick={() => switchTab(path)}>
-                          {path.split("/").pop()}{path === activePath && dirty ? " •" : ""}
+                          {path.split("/").pop()}{tabDirty(path) ? " •" : ""}
                         </button>
                         <button type="button" className="st-tab-close" onClick={() => closeTab(path)} aria-label="Đóng tab">
                           <X size={12} />
@@ -905,7 +962,13 @@ export function StudioWorkspace() {
                     )}
                   </div>
                   {activePath ? (
-                    <CodeEditor value={draft} onChange={setDraft} onSave={saveFile} />
+                    fileLoading && contents[activePath] === undefined && drafts[activePath] === undefined ? (
+                      <div className="st-empty">
+                        <p><LoaderCircle size={15} className="spin" /> Đang tải file…</p>
+                      </div>
+                    ) : (
+                      <CodeEditor value={draft} onChange={setDraft} onSave={saveFile} />
+                    )
                   ) : (
                     <div className="st-empty">
                       <p>Chọn một file ở cây bên trái để xem và sửa, hoặc bấm <FilePlus2 size={14} /> để tạo file mới.</p>
@@ -918,7 +981,7 @@ export function StudioWorkspace() {
             <aside className="st-side">
               <section className="st-card">
                 <h2>Giao task cho AI</h2>
-                <p className="st-muted">Thứ tự chạy = thứ tự chọn (số trên thẻ Agent). Agent sau đọc bản Agent trước vừa sửa.</p>
+                <p className="st-muted">Mọi Agent được chọn đều nhận chung chỉ dẫn này và chạy lần lượt theo thứ tự chọn (số trên thẻ Agent). Agent sau đọc bản Agent trước vừa sửa.</p>
                 <div className="st-picked">
                   {selectedAgents.map((id, index) => {
                     const agent = agents.find((a) => a.id === id);
@@ -967,6 +1030,14 @@ export function StudioWorkspace() {
                           : <XCircle size={13} className="bad" />}
                         <strong>{step.agent_name}</strong>
                         <span>{step.status === "completed" ? `sửa ${step.files_changed.length} file` : `lỗi ${step.error_code || ""}`}</span>
+                        {step.files_total > 0 && (
+                          <span
+                            className="st-step-context"
+                            title={step.files_omitted?.length ? `Chỉ thấy tên, không có nội dung: ${step.files_omitted.join(", ")}` : undefined}
+                          >
+                            đã đọc {step.files_read}/{step.files_total} file{step.files_omitted?.length ? ` (${step.files_omitted.length} file chỉ thấy tên)` : ""}
+                          </span>
+                        )}
                         {step.summary && <span className="st-step-summary">{step.summary}</span>}
                       </p>
                     ))}
