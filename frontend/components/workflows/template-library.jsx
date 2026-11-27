@@ -9,6 +9,8 @@ import {
   ChevronRight,
   Download,
   ExternalLink,
+  KeyRound,
+  Languages,
   Loader2,
   RefreshCw,
   Search,
@@ -20,6 +22,7 @@ import {
   getWorkflowTemplatesError,
   workflowTemplatesService,
 } from "../../services/workflow-templates";
+import { CredentialBindingsPanel } from "./credential-bindings";
 import { providerService } from "../../services/providers";
 import { ModelSelect } from "../model-select";
 
@@ -46,6 +49,10 @@ export function TemplateLibrary() {
   const [mine, setMine] = useState([]);
   const [candidates, setCandidates] = useState({ available: [], updates: [] });
   const [syncOpen, setSyncOpen] = useState(false);
+  const [bindingsOpen, setBindingsOpen] = useState(false);
+  const [translating, setTranslating] = useState(false);
+  const [nameViDraft, setNameViDraft] = useState("");
+  const [nameViBusy, setNameViBusy] = useState(false);
   const [selected, setSelected] = useState({});
   const [syncBusy, setSyncBusy] = useState("");
   const [syncNote, setSyncNote] = useState("");
@@ -440,10 +447,47 @@ export function TemplateLibrary() {
     try {
       const data = await workflowTemplatesService.getTemplate(item.id);
       setDetail(data);
+      setNameViDraft(data.name_vi || "");
     } catch (err) {
       setError(getWorkflowTemplatesError(err, "Không mở được chi tiết template."));
     } finally {
       setDetailLoading(false);
+    }
+  }
+
+  async function saveNameVi() {
+    if (!detail) return;
+    setNameViBusy(true);
+    setError("");
+    try {
+      const updated = await workflowTemplatesService.renameNameVi(detail.id, nameViDraft);
+      setDetail({ ...detail, name_vi: updated.name_vi });
+      setNameViDraft(updated.name_vi || "");
+      load();
+    } catch (err) {
+      setError(getWorkflowTemplatesError(err, "Không lưu được tên tiếng Việt."));
+    } finally {
+      setNameViBusy(false);
+    }
+  }
+
+  async function translateAllNames() {
+    setTranslating(true);
+    setError("");
+    try {
+      const result = await workflowTemplatesService.translateNames({});
+      setSyncNote(
+        `Đã dịch ${result.translated} tên template sang tiếng Việt` +
+          (result.provider ? ` (bằng ${result.provider} · ${result.model})` : "") +
+          (result.failed_batches ? ` · ${result.failed_batches} đợt dịch lỗi, bấm lại để dịch tiếp.` : "") +
+          (result.remaining ? ` · còn ${result.remaining} tên chưa có tên Việt.` : "."),
+      );
+      load();
+      loadStats();
+    } catch (err) {
+      setError(getWorkflowTemplatesError(err, "Không dịch được tên template."));
+    } finally {
+      setTranslating(false);
     }
   }
 
@@ -498,7 +542,24 @@ export function TemplateLibrary() {
               : ""}
             {candidates.updates.length ? ` · ${candidates.updates.length} có bản mới` : ""}
           </button>
+          <button
+            type="button"
+            className="fx-btn"
+            onClick={() => setBindingsOpen(!bindingsOpen)}
+          >
+            <KeyRound size={15} /> Gán credential
+          </button>
+          <button
+            type="button"
+            className="fx-btn"
+            onClick={translateAllNames}
+            disabled={translating}
+          >
+            {translating ? <Loader2 size={15} className="spin" /> : <Languages size={15} />}{" "}
+            {translating ? "Đang dịch tên…" : "Dịch tên tiếng Việt"}
+          </button>
         </div>
+        {bindingsOpen ? <CredentialBindingsPanel /> : null}
         {syncOpen ? (
           <div className="n8n-node">
             <h3>Chọn template muốn thêm vào tài khoản</h3>
@@ -521,8 +582,8 @@ export function TemplateLibrary() {
                     }
                   />
                   <span>
-                    <strong>{template.name}</strong> · {template.category} · {template.node_count}{" "}
-                    node · v{template.version}
+                    <strong>{template.name_vi || template.name}</strong> · {template.category} ·{" "}
+                    {template.node_count} node · v{template.version}
                     {template.compatibility === "needs_community_nodes"
                       ? " · Cần community node"
                       : ""}
@@ -782,7 +843,7 @@ export function TemplateLibrary() {
       {detail ? (
         <section className="fx-card">
           <h2>
-            {detail.name}
+            {detail.name_vi || detail.name}
             <span style={{ marginLeft: "auto" }}>
               <button type="button" className="fx-btn" onClick={() => setDetail(null)}>
                 <X size={15} /> Đóng
@@ -797,6 +858,30 @@ export function TemplateLibrary() {
               ? " · Cần community node: " + detail.community_nodes.join(", ")
               : " · Tương thích n8n chuẩn"}
           </p>
+          {detail.name_vi ? (
+            <p className="fx-run-meta">Tên gốc: {detail.name}</p>
+          ) : null}
+          <div className="tpl-filters">
+            <label className="fx-field">
+              Tên tiếng Việt
+              <input
+                className="fx-input"
+                value={nameViDraft}
+                onChange={(event) => setNameViDraft(event.target.value)}
+                placeholder="Để trống để dùng tên gốc"
+                maxLength={300}
+              />
+            </label>
+            <button
+              type="button"
+              className="fx-btn"
+              onClick={saveNameVi}
+              disabled={nameViBusy}
+            >
+              {nameViBusy ? <Loader2 size={15} className="spin" /> : <Check size={15} />} Lưu
+              tên Việt
+            </button>
+          </div>
           {detail.security_flag ? (
             <p className="fx-alert" role="alert">
               <ShieldAlert size={14} /> Nghi ngờ có secret hardcode trong tham số — cần kiểm tra kỹ
@@ -1125,7 +1210,10 @@ export function TemplateLibrary() {
                   className="tpl-card"
                   onClick={() => openDetail(item)}
                 >
-                  <strong>{item.name}</strong>
+                  <strong>{item.name_vi || item.name}</strong>
+                  {item.name_vi ? (
+                    <span className="fx-run-meta">Tên gốc: {item.name}</span>
+                  ) : null}
                   <span className="fx-run-meta">
                     {item.category} · {item.node_count} node ·{" "}
                     {COMPLEXITY_TEXT[item.complexity] || item.complexity} · v{item.version}

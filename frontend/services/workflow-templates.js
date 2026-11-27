@@ -50,6 +50,18 @@ export const workflowTemplatesService = {
     );
     return data;
   },
+  async renameNameVi(id, nameVi, signal) {
+    const { data } = await api.patch(
+      `${path}/templates/${id}/name-vi`,
+      { name_vi: nameVi },
+      { signal },
+    );
+    return data;
+  },
+  async translateNames(payload, signal) {
+    const { data } = await api.post(`${path}/templates/translate-names`, payload || {}, { signal });
+    return data;
+  },
   async listMine(signal) {
     const { data } = await api.get(`${path}/mine`, { signal });
     return data;
@@ -129,6 +141,9 @@ export function getWorkflowTemplatesError(error, fallback) {
   }
   if (code === "template_not_approved") {
     return "Template chưa được duyệt nên chưa cài được. Hãy duyệt template trước.";
+  }
+  if (code === "credentials_missing") {
+    return "Chưa có provider AI nào có key để dịch tên. Hãy lưu key ở trang Providers (ví dụ Groq) rồi thử lại.";
   }
   if (code === "user_workflow_not_found") {
     return "Không tìm thấy workflow đã cài này. Hãy tải lại danh sách.";

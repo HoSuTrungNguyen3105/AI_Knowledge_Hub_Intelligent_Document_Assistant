@@ -130,6 +130,11 @@ ERRORS = {
         "Only approved templates can be installed. Review the template first.",
     ),
     "user_workflow_not_found": (404, "That installed workflow does not exist."),
+    "credential_binding_invalid": (
+        422,
+        "That credential does not exist in n8n or its type does not match the binding.",
+    ),
+    "credential_binding_not_found": (404, "That credential binding does not exist."),
     "github_unreachable": (
         502,
         "GitHub could not be reached or refused the request (rate limit without a token is common).",
