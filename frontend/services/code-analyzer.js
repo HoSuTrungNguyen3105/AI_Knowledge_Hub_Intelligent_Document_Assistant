@@ -18,6 +18,10 @@ export const codeAnalyzerService = {
     const { data } = await api.get(projectPath(id), { signal });
     return data;
   },
+  async architecture(id, signal) {
+    const { data } = await api.get(`${projectPath(id)}/architecture`, { signal });
+    return data.map;
+  },
   async getFile(projectId, fileId, signal) {
     const { data } = await api.get(
       `${projectPath(projectId)}/files/${encodeURIComponent(fileId)}`,
