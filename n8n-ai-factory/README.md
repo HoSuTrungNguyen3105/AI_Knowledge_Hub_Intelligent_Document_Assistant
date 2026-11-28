@@ -1,5 +1,17 @@
 # AI Agent Factory — 10 AI Agent phối hợp qua n8n
 
+> ⚠️ **CẬP NHẬT — Code Execution Service (CES) ĐÃ GỠ KHỎI GÓI NÀY.**
+> `docker-compose.yml` nay **chỉ còn service `n8n`** (cổng 5678); thư mục
+> `code-execution-service/` đã bị xoá, nên **Dashboard ở cổng 8080 không
+> còn tồn tại** và các workflow Factory kiểu cũ gọi CES (ghi file, build
+> trong sandbox, đóng ZIP, ghi MongoDB qua `/db/*` — gồm pipeline
+> 01/04/05/06 mô tả bên dưới) **không còn service để gọi và sẽ không chạy
+> được nữa**. Workflow **07** (7 Agent tự chọn model) và **08** (bản tin
+> theo lịch) không phụ thuộc CES nên vẫn dùng bình thường, kể cả cầu nối
+> AI Factory trong MindFlow. Phần mô tả kiến trúc/pipeline bên dưới là
+> của bản cũ có CES — giữ lại để tham khảo lịch sử, không còn là hướng
+> dẫn chạy hiện hành.
+
 Hệ thống tự động hoá bằng **n8n**: 10 AI Agent (Project Manager, Business Analyst,
 UI/UX Designer, Frontend Architect, Frontend Developer, Backend Architect,
 Backend Developer, Integration Agent, QA Engineer, Code Reviewer) phối hợp
@@ -25,8 +37,7 @@ Người dùng ──► Dashboard (:8080) ──► n8n Main Orchestrator (:567
 
 ## 1. Yêu cầu
 
-- Docker + Docker Compose (máy bạn kiểm soát — service thực thi cần quyền
-  Docker daemon để tạo sandbox, xem mục Bảo mật).
+- Docker + Docker Compose.
 - Một API key **OpenRouter** (https://openrouter.ai/keys).
 - n8n mục tiêu: **1.x** (đã kiểm theo format export của n8n 1.x; xem mục
   "Giới hạn trung thực" ở cuối).
@@ -44,21 +55,17 @@ Mở `.env` và đặt:
   `MONGODB_DATABASE`: tên database trên cluster đó (mặc định
   `mindflow_ai`). Xem dữ liệu bằng Atlas Data Explorer hoặc MongoDB
   Compass với cùng URI đó.
-- `HOST_WORKSPACES_DIR`: **đường dẫn tuyệt đối trên máy host** của thư mục
-  `ces-data/workspaces` trong thư mục dự án này. Ví dụ Windows:
-  `C:/ai-agent-factory/ces-data/workspaces`; macOS/Linux:
-  `/home/you/ai-agent-factory/ces-data/workspaces`. Bắt buộc ở chế độ sandbox
-  Docker để container sandbox mount đúng file mà service đã ghi.
-
 Khởi động:
 
 ```bash
 docker compose up -d --build
-docker compose ps        # mongo, n8n và code-exec-service up
+docker compose ps        # chỉ còn n8n up
 ```
 
 - n8n: http://localhost:5678 (lần đầu tạo tài khoản owner).
-- Dashboard: http://localhost:8080
+- Dashboard ở cổng 8080 **đã gỡ cùng Code Execution Service** — không còn
+  trang theo dõi riêng; xem lượt chạy ngay trong n8n (Executions) hoặc
+  trang AI Factory của MindFlow.
 
 ## 3. Khoá API và credential (bắt buộc đọc)
 
@@ -178,6 +185,11 @@ các file đó.
 
 ## 7. Ví dụ chạy thử (đầu → cuối)
 
+> ⚠️ Ví dụ này thuộc pipeline bản cũ (đi qua Dashboard + Code Execution
+> Service) — **không còn chạy được** sau khi gỡ CES. Giữ lại để tham khảo
+> cách pipeline cũ vận hành. Muốn chạy đội Agent hiện nay: dùng workflow
+> 07 (mục 11) hoặc trang AI Factory trong MindFlow (mục 11.1).
+
 1. Mở Dashboard http://localhost:8080, chọn chế độ **A — Full Website**, nhập:
 
    > Xây dựng website bán giày sneaker bằng React + Vite + Tailwind CSS:
@@ -209,30 +221,15 @@ các file đó.
    npm run build   # kiểm tra build
    ```
 
-## 8. Code Execution Service — API & an toàn
+## 8. Code Execution Service — ĐÃ GỠ
 
-| Endpoint | Việc |
-|---|---|
-| `POST /projects` `{project_id}` | Tạo workspace |
-| `POST /projects/:id/files` `{files:[{path,content}]}` | Ghi file (chặn `..`, đường dẫn tuyệt đối, file ẩn nguy hiểm; giới hạn 200 file/lượt, 1MB/file, 20MB/lượt) |
-| `GET /projects/:id/files` | Cây file hiện tại |
-| `POST /projects/:id/import` `{zip_base64}` | Giải nén project có sẵn (tối đa 500 entries / 50MB) |
-| `POST /projects/:id/run` `{steps}` | Chạy install/lint/test/build trong sandbox |
-| `POST /projects/:id/package` | Đóng ZIP (luôn loại `node_modules`, `.git`, `.env*`) |
-| `GET /projects/:id/download` | Tải ZIP |
-| `POST /db/projects`, `/db/projects/update`, `/db/tasks`, `/db/runs`, `/db/runs/update`, `/db/reviews`, `/db/artifacts` | Workflow ghi dữ liệu vào MongoDB (nội bộ) |
-| `GET /api/projects`, `GET /api/projects/:id` | Trạng thái cho Dashboard (đọc MongoDB) |
-
-Sandbox Docker cho mỗi bước chạy: container dùng một lần từ image
-`node:20-alpine`, `--memory 1g --cpus 2 --pids-limit 256`, timeout 300s,
-**không mount secret nào**, **tắt network** cho lint/test/build (chỉ bước
-install được ra mạng để tải package từ npm registry). Mỗi project một thư
-mục riêng — service không cho truy cập chéo project khác.
-
-> ⚠️ Để spawn sandbox, CES được mount `/var/run/docker.sock` — tương đương
-> quyền Docker daemon trên host. Chỉ chạy hệ thống này trên máy bạn kiểm
-> soát. Chế độ `SANDBOX_MODE=local` chạy code AI **không có cô lập** — chỉ
-> dùng khi phát triển và hiểu rõ rủi ro.
+Service này (API ghi file / chạy build trong Docker sandbox / đóng ZIP /
+phục vụ Dashboard ở cổng 8080, mount `/var/run/docker.sock`) **đã được gỡ
+hẳn khỏi gói**: không còn service trong `docker-compose.yml`, thư mục
+`code-execution-service/` đã xoá. Bảng API cũ và các lưu ý an toàn sandbox
+không còn áp dụng. Hệ quả: các workflow Factory kiểu cũ gọi CES qua
+`CODE_EXEC_URL` (pipeline 01/04/05/06) không còn service để gọi; workflow
+07 và 08 không phụ thuộc CES nên không bị ảnh hưởng.
 
 
 ## 11. Workflow 07 — 7 Agent tự chọn model theo task (Dynamic Model Routing)
@@ -346,18 +343,16 @@ ngay sau khi import.
 - **`missing_env_key`**: file `.env` cạnh docker-compose chưa có khoá của provider đang chọn, hoặc đã sửa `.env` mà chưa `docker compose up -d` lại để n8n nhận biến mới.
 - **Webhook 404**: workflow chưa Active, hoặc sai path — kiểm tra cả 6
   workflow đã bật.
-- **Dashboard báo `database_unavailable` hoặc workflow lỗi ở node `(CES)`**:
-  Code Execution Service chưa nối được MongoDB Atlas — kiểm tra
-  `MONGODB_URI` trong `.env` (đã điền chưa, mật khẩu đúng chưa), Atlas →
-  Network Access đã cho IP máy bạn vào chưa, và
-  `docker compose logs code-exec-service`.
-- **Lỗi `HOST_WORKSPACES_DIR is not configured`** ở bước build: đặt biến này
-  trong `.env` (đường dẫn host tuyệt đối) rồi `docker compose up -d` lại.
+- **Workflow lỗi ở node gọi CES / `database_unavailable`**: các workflow
+  Factory kiểu cũ gọi Code Execution Service — service này **đã gỡ khỏi
+  gói** nên lỗi đó là đương nhiên, không phải sự cố cấu hình. Chỉ
+  workflow 07/08 là còn chạy được.
 - **Agent trả `model_did_not_return_valid_json`**: model đó không tuân thủ
-  JSON — đổi model cho Agent đó trong node Resolve Agent Config hoặc qua
-  Dashboard. Lượt chạy lỗi vẫn được lưu đầy đủ trong `agent_runs`.
-- **Chạy lâu**: bình thường — 10 Agent + build. Xem tiến độ ở Dashboard hoặc
-  collection `agent_runs` trong MongoDB; n8n Executions cho thấy node đang chạy.
+  JSON — đổi model cho Agent đó trong node Resolve Agent Config. Lượt
+  chạy lỗi vẫn được lưu đầy đủ trong `agent_runs`.
+- **Chạy lâu**: bình thường — 10 Agent + build. Xem tiến độ ở n8n
+  Executions (cho thấy node đang chạy) hoặc collection `agent_runs`
+  trong MongoDB.
 
 ## 10. Giới hạn trung thực
 
@@ -374,6 +369,6 @@ ngay sau khi import.
 - Frontend do Developer Agent sinh là một project Vite độc lập; backend (nếu
   có) nằm trong thư mục `server/` của cùng project và chạy riêng theo ghi
   chú của Backend Developer — CES chỉ build frontend ở bước `build`.
-- Dashboard là bản MVP một file tĩnh do CES phục vụ: đủ form 3 chế độ, chọn
-  model từng Agent, theo dõi 10 Agent, QA, log và tải ZIP — đúng phạm vi
-  quản lý cần thiết, không phải một SPA riêng.
+- Dashboard theo dõi (bản MVP một file tĩnh do CES phục vụ ở cổng 8080)
+  **đã gỡ cùng Code Execution Service** — theo dõi lượt chạy nay xem trực
+  tiếp trong n8n (Executions) hoặc trang AI Factory của MindFlow.

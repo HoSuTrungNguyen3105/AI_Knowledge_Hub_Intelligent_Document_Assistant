@@ -1,10 +1,12 @@
 # AI Agent Factory — development environment
-# Services: n8n (orchestration) + Code Execution Service (sandboxed
-# file/build/ZIP); factory data lives in MongoDB Atlas (MONGODB_URI in
-# .env). Copy .env.example to .env first.
-# n8n keeps its own internal data in SQLite (the n8n_data volume); the
-# factory's projects/tasks/runs/reviews live in MongoDB, written by the
-# Code Execution Service — the workflows never touch a database directly.
+# Services: n8n only. The Code Execution Service (sandboxed
+# file/build/ZIP + Dashboard on :8080) has been REMOVED from this
+# package — factory workflow JSONs that called it (via CODE_EXEC_URL)
+# no longer have a service to call. Copy .env.example to .env first.
+# n8n keeps its own internal data in SQLite (the n8n_data volume).
+# Note: this compose never had a MongoDB service — factory data lived
+# in MongoDB Atlas and was only ever read/written by the removed Code
+# Execution Service, so nothing in this package uses MongoDB anymore.
 
 services:
   n8n:
@@ -32,34 +34,6 @@ services:
       - "${N8N_PORT:-5678}:5678"
     volumes:
       - n8n_data:/home/node/.n8n
-
-  code-exec-service:
-    restart: unless-stopped
-    build: ./code-execution-service
-    environment:
-      PORT: 8080
-      DATA_DIR: /data
-      # docker | local (local = dev only, no isolation)
-      SANDBOX_MODE: ${SANDBOX_MODE:-docker}
-      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-node:20-alpine}
-      # Absolute path of ./ces-data/workspaces ON THE HOST — needed so the
-      # sandbox containers (spawned via the host Docker daemon) mount the
-      # same files the service writes. Set in .env; see README.
-      HOST_WORKSPACES_DIR: ${HOST_WORKSPACES_DIR:-}
-      # URL the *user's browser* uses to download ZIPs:
-      PUBLIC_BASE_URL: ${PUBLIC_CES_URL:-http://localhost:8080}
-      # Factory data store: MongoDB Atlas — same cluster as MindFlow.
-      # The URI (with the database password) comes from .env, never from
-      # this file; MONGODB_DATABASE picks the database on that cluster.
-      MONGODB_URI: ${MONGODB_URI:-}
-      MONGODB_DATABASE: ${MONGODB_DATABASE:-mindflow_ai}
-    ports:
-      - "${CES_PORT:-8080}:8080"
-    volumes:
-      - ./ces-data:/data
-      # Required for spawning sandbox containers. This grants the service
-      # Docker-daemon access — run it only on a machine you control.
-      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   n8n_data:

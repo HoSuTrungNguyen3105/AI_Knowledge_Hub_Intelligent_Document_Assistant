@@ -1,9 +1,17 @@
 # HƯỚNG DẪN DÙNG — n8n AI Agent Factory (bản tích hợp trong repo MindFlow)
 
+> ⚠️ **CẬP NHẬT — Code Execution Service (CES) ĐÃ GỠ KHỎI GÓI NÀY.**
+> Docker Compose nay **chỉ còn service `n8n`**; Dashboard ở
+> http://localhost:8080 không còn nữa. Các bước bên dưới còn nhắc
+> Dashboard / `code-exec-service` / cổng 8080 (Bước 3, 5, 6 và phần lỗi
+> thường gặp) thuộc **bản cũ** và không còn áp dụng — pipeline 10 Agent
+> qua Dashboard đã ngừng hoạt động. Phần còn dùng bình thường: **Bước 7**
+> (workflow 07), **Bước 8** (chạy đội Agent trong MindFlow) và **Bước 9**
+> (workflow 08 + Telegram) — các phần này không phụ thuộc CES.
+
 Thư mục `n8n-ai-factory/` này là hệ thống 10 AI Agent chạy bằng n8n, nằm
-**độc lập** với backend/frontend MindFlow: nó có Docker Compose, database
-MongoDB và service thực thi riêng. MindFlow không bị ảnh hưởng gì khi
-bạn chạy hay tắt hệ thống này.
+**độc lập** với backend/frontend MindFlow: nó có Docker Compose riêng.
+MindFlow không bị ảnh hưởng gì khi bạn chạy hay tắt hệ thống này.
 
 Luồng hoạt động: bạn nhập yêu cầu → Project Manager chia việc → các Agent
 phân tích/thiết kế → Developer sinh code → Integration đối chiếu → QA chạy
@@ -31,19 +39,14 @@ notepad .env
 
 Trong file `.env` vừa tạo, điền:
 
-1. `MONGODB_URI` + `MONGODB_DATABASE`: chuỗi kết nối **MongoDB Atlas**
-   của bạn (cùng cluster với MindFlow — lấy trong Atlas: Connect →
-   Drivers) và tên database `mindflow_ai`. **URI chứa mật khẩu database
-   nên file `.env` này tuyệt đối không được commit.** Xem dữ liệu: mở
-   Atlas trên web (Data Explorer) hoặc MongoDB Compass bằng chính URI đó.
-2. `HOST_WORKSPACES_DIR`: đường dẫn tuyệt đối của thư mục workspaces trên
-   máy bạn. Nếu repo nằm ở
-   `F:\Clone\clone-digotal_3\AI_Application\AI_Knowledge_Hub_Intelligent_Document_Assistant`
-   thì điền (dùng dấu `/`):
-   ```
-   HOST_WORKSPACES_DIR=F:/Clone/clone-digotal_3/AI_Application/AI_Knowledge_Hub_Intelligent_Document_Assistant/n8n-ai-factory/ces-data/workspaces
-   ```
-3. `GROQ_API_KEY` và `OLLAMA_API_KEY`: mở file **`backend\.env` ở gốc repo
+1. `MONGODB_URI` + `MONGODB_DATABASE`: **không còn bắt buộc** — trước đây
+   chỉ Code Execution Service đọc hai biến này, mà CES đã gỡ khỏi gói
+   nên không còn service nào trong compose dùng tới MongoDB nữa. Giữ lại
+   trong `.env` chỉ để tham chiếu cluster Atlas dùng chung với MindFlow
+   (xem dữ liệu cũ: mở Atlas trên web — Data Explorer — hoặc MongoDB
+   Compass bằng chính URI đó). **URI chứa mật khẩu database nên file
+   `.env` này tuyệt đối không được commit.**
+2. `GROQ_API_KEY` và `OLLAMA_API_KEY`: mở file **`backend\.env` ở gốc repo
    MindFlow** (file bạn đang dùng cho backend), copy đúng 2 giá trị đó dán
    sang. Đây là cách "kết hợp key vào hệ thống n8n": workflow JSON chỉ
    chứa **tên biến** (`GROQ_API_KEY` / `OLLAMA_API_KEY`), lúc chạy n8n tự
@@ -67,9 +70,9 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Lần đầu build vài phút. Đạt khi `n8n` và
-`code-exec-service` đều Up. Kiểm tra nhanh: mở http://localhost:8080/health
-thấy `{"status":"ok"...}` là service thực thi đã sống.
+Đạt khi chỉ `n8n` Up (compose không còn service nào khác — Code
+Execution Service đã gỡ). Kiểm tra nhanh: mở http://localhost:5678 thấy
+trang đăng nhập/tạo tài khoản owner của n8n là đã sống.
 
 ## Bước 4 — Thiết lập n8n (làm 1 lần)
 
@@ -84,6 +87,11 @@ thấy `{"status":"ok"...}` là service thực thi đã sống.
    **Phải Active cả 6 workflow** — thiếu một cái là hệ thống gọi tới sẽ 404.
 
 ## Bước 5 — Chạy thử (ví dụ website bán giày sneaker)
+
+> ⚠️ Bước này thuộc **bản cũ** (chạy qua Dashboard + Code Execution
+> Service ở cổng 8080) — **không còn chạy được** sau khi gỡ CES. Muốn
+> chạy đội Agent hiện nay: xem **Bước 7** (workflow 07) hoặc **Bước 8**
+> (trang AI Factory trong MindFlow).
 
 1. Mở Dashboard http://localhost:8080.
 2. Nhà cung cấp để mặc định **Groq** (model tự điền `openai/gpt-oss-120b` /
@@ -114,6 +122,10 @@ curl -X POST http://localhost:5678/webhook/ai-factory/start -H "Content-Type: ap
 ```
 
 ## Bước 6 — Đổi provider / model / chế độ
+
+> Lưu ý: các mục nhắc **Dashboard** trong bước này thuộc bản cũ — Dashboard
+> đã gỡ cùng CES. Đổi provider/model nay làm trong node **Resolve Agent
+> Config** của workflow, hoặc qua trang AI Factory trong MindFlow.
 
 - **Đổi provider**: ô "Nhà cung cấp AI" trên Dashboard (Groq / Ollama
   Cloud / OpenRouter) — model từng Agent tự đổi theo. Muốn đổi mặc định
@@ -220,12 +232,11 @@ chưa có, trang kết quả sẽ ghi rõ vai trò đó bị bỏ qua vì
 |---|---|
 | Agent báo `missing_env_key` | `.env` chưa có key của provider đang chọn, hoặc chưa `docker compose up -d` lại sau khi sửa `.env` |
 | Webhook 404 | Chưa Active đủ 6 workflow, hoặc gọi sai path |
-| Dashboard báo `database_unavailable` / workflow lỗi ở node `(CES)` | Chưa điền `MONGODB_URI` trong `.env`, mật khẩu trong URI sai, hoặc Atlas chưa cho IP máy bạn vào (Atlas → Network Access). Xem thêm `docker compose logs code-exec-service` |
-| Bước build báo `HOST_WORKSPACES_DIR is not configured` | Chưa điền biến này ở Bước 2, hoặc đường dẫn sai |
-| Agent báo `model_did_not_return_valid_json` | Model đó không tuân thủ JSON — đổi model cho Agent đó trên Dashboard/node Resolve Agent Config. Lượt lỗi vẫn lưu trong collection `agent_runs` (MongoDB) để xem lại |
-| Chạy lâu bất thường | Xem n8n → Executions để biết đang kẹt ở node nào; xem Dashboard hoặc collection `agent_runs` trong MongoDB để biết Agent nào đang chạy |
+| Workflow lỗi ở node `(CES)` / báo `database_unavailable` | Các workflow Factory kiểu cũ gọi Code Execution Service — service này **đã gỡ khỏi gói** nên lỗi là đương nhiên, không phải sự cố cấu hình; chỉ workflow 07/08 còn chạy được |
+| Agent báo `model_did_not_return_valid_json` | Model đó không tuân thủ JSON — đổi model cho Agent đó trong node Resolve Agent Config. Lượt lỗi vẫn lưu trong collection `agent_runs` (MongoDB) để xem lại |
+| Chạy lâu bất thường | Xem n8n → Executions để biết đang kẹt ở node nào và Agent nào đang chạy |
 | Trang AI Factory (MindFlow) báo không kết nối được n8n | n8n chưa chạy (`docker compose up -d`), workflow 07 chưa Publish/Active, hoặc backend MindFlow không tới được `localhost:5678` (kiểm tra `N8N_WEBHOOK_BASE_URL` trong `backend/.env`) |
 | Lượt chạy AI Factory kẹt "Đang chạy" rồi kết thúc `run_timed_out` | n8n chạy xong nhưng không gọi callback về được: backend MindFlow đang nghe ở `127.0.0.1` (chạy lại với `--host 0.0.0.0 --port 8000`), tường lửa Windows chặn cổng 8000, hoặc `N8N_FACTORY_CALLBACK_BASE_URL` sai. Kiểm tra thêm Executions trong n8n xem node Callback to MindFlow có lỗi không |
 
-Chi tiết kiến trúc, API của Code Execution Service và các giới hạn an
-toàn: xem **README.md** trong thư mục này.
+Chi tiết kiến trúc và các giới hạn an toàn: xem **README.md** trong
+thư mục này (mục 8 của README ghi lại việc gỡ Code Execution Service).
