@@ -18,6 +18,7 @@ from app.models.base import utcnow
 from app.repositories.chat import ChatRepository
 from app.repositories.providers import ProviderRepository
 from app.schemas.code_analyzer import (
+    CodeArchitectureOut,
     CodeCallbackIn,
     CodeCallbackOut,
     CodeFileDetail,
@@ -32,7 +33,12 @@ from app.services.ai.base_provider import ProviderError
 from app.services.ai.chat import ChatHTTP
 from app.services.ai.chat_types import ChatRequest, ChatTurn
 from app.services.ai.registry import PROVIDERS
-from app.services.code_parser import MAX_ZIP_BYTES, parse_codebase
+from app.services.architecture_map import build_architecture_map
+from app.services.code_parser import (
+    MAX_ZIP_BYTES,
+    inventory_from_names,
+    parse_codebase,
+)
 from app.services.synthesis import require_chat_target
 
 PROJECTS = "code_projects"
@@ -391,6 +397,38 @@ class CodeAnalyzerService:
             report_markdown=doc.get("report_markdown") or "",
         )
 
+    async def get_architecture(
+        self, user_id: UUID, project_id: UUID
+    ) -> CodeArchitectureOut:
+        """The layered architecture map of one project, built on read
+        from the stored static parse (paths, roles, import edges) and
+        the archive inventory stored at ingest time."""
+        doc = await self._require_project(user_id, project_id)
+        cursor = (
+            self.db[FILES]
+            .find({"project_id": str(project_id)})
+            .sort("file_path", 1)
+        )
+        files = [
+            {
+                "file_path": f["file_path"],
+                "language": f.get("language", ""),
+                "role_tag": f.get("role_tag", ""),
+                "imports": f.get("imports") or [],
+                "imported_by": f.get("imported_by") or [],
+            }
+            async for f in cursor
+        ]
+        payload = build_architecture_map(
+            project_name=doc["name"],
+            files=files,
+            inventory=doc.get("inventory") or None,
+            has_report=bool(doc.get("report_markdown")),
+        )
+        return CodeArchitectureOut(
+            project_id=project_id, name=doc["name"], map=payload
+        )
+
     async def get_file(
         self, user_id: UUID, project_id: UUID, file_id: UUID
     ) -> CodeFileDetail:
@@ -479,6 +517,9 @@ class CodeAnalyzerService:
                 "primary_language": "javascript",
             },
             "diagram_data": diagram,
+            "inventory": inventory_from_names(
+                [spec["file_path"] for spec in DEMO_FILES]
+            ),
             "created_at": now,
             "updated_at": now,
         }
@@ -566,6 +607,7 @@ class CodeAnalyzerService:
                     for d in docs
                 ]
             ),
+            "inventory": parsed.get("inventory") or {},
             "created_at": now,
             "updated_at": now,
         }

@@ -61,6 +61,16 @@ class CodeProjectDetail(CodeProjectSummary):
     report_markdown: str = ""
 
 
+class CodeArchitectureOut(BaseModel):
+    project_id: UUID
+    name: str
+    # The architecture-map payload (see services/architecture_map.py):
+    # header, language chips, layered diagram nodes/wires, reading
+    # cards and the scope note, precomputed by the backend so the UI
+    # renders it verbatim.
+    map: dict = Field(default_factory=dict)
+
+
 class CodeFileDetail(BaseModel):
     id: UUID
     project_id: UUID

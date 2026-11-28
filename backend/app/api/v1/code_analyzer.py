@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, File, Form, Header, UploadFile
 
 from app.api.dependencies import AppSettings, CurrentUser, Database
 from app.schemas.code_analyzer import (
+    CodeArchitectureOut,
     CodeCallbackIn,
     CodeCallbackOut,
     CodeFileDetail,
@@ -106,6 +107,17 @@ async def regenerate_report(
     return await _service(db, settings, chat_http).regenerate_report(
         user.id, project_id, provider=provider or None, model=model or None
     )
+
+
+@router.get(
+    "/projects/{project_id}/architecture", response_model=CodeArchitectureOut
+)
+async def get_architecture(
+    project_id: UUID, user: CurrentUser, db: Database, settings: AppSettings
+):
+    """The layered architecture map (header, language chips, diagram,
+    reading cards, scope note) built from the stored static parse."""
+    return await _service(db, settings).get_architecture(user.id, project_id)
 
 
 @router.get("/projects/{project_id}", response_model=CodeProjectDetail)

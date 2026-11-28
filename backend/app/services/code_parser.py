@@ -252,9 +252,173 @@ def role_tag_for(path: str) -> str:
     return "Module"
 
 
+# --- archive inventory (for the architecture map) -------------------------
+# The map report mirrors a hand-written repository map: extension-based
+# file counts over every source/config/doc path in the archive, with
+# dependency, build and cache folders excluded. Content is only read for
+# the code files above; the inventory below works on names, plus the few
+# manifest files whose dependency lists identify the stack honestly.
+
+COUNT_CATEGORIES: tuple[tuple[str, str, str, frozenset], ...] = (
+    ("python", "Python files", "Python", frozenset({".py"})),
+    ("javascript-jsx", "JavaScript JSX", "JavaScript JSX", frozenset({".jsx"})),
+    ("typescript-tsx", "TypeScript TSX", "TypeScript TSX", frozenset({".tsx"})),
+    ("javascript", "JavaScript", "JavaScript", frozenset({".js", ".mjs", ".cjs"})),
+    ("typescript", "TypeScript", "TypeScript", frozenset({".ts"})),
+    ("markdown", "Markdown", "Markdown", frozenset({".md", ".markdown"})),
+    ("json", "JSON", "JSON", frozenset({".json"})),
+    ("css", "CSS", "CSS", frozenset({".css", ".scss", ".sass", ".less"})),
+    ("html", "HTML", "HTML", frozenset({".html", ".htm"})),
+    ("yaml", "YAML", "YAML", frozenset({".yaml", ".yml"})),
+    ("toml", "TOML", "TOML", frozenset({".toml"})),
+)
+_CATEGORY_BY_EXT = {
+    ext: (key, label, short)
+    for key, label, short, exts in COUNT_CATEGORIES
+    for ext in exts
+}
+_SPECIAL_COUNTED_NAMES = {"dockerfile", "makefile", "jenkinsfile", "vagrantfile"}
+
+# Manifest dependency name -> display technology. Detection reads the
+# manifest text only (never code), so the map can name the stack it
+# actually saw instead of guessing from folder names.
+_TECH_SIGNALS: tuple[tuple[str, str], ...] = (
+    ("next", "Next.js"),
+    ("react", "React"),
+    ("vue", "Vue"),
+    ("@angular/core", "Angular"),
+    ("svelte", "Svelte"),
+    ("express", "Express"),
+    ("fastify", "Fastify"),
+    ("@nestjs/core", "NestJS"),
+    ("fastapi", "FastAPI"),
+    ("django", "Django"),
+    ("flask", "Flask"),
+    ("motor", "MongoDB"),
+    ("pymongo", "MongoDB"),
+    ("mongoose", "MongoDB"),
+    ("mongodb", "MongoDB"),
+    ("prisma", "Prisma"),
+    ("pg", "PostgreSQL"),
+    ("psycopg", "PostgreSQL"),
+    ("mysql2", "MySQL"),
+    ("redis", "Redis"),
+    ("ioredis", "Redis"),
+    ("firebase", "Firebase"),
+    ("@supabase/supabase-js", "Supabase"),
+)
+_MANIFEST_NAMES = {
+    "package.json", "requirements.txt", "pyproject.toml", "pipfile",
+    "go.mod", "gemfile", "composer.json",
+}
+
+
+def _counted(path: str) -> bool:
+    """Whether an archive path counts toward the inventory totals."""
+    parts = path.split("/")
+    if any(part in SKIP_DIRS for part in parts[:-1]):
+        return False
+    name = parts[-1]
+    if name in SKIP_NAMES or name.startswith("."):
+        return False
+    return not name.endswith((".min.js", ".min.css", ".snap"))
+
+
+def inventory_from_names(names: list[str]) -> dict:
+    """Extension counts + presence flags over archive entry names."""
+    counts: Counter = Counter()
+    other = 0
+    total = 0
+    basenames = []
+    for path in names:
+        if not _counted(path):
+            continue
+        total += 1
+        name = path.rsplit("/", 1)[-1]
+        basenames.append(name.lower())
+        ext = posixpath.splitext(name)[1].lower()
+        category = _CATEGORY_BY_EXT.get(ext)
+        if category:
+            counts[category[0]] += 1
+        else:
+            other += 1
+    ordered = [
+        {"key": key, "label": label, "short": short, "count": counts[key]}
+        for key, label, short, _exts in COUNT_CATEGORIES
+        if counts.get(key)
+    ]
+    if other:
+        ordered.append(
+            {"key": "other", "label": "Other files", "short": "other", "count": other}
+        )
+    flags = {
+        "docker_compose": any(
+            n in {"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"}
+            for n in basenames
+        ),
+        "dockerfile": any(
+            n == "dockerfile" or n.startswith("dockerfile.") for n in basenames
+        ),
+        "readme": any(n.startswith("readme") for n in basenames),
+        "package_json": "package.json" in basenames,
+        "python_manifest": any(
+            n in {"requirements.txt", "pyproject.toml", "pipfile"} for n in basenames
+        ),
+    }
+    return {"counts": ordered, "total_counted": total, "flags": flags, "tech": []}
+
+
+def zip_entry_names(data: bytes) -> list[str]:
+    """All file entry names of the archive, common root stripped."""
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        return []
+    names = [
+        info.filename.replace("\\", "/")
+        for info in archive.infolist()
+        if not info.is_dir()
+    ]
+    return _strip_common_root(names)
+
+
+def _detect_tech(data: bytes, names: list[str]) -> list[str]:
+    """Technologies named by the archive's own dependency manifests."""
+    wanted = {
+        name for name in names if name.rsplit("/", 1)[-1].lower() in _MANIFEST_NAMES
+    }
+    if not wanted:
+        return []
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile:
+        return []
+    infos = [info for info in archive.infolist() if not info.is_dir()]
+    stripped = _strip_common_root(
+        [info.filename.replace("\\", "/") for info in infos]
+    )
+    by_name = {}
+    for info, name in zip(infos, stripped, strict=True):
+        if name in wanted and info.file_size <= 512 * 1024:
+            by_name[name] = info
+    found: list[str] = []
+    for name in sorted(by_name):
+        try:
+            text = archive.read(by_name[name]).decode("utf-8", errors="replace").lower()
+        except (RuntimeError, KeyError):
+            continue
+        for signal, label in _TECH_SIGNALS:
+            if signal in text and label not in found:
+                found.append(label)
+    return found
+
+
 def parse_codebase(data: bytes) -> dict:
     """Full static pass: filter, parse imports, compute reverse edges."""
     raw_count, kept = extract_files(data)
+    names = zip_entry_names(data)
+    inventory = inventory_from_names(names)
+    inventory["tech"] = _detect_tech(data, names)
     known = {f["path"] for f in kept}
     files: list[dict] = []
     for f in kept:
@@ -273,4 +437,5 @@ def parse_codebase(data: bytes) -> dict:
         "total_raw_files": raw_count,
         "files": files,
         "primary_language": languages.most_common(1)[0][0] if languages else "",
+        "inventory": inventory,
     }

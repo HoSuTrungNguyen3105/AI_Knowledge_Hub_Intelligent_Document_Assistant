@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { codeAnalyzerService, getCodeError } from "../../services/code-analyzer";
 import { providerService } from "../../services/providers";
 import { ModelSelect } from "../model-select";
+import ArchitectureMap from "./architecture-map";
 
 const STATUS_LABELS = {
   PROCESSING: "Đang xử lý",
@@ -82,58 +83,14 @@ function TreeNode({ node, depth, selectedId, onSelect }) {
   );
 }
 
-/* ------------------------------------------------------------ graph layout */
-const NODE_W = 168;
-const NODE_H = 46;
-const COL_GAP = 216;
-const ROW_GAP = 64;
-
-function layoutGraph(nodes, edges) {
-  const ids = new Set(nodes.map((n) => n.id));
-  const depth = new Map(nodes.map((n) => [n.id, 0]));
-  for (let round = 0; round < nodes.length; round += 1) {
-    let changed = false;
-    for (const edge of edges) {
-      if (!ids.has(edge.source) || !ids.has(edge.target)) continue;
-      const next = Math.min(depth.get(edge.source) + 1, 14);
-      if (next > depth.get(edge.target)) {
-        depth.set(edge.target, next);
-        changed = true;
-      }
-    }
-    if (!changed) break;
-  }
-  const columns = new Map();
-  for (const node of nodes) {
-    const d = depth.get(node.id);
-    if (!columns.has(d)) columns.set(d, []);
-    columns.get(d).push(node);
-  }
-  const positions = new Map();
-  let maxRows = 1;
-  for (const [d, list] of [...columns.entries()].sort((a, b) => a[0] - b[0])) {
-    list
-      .sort((a, b) => a.label.localeCompare(b.label))
-      .forEach((node, i) => {
-        positions.set(node.id, { x: 12 + d * COL_GAP, y: 12 + i * ROW_GAP, node });
-      });
-    maxRows = Math.max(maxRows, list.length);
-  }
-  return {
-    positions,
-    width: columns.size * COL_GAP + 24,
-    height: maxRows * ROW_GAP + 24,
-  };
-}
-
 /* ------------------------------------------------------------ workspace */
 export default function CodeAnalyzerWorkspace() {
   const [view, setView] = useState("list");
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState("");
   const [detail, setDetail] = useState(null);
+  const [archMap, setArchMap] = useState(null);
   const [selectedId, setSelectedId] = useState("");
-  const [cluster, setCluster] = useState(null);
   const [query, setQuery] = useState("");
   const [dataQuery, setDataQuery] = useState("");
   const [dataSort, setDataSort] = useState("imported");
@@ -165,7 +122,12 @@ export default function CodeAnalyzerWorkspace() {
       const data = await codeAnalyzerService.get(id);
       setDetail(data);
       setSelectedId("");
-      setCluster(null);
+      try {
+        setArchMap(await codeAnalyzerService.architecture(id));
+      } catch {
+        /* the map is an extra view; the detail below still works */
+        setArchMap(null);
+      }
     } catch (err) {
       setError(getCodeError(err));
     } finally {
@@ -245,44 +207,6 @@ export default function CodeAnalyzerWorkspace() {
     };
   }, [providerId, providers]);
 
-  const graph = useMemo(() => {
-    if (!detail) return { nodes: [], edges: [] };
-    const diagram = detail.diagram_data || {};
-    if (diagram.mode === "clusters") {
-      if (!cluster) return { nodes: diagram.nodes || [], edges: diagram.edges || [] };
-      const members = (detail.files || []).filter(
-        (f) => f.module_group === cluster,
-      );
-      const memberIds = new Set(members.map((f) => f.id));
-      return {
-        nodes: members.map((f) => ({
-          id: f.id,
-          label: f.file_name,
-          group: f.module_group,
-          role_tag: f.role_tag,
-          kind: "file",
-        })),
-        edges: (diagram.file_edges || []).filter(
-          (e) => memberIds.has(e.source) && memberIds.has(e.target),
-        ),
-      };
-    }
-    return { nodes: diagram.nodes || [], edges: diagram.edges || [] };
-  }, [detail, cluster]);
-
-  const layout = useMemo(
-    () => layoutGraph(graph.nodes, graph.edges),
-    [graph],
-  );
-
-  function onNodeClick(node) {
-    if (node.kind === "cluster") {
-      setCluster(node.label);
-      return;
-    }
-    setSelectedId(node.id);
-  }
-
   function enterProject(id) {
     setProjectId(id);
     setView("detail");
@@ -292,6 +216,7 @@ export default function CodeAnalyzerWorkspace() {
   function backToList() {
     setView("list");
     setDetail(null);
+    setArchMap(null);
     loadProjects().catch(() => {});
   }
 
@@ -421,6 +346,7 @@ export default function CodeAnalyzerWorkspace() {
   }, [detail, dataQuery, dataSort]);
 
   const project = projects.find((p) => p.id === projectId);
+  const selectedFile = (detail?.files || []).find((f) => f.id === selectedId);
 
   return (
     <div className="ca-shell">
@@ -428,9 +354,9 @@ export default function CodeAnalyzerWorkspace() {
         <div>
           <h2>Codebase Architecture Analyzer</h2>
           <p>
-            Upload file ZIP mã nguồn: hệ thống dựng cây thư mục, sơ đồ
-            kiến trúc và một báo cáo Markdown tổng — phần nào thuộc file
-            nào, mỗi trang/tính năng gồm những file nào.
+            Upload file ZIP mã nguồn: hệ thống dựng bản đồ kiến trúc theo
+            tầng (đếm file theo ngôn ngữ, sơ đồ các lớp, đường đọc code),
+            cây thư mục, bảng dữ liệu và một báo cáo Markdown tổng.
           </p>
         </div>
         <div className="ca-head-actions">
@@ -658,6 +584,8 @@ export default function CodeAnalyzerWorkspace() {
             </button>
           </div>
 
+          {archMap ? <ArchitectureMap map={archMap} /> : null}
+
           <section className="ca-report">
             <div className="ca-report-head">
               <h3>Báo cáo phân tích AI</h3>
@@ -697,7 +625,7 @@ export default function CodeAnalyzerWorkspace() {
             )}
           </section>
 
-          <h3 className="ca-section-title">Cấu trúc & sơ đồ kiến trúc</h3>
+          <h3 className="ca-section-title">Cây thư mục & chi tiết file</h3>
           <div className="ca-panes">
             <aside className="ca-pane ca-explorer">
               <input
@@ -733,86 +661,57 @@ export default function CodeAnalyzerWorkspace() {
                 />
               )}
             </aside>
-            <section className="ca-pane ca-graph">
-              {cluster ? (
-                <button
-                  type="button"
-                  className="wf-btn"
-                  onClick={() => setCluster(null)}
-                >
-                  ← Tất cả cụm thư mục
-                </button>
-              ) : null}
-              {detail.diagram_data?.mode === "clusters" && !cluster ? (
+            <section className="ca-pane ca-file-info">
+              {selectedFile ? (
+                <div>
+                  <p className="ca-file-path">{selectedFile.file_path}</p>
+                  <div className="ca-file-tags">
+                    {selectedFile.language ? (
+                      <span className="wf-chip">{selectedFile.language}</span>
+                    ) : null}
+                    {selectedFile.role_tag ? (
+                      <span className="wf-chip">{selectedFile.role_tag}</span>
+                    ) : null}
+                    {selectedFile.module_group ? (
+                      <span className="wf-chip">{selectedFile.module_group}</span>
+                    ) : null}
+                  </div>
+                  {selectedFile.ai_summary ? (
+                    <p className="ca-file-summary">{selectedFile.ai_summary}</p>
+                  ) : (
+                    <p className="ca-note">
+                      File này chưa có tóm tắt AI.
+                    </p>
+                  )}
+                  <h4 className="ca-file-h">Import các file</h4>
+                  {(selectedFile.imports || []).length ? (
+                    <ul className="ca-file-list">
+                      {(selectedFile.imports || []).map((imp, i) => (
+                        <li key={i}>{imp.target_file}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="ca-note">Không import file nào trong dự án.</p>
+                  )}
+                  <h4 className="ca-file-h">Được import bởi</h4>
+                  {(selectedFile.imported_by || []).length ? (
+                    <ul className="ca-file-list">
+                      {(selectedFile.imported_by || []).map((path, i) => (
+                        <li key={i}>{path}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="ca-note">Chưa có file nào import file này.</p>
+                  )}
+                </div>
+              ) : (
                 <p className="ca-note">
-                  Repo lớn: đồ thị đang gom theo cụm thư mục, bấm vào một
-                  cụm để mở rộng.
+                  Chọn một file ở cây bên trái để xem vai trò, tóm tắt AI và
+                  các quan hệ import của file đó. Sơ đồ tổng thể nằm ở bản
+                  đồ kiến trúc phía trên; bảng dữ liệu đầy đủ có nút riêng
+                  ở đầu trang.
                 </p>
-              ) : null}
-              <div className="ca-graph-scroll">
-                <svg
-                  width={layout.width}
-                  height={layout.height}
-                  className="ca-svg"
-                  role="img"
-                  aria-label="Sơ đồ kiến trúc"
-                >
-                  <defs>
-                    <marker
-                      id="ca-arrow"
-                      viewBox="0 0 10 10"
-                      refX="9"
-                      refY="5"
-                      markerWidth="7"
-                      markerHeight="7"
-                      orient="auto-start-reverse"
-                    >
-                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
-                    </marker>
-                  </defs>
-                  {graph.edges.map((edge, i) => {
-                    const from = layout.positions.get(edge.source);
-                    const to = layout.positions.get(edge.target);
-                    if (!from || !to) return null;
-                    return (
-                      <line
-                        key={`${edge.source}-${edge.target}-${i}`}
-                        x1={from.x + NODE_W}
-                        y1={from.y + NODE_H / 2}
-                        x2={to.x}
-                        y2={to.y + NODE_H / 2}
-                        className="ca-edge"
-                        markerEnd="url(#ca-arrow)"
-                      />
-                    );
-                  })}
-                  {graph.nodes.map((node) => {
-                    const pos = layout.positions.get(node.id);
-                    if (!pos) return null;
-                    const active = selectedId === node.id;
-                    return (
-                      <g
-                        key={node.id}
-                        transform={`translate(${pos.x}, ${pos.y})`}
-                        className={`ca-node ${active ? "active" : ""}`}
-                        onClick={() => onNodeClick(node)}
-                      >
-                        <rect width={NODE_W} height={NODE_H} rx="8" />
-                        <text x="10" y="20" className="ca-node-title">
-                          {node.label.length > 22
-                            ? `${node.label.slice(0, 21)}…`
-                            : node.label}
-                        </text>
-                        <text x="10" y="36" className="ca-node-sub">
-                          {node.kind === "cluster"
-                            ? `${node.file_count} file`
-                            : node.role_tag || node.group || ""}
-                        </text>
-                      </g>
-                    );
-                  })}
-                </svg>
-              </div>
+              )}
             </section>
           </div>
         </div>
