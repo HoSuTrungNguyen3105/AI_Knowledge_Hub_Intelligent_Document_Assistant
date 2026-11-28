@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Knowledge Hub · Architecture map</title>
+<style>
+:root{color-scheme:dark;--bg:#07111f;--panel:#0d1b2c;--panel2:#102239;--line:#263a52;--text:#e8f0fa;--muted:#a3b4c9;--cyan:#5bd6e8;--green:#62d6a5;--violet:#b3a0ff;--amber:#ffc36b;--pink:#ff86a6;--blue:#80aaff}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 15% 0%,#142943 0%,var(--bg) 48%);color:var(--text);font:15px/1.5 Inter,Segoe UI,Arial,sans-serif;padding:28px 20px 36px}.page{width:min(100%,1180px);margin:0 auto}.eyebrow{font:700 11px/1.3 ui-monospace,Consolas,monospace;letter-spacing:.16em;text-transform:uppercase;color:var(--cyan)}h1{font-size:clamp(26px,4vw,40px);line-height:1.1;margin:10px 0 9px;letter-spacing:-.035em}.intro{color:var(--muted);max-width:800px;margin:0 0 20px}.chips{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 22px}.chip{border:1px solid var(--line);background:#0d1b2c;border-radius:999px;padding:6px 10px;color:#dce8f5;font:12px ui-monospace,Consolas,monospace}.chip strong{color:var(--cyan)}
+.diagram-wrap{border:1px solid #253951;border-radius:16px;background:linear-gradient(145deg,rgba(16,34,57,.92),rgba(7,17,31,.96));padding:12px;overflow:auto;box-shadow:0 22px 65px rgba(0,0,0,.22)}svg{display:block;width:100%;min-width:920px;height:auto}.lane{fill:#8fa4bc;font:700 11px ui-monospace,Consolas,monospace;letter-spacing:.13em}.wire{fill:none;stroke:#6c829e;stroke-width:2;marker-end:url(#arrow)}.wire.hot{stroke:var(--cyan);stroke-dasharray:7 8;animation:dash 1.5s linear infinite}.wire.alt{stroke:var(--violet);stroke-dasharray:6 7;animation:dash 1.8s linear infinite}@keyframes dash{to{stroke-dashoffset:-30}}.node rect{stroke-width:1.6;rx:11}.node .title{fill:#f3f7fc;font:700 14px Inter,Segoe UI,Arial,sans-serif}.node .sub{fill:#d4e0ee;font:11px ui-monospace,Consolas,monospace}.node .tiny{fill:#a8bbd1;font:10px ui-monospace,Consolas,monospace}.frontend rect{fill:#0b2b39;stroke:var(--cyan)}.backend rect{fill:#103427;stroke:var(--green)}.data rect{fill:#241b42;stroke:var(--violet)}.infra rect{fill:#392b18;stroke:var(--amber)}.external rect{fill:#351c2a;stroke:var(--pink)}.muted-node rect{fill:#162334;stroke:#74869b;stroke-dasharray:5 5}.tag{fill:#9fb2c9;font:10px ui-monospace,Consolas,monospace}.legend{display:flex;gap:14px;flex-wrap:wrap;padding:11px 5px 2px;color:var(--muted);font-size:12px}.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}.section-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:12px;margin-top:16px}.card{border:1px solid var(--line);border-radius:13px;background:rgba(13,27,44,.85);padding:15px 16px}.card h2{font-size:15px;margin:0 0 9px}.card p,.card li{font-size:13px;color:var(--muted)}.card p{margin:6px 0}.card ol{margin:8px 0 0;padding-left:20px}.card li{padding:3px 0}.path{display:block;color:#d4e1f1;font:11px/1.5 ui-monospace,Consolas,monospace;overflow-wrap:anywhere}.status{border-left:3px solid var(--amber);padding:10px 12px;background:rgba(255,195,107,.07);border-radius:0 9px 9px 0;margin-top:14px;color:#d7e1ed;font-size:13px}.foot{color:#8296ae;font:11px ui-monospace,Consolas,monospace;margin-top:18px}
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="eyebrow">Repository map · source-backed</div>
+  <h1>AI Knowledge Hub</h1>
+  <p class="intro">A Next.js workspace sends authenticated requests to a FastAPI service. The backend routes each feature through application services, then to MongoDB or an AI provider adapter.</p>
+  <div class="chips" aria-label="Repository language breakdown">
+    <span class="chip"><strong>192</strong> Python files</span><span class="chip"><strong>98</strong> JavaScript JSX</span><span class="chip"><strong>64</strong> JavaScript</span><span class="chip"><strong>20</strong> Markdown</span><span class="chip"><strong>16</strong> JSON</span><span class="chip">417 source/config/doc paths counted</span>
+  </div>
+  <div class="diagram-wrap" aria-label="Scrollable architecture diagram">
+  <svg viewBox="0 0 1040 870" role="img" aria-labelledby="svgtitle svgdesc">
+    <title id="svgtitle">AI Knowledge Hub application architecture</title><desc id="svgdesc">Frontend requests pass through same-origin API transport to FastAPI routes and services. Services use MongoDB repositories or AI provider adapters.</desc>
+    <defs>
+      <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse"><path d="M36 0H0V36" fill="none" stroke="#23364d" stroke-width=".55"/></pattern>
+      <marker id="arrow" markerWidth="9" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0 0L9 4L0 8Z" fill="#8ca3bd"/></marker>
+    </defs>
+    <rect width="1040" height="870" fill="url(#grid)" opacity=".46"/>
+    <text x="22" y="32" class="lane">CLIENT · NEXT.JS APP ROUTER</text>
+    <text x="22" y="265" class="lane">SERVER · FASTAPI</text>
+    <text x="22" y="492" class="lane">PERSISTENCE &amp; MODEL INTEGRATIONS</text>
+    <text x="22" y="713" class="lane">RUNTIME DEPENDENCIES</text>
+
+    <!-- Flow connectors, behind the nodes -->
+    <path class="wire hot" d="M160 135H205"/><path class="wire hot" d="M430 135H485"/><path class="wire hot" d="M720 135H795"/>
+    <path class="wire" d="M900 220V295"/><path class="wire" d="M795 360H725"/><path class="wire hot" d="M505 360H435"/>
+    <path class="wire" d="M320 430V520"/><path class="wire" d="M500 580H435"/>
+    <path class="wire" d="M320 650C350 704 430 742 500 765"/><path class="wire" d="M610 650V758"/>
+    <path class="wire alt" d="M435 384C570 435 680 510 795 565"/><path class="wire alt" d="M900 650V758"/>
+
+    <g class="node external">
+      <rect x="20" y="82" width="140" height="106"/>
+      <text x="90" y="111" text-anchor="middle" class="title">User</text><text x="90" y="133" text-anchor="middle" class="sub">Browser</text><text x="90" y="157" text-anchor="middle" class="tiny">workspace screens</text>
+    </g>
+    <g class="node frontend">
+      <rect x="205" y="62" width="225" height="158"/>
+      <text x="222" y="89" class="title">Next.js UI + auth gate</text><text x="222" y="113" class="sub">frontend/app/layout.js</text><text x="222" y="132" class="sub">frontend/app/(workspace)/layout.jsx</text><text x="222" y="158" class="tiny">AuthGuard → AppShell</text><text x="222" y="184" class="tiny">/chat · /agents · /compare</text>
+    </g>
+    <g class="node frontend">
+      <rect x="485" y="62" width="235" height="158"/>
+      <text x="502" y="89" class="title">Browser API transport</text><text x="502" y="113" class="sub">frontend/services/api.js</text><text x="502" y="132" class="sub">frontend/services/chat.js</text><text x="502" y="158" class="tiny">/api/v1 · cookie session</text><text x="502" y="184" class="tiny">401 refresh · SSE streams</text>
+    </g>
+    <g class="node frontend">
+      <rect x="795" y="62" width="215" height="158"/>
+      <text x="812" y="89" class="title">Same-origin API route</text><text x="812" y="113" class="sub">README.md · dev routing</text><text x="812" y="137" class="tiny">/api/v1 → BACKEND_URL</text><text x="812" y="163" class="tiny">Next rewrite keeps browser</text><text x="812" y="181" class="tiny">on the app origin</text>
+    </g>
+
+    <g class="node backend">
+      <rect x="795" y="295" width="215" height="135"/>
+      <text x="812" y="323" class="title">FastAPI application</text><text x="812" y="347" class="sub">backend/app/main.py</text><text x="812" y="372" class="tiny">middleware · error handling</text><text x="812" y="394" class="tiny">router prefix: /api/v1</text><text x="812" y="414" class="tiny">CurrentUser from cookie</text>
+    </g>
+    <g class="node backend">
+      <rect x="505" y="295" width="220" height="135"/>
+      <text x="522" y="323" class="title">Versioned API routes</text><text x="522" y="347" class="sub">backend/app/api/v1/</text><text x="522" y="372" class="tiny">chat.py · providers.py</text><text x="522" y="394" class="tiny">agents · compare · workflows</text><text x="522" y="414" class="tiny">HTTP + server-sent events</text>
+    </g>
+    <g class="node backend">
+      <rect x="205" y="295" width="230" height="135"/>
+      <text x="222" y="323" class="title">Feature services</text><text x="222" y="347" class="sub">backend/app/services/chat.py</text><text x="222" y="372" class="tiny">ownership + model checks</text><text x="222" y="394" class="tiny">history + stream coordination</text><text x="222" y="414" class="tiny">dispatches to repo / AI factory</text>
+    </g>
+
+    <g class="node data">
+      <rect x="205" y="520" width="230" height="130"/>
+      <text x="222" y="548" class="title">Repositories + entities</text><text x="222" y="572" class="sub">backend/app/repositories/chat.py</text><text x="222" y="597" class="sub">backend/app/models/entities.py</text><text x="222" y="623" class="tiny">owner-scoped persistence</text>
+    </g>
+    <g class="node data">
+      <rect x="500" y="520" width="225" height="130"/>
+      <text x="517" y="548" class="title">Database + credential core</text><text x="517" y="572" class="sub">backend/app/core/database.py</text><text x="517" y="597" class="sub">backend/app/core/credential_vault.py</text><text x="517" y="623" class="tiny">Motor client · indexes · Fernet</text>
+    </g>
+    <g class="node backend">
+      <rect x="795" y="520" width="215" height="130"/>
+      <text x="812" y="548" class="title">AI provider factory</text><text x="812" y="572" class="sub">backend/app/services/ai/</text><text x="812" y="597" class="tiny">ai_factory.py · registry.py</text><text x="812" y="623" class="tiny">provider adapters</text>
+    </g>
+    <g class="node infra">
+      <rect x="500" y="758" width="225" height="95"/>
+      <text x="517" y="787" class="title">MongoDB 7</text><text x="517" y="811" class="sub">docker-compose.yml · db</text><text x="517" y="835" class="tiny">mongo_data volume</text>
+    </g>
+    <g class="node external">
+      <rect x="795" y="758" width="215" height="95"/>
+      <text x="812" y="787" class="title">External model APIs</text><text x="812" y="811" class="sub">openai_provider.py</text><text x="812" y="835" class="tiny">gemini_provider.py · groq_provider.py</text>
+    </g>
+    <text x="35" y="745" class="tag">Data path</text><line x1="35" y1="763" x2="78" y2="763" stroke="#8ca3bd" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="100" y="745" class="tag">AI call path</text><line x1="100" y1="763" x2="143" y2="763" stroke="#b3a0ff" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow)"/>
+  </svg>
+  <div class="legend"><span><i style="background:var(--cyan)"></i>Frontend</span><span><i style="background:var(--green)"></i>API and services</span><span><i style="background:var(--violet)"></i>Data layer</span><span><i style="background:var(--amber)"></i>Runtime</span><span><i style="background:var(--pink)"></i>External actor/provider</span></div>
+  </div>
+
+  <section class="section-grid">
+    <article class="card"><h2>Where to start reading</h2><ol><li><span class="path">frontend/app/layout.js → frontend/app/(workspace)/layout.jsx</span>Root providers, authenticated workspace shell.</li><li><span class="path">backend/app/main.py → backend/app/api/v1/chat.py</span>App setup, middleware, route registration, SSE endpoint.</li><li><span class="path">backend/app/services/chat.py → backend/app/services/ai/ai_factory.py</span>Feature orchestration and provider selection.</li><li><span class="path">backend/app/repositories/chat.py → backend/app/core/database.py</span>Owner-scoped Mongo reads/writes and database setup.</li></ol></article>
+    <article class="card"><h2>What the diagram follows</h2><p><span class="path">docker-compose.yml</span>runs frontend, backend, and MongoDB services. The browser talks to <code>/api/v1</code>; regular requests use Axios, while chat uses <code>fetch</code> for SSE streaming.</p><p>Provider keys are decrypted server-side by <span class="path">backend/app/core/credential_vault.py</span>; the frontend receives streamed answers, not keys.</p></article>
+    <article class="card"><h2>Language counts</h2><p>Extension-based file counts, excluding dependency, build, and cache folders. Pygount was not installed, so this is not a lines-of-code report.</p><p>Python 192 · JavaScript JSX 98 · JavaScript 64 · Markdown 20 · JSON 16 · CSS 15 · other config/docs 12.</p></article>
+  </section>
+  <div class="status"><strong>Scope note:</strong> The “Knowledge” and “Notes” navigation entries are marked upcoming in <code>frontend/components/app-shell.jsx</code>; the README says RAG/document search is not implemented. This map reflects the current routed code, not the product name.</div>
+  <p class="foot">Source paths were verified in this repository. No secrets, dependency contents, or generated build files were read for the map.</p>
+</main>
+</body>
+</html>

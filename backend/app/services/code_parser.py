@@ -7,6 +7,7 @@ with 1000+ files stay cheap to ingest; the AI pass (summaries, roles,
 relation labels) happens later on n8n from these results.
 """
 
+import ast
 import io
 import posixpath
 import re
@@ -26,6 +27,10 @@ SKIP_NAMES = {
     "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
     "cargo.lock", "composer.lock", "gemfile.lock",
 }
+SOURCE_ROOT_NAMES = {
+    "src", "app", "apps", "backend", "frontend", "lib", "libs", "pkg", "cmd",
+    "internal", "api", "server", "client", "packages", "modules", "tests", "test",
+}
 LANGUAGES = {
     ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript",
     ".cjs": "javascript", ".ts": "typescript", ".tsx": "typescript",
@@ -41,8 +46,6 @@ _JS_IMPORT = re.compile(
     r"""(?:import\s+(?:[^'"]*?\s+from\s+)?|export\s+[^'"]*?\s+from\s+"""
     r"""|require\s*\()\s*['"]([^'"]+)['"]"""
 )
-_PY_IMPORT = re.compile(r"^\s*import\s+([\w\.]+)", re.MULTILINE)
-_PY_FROM = re.compile(r"^\s*from\s+(\.+[\w\.]*|[\w\.]+)\s+import\s+", re.MULTILINE)
 
 _ROLE_HINTS = (
     ("controller", "Controller"),
@@ -95,6 +98,11 @@ def _strip_common_root(paths: list[str]) -> list[str]:
     roots = {p.split("/", 1)[0] for p in paths}
     if len(roots) == 1:
         root = roots.pop()
+        # Preserve conventional source/package directories. A ZIP containing
+        # only ``src/...`` is often a hand-made project archive, not a GitHub
+        # export wrapper; removing it would corrupt reported file paths.
+        if root.casefold() in SOURCE_ROOT_NAMES:
+            return paths
         return [p[len(root) + 1:] for p in paths]
     return paths
 
@@ -158,6 +166,46 @@ def _resolve_py_relative(spec: str, from_path: str, known: set[str]) -> str | No
     return None
 
 
+def _resolve_py_from(
+    module: str | None, level: int, imported_names: list[str], from_path: str, known: set[str]
+) -> list[str]:
+    """Resolve the package module and imported submodules from ``from ... import``.
+
+    Python permits namespace packages without ``__init__.py`` and the common
+    ``from package import submodule`` form. Resolve both the imported module
+    and any imported names that are actual files in the archive.
+    """
+    if level:
+        base = posixpath.dirname(from_path)
+        for _ in range(level - 1):
+            base = posixpath.dirname(base)
+        if module:
+            base = posixpath.join(base, module.replace(".", "/"))
+    else:
+        if not module:
+            return []
+        base = module.replace(".", "/")
+    base = base.strip("/")
+
+    found: list[str] = []
+    module_file = next(
+        (candidate for candidate in (f"{base}.py", f"{base}/__init__.py") if candidate in known),
+        None,
+    )
+    if module_file:
+        found.append(module_file)
+    package_base = posixpath.splitext(module_file)[0] if module_file else base
+    for name in imported_names:
+        if name == "*":
+            continue
+        child = posixpath.join(package_base, name.replace(".", "/"))
+        for candidate in (f"{child}.py", f"{child}/__init__.py"):
+            if candidate in known and candidate not in found:
+                found.append(candidate)
+                break
+    return found
+
+
 def extract_imports(path: str, content: str, known: set[str]) -> list[str]:
     """Resolved in-repo import targets of one file, order-stable, deduped."""
     language = LANGUAGES.get(posixpath.splitext(path)[1].lower(), "")
@@ -171,13 +219,22 @@ def extract_imports(path: str, content: str, known: set[str]) -> list[str]:
         for spec in _JS_IMPORT.findall(content):
             add(_resolve_js(spec, path, known))
     elif language == "python":
-        for module in _PY_IMPORT.findall(content):
-            add(_resolve_py(module, path, known))
-        for spec in _PY_FROM.findall(content):
-            if spec.startswith("."):
-                add(_resolve_py_relative(spec, path, known))
+        try:
+            tree = ast.parse(content)
+        except (SyntaxError, ValueError, RecursionError):
+            return targets
+        imports = sorted(
+            (node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))),
+            key=lambda node: node.lineno,
+        )
+        for node in imports:
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    add(_resolve_py(alias.name, path, known))
             else:
-                add(_resolve_py(spec, path, known))
+                names = [alias.name for alias in node.names]
+                for target in _resolve_py_from(node.module, node.level, names, path, known):
+                    add(target)
     return targets
 
 

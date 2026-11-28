@@ -56,10 +56,34 @@ def ai_handler(request):
     )
 
 
+class _AsyncBody(httpx.AsyncByteStream):
+    def __init__(self, body: bytes):
+        self.body = body
+
+    async def __aiter__(self):
+        yield self.body
+
+    async def aclose(self):
+        pass
+
+
+class _AsyncMockTransport(httpx.AsyncBaseTransport):
+    async def handle_async_request(self, request):
+        await request.aread()
+        print("CODE ANALYZER MOCK REQUEST", request.url)
+        response = ai_handler(request)
+        return httpx.Response(
+            response.status_code,
+            headers=response.headers,
+            stream=_AsyncBody(response.content),
+            request=request,
+        )
+
+
 @pytest.fixture
 def mock_ai(app):
     app.dependency_overrides[analyzer_http] = lambda: ChatHTTP(
-        transport=httpx.MockTransport(ai_handler)
+        transport=_AsyncMockTransport()
     )
 
 
